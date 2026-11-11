@@ -1,0 +1,35 @@
+{
+  "name": "agentfleet",
+  "version": "1.2.0",
+  "description": "Track, resume, and headlessly run Cursor CLI (and optional Copilot CLI) sessions",
+  "bin": {
+    "agentfleet": "./bin/af.js",
+    "af": "./bin/af.js"
+  },
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "af": "node bin/af.js"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "completions",
+    "templates",
+    "docs",
+    "README.md"
+  ],
+  "keywords": [
+    "cursor",
+    "cursor-agent",
+    "cli",
+    "tmux",
+    "iterm2",
+    "wezterm"
+  ],
+  "license": "MIT",
+  "author": "Andrew Rapo"
+}

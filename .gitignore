@@ -1,0 +1,14 @@
+node_modules/
+.DS_Store
+*.tgz
+coverage/
+.env
+.env.*
+*.pem
+*.key
+sessions.json
+sessions.json.bak*
+*.log
+logs/
+IMPLEMENT.md
+.agentfleet/
