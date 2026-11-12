@@ -2,6 +2,7 @@
 'use strict';
 
 const fs = require('fs');
+const crypto = require('crypto');
 const os = require('os');
 const path = require('path');
 const registry = require('../lib/registry');
@@ -14,6 +15,7 @@ const runlib = require('../lib/run');
 const herdr = require('../lib/herdr');
 const herdrapp = require('../lib/herdrapp');
 const orchestrate = require('../lib/orchestrate');
+const launch = require('../lib/launch');
 const {
   parseArgs,
   resolveCwd,
@@ -55,7 +57,7 @@ Usage:
                             Persist last-known Herdr runtime evidence (does not change status/lastUsed)
   af run "<title>" --prompt "..." [--cwd DIR] [--model X] [--engine cursor|copilot]
                             [--mode ask|plan] [--force] [--output-format text|json]
-                            [--timeout SEC] [--dry-run]
+                            [--timeout SEC] [--dry-run] [--json]
                             Headless one-shot: create or resume, capture output, exit
   af run <title|id> --prompt "..." [...]
                             Same, resuming an existing tracked session
@@ -89,7 +91,7 @@ Usage:
   af tail <id|title> [-n N] [-f]
                             Last N lines of run log (or hc read for live Herdr). -f follows
                             until the worker leaves running (or Ctrl-C).
-  af send <id|title> "text" [--timeout SEC] [--force]
+  af send <id|title> "text" [--timeout SEC] [--force] [--json]
                             Interactive: hc send (records lastSendAt; workerStatus=running).
                             Headless (not running): continue chat with a short handoff
                             reminder. Refuses if headless runPid live.
@@ -120,8 +122,9 @@ Usage:
   af rm <title|id> [--keep-files] [--force] [--dry-run]
                             Remove a session and its af-owned files under
                             $AGENTFLEET_HOME (results/, runs/<id>/, plans/).
-                            --keep-files: registry row only. Refuses if running
-                            unless --force (does not stop the process).
+                            Prefer --dry-run first. --keep-files: registry only
+                            (keeps handoffs/logs). Refuses if running unless
+                            --force (does not stop the process — af stop first).
   af rm --children <master> [--with-master] [--keep-files] [--force] [--dry-run]
                             Remove all workers of a master; --with-master also
                             removes the master. --dry-run lists actions only.
@@ -129,14 +132,18 @@ Usage:
   af export [file]          Write registry JSON (default: stdout)
   af import-file <file>     Merge sessions from a backup file
   af which-backend          Show auto-detected resume --all backend
-  af herdr-templates [--force]
+  af herdr-templates [--force] [--dry-run]
                             Install Cursor/OpenCode/Copilot templates into
                             ~/.config/herdr-core/templates
   af herdr-app install [--copy] [--force] [--dry-run]
                             Symlink (default) or copy the af-sessions Herdr panel
                             + af layout into ~/.config/herdr-app (or $HERDR_APP_HOME)
   af herdr-app status       Report linked/copied/missing for the panel + layout
+  af doctor [--json]
+                            Read-only environment checks (hc, engines, home)
   af help
+                            Exit: 0 ok, 1 error, 2 wait timeout, 3 waiting,
+                            75 critical registry write failed after a run
 
 Environment:
   AGENTFLEET_HOME         Registry dir (default: ~/.agentfleet)
@@ -260,6 +267,9 @@ async function main() {
     case 'which-backend':
       process.stdout.write(backends.detectBackend() + '\n');
       break;
+    case 'doctor':
+      cmdDoctor(rest);
+      break;
     default:
       fail(`unknown command: ${cmd}\n\n${USAGE}`);
   }
@@ -349,7 +359,7 @@ async function cmdNew(argv) {
   const argvLaunch = engine.buildInteractiveCommand(saved, launchOpts);
   const launchEnv = { ...process.env, AGENTFLEET_ID: saved.id };
   const { code } = await engine.spawnInteractive(argvLaunch, { cwd, env: launchEnv });
-  registry.touch(saved.id);
+  registry.bestEffortTouch(saved.id);
   process.exitCode = code || 0;
 }
 
@@ -520,9 +530,7 @@ async function cmdImportCopilot(argv, flags) {
     });
     const tracked = new Set(registry.list({ includeDone: true }).map((s) => s.chatId));
     if (asJson) {
-      process.stdout.write(
-        JSON.stringify(
-          {
+      emitJson({
             engine: 'copilot',
             sessions: sessions.map((s) => ({
               id: s.id,
@@ -536,11 +544,7 @@ async function cmdImportCopilot(argv, flags) {
               model: s.model,
               created: s.created,
             })),
-          },
-          null,
-          2
-        ) + '\n'
-      );
+          });
       return;
     }
     if (sessions.length === 0) {
@@ -770,7 +774,7 @@ function cmdLs(argv) {
         tab: herdrapp.herdrTabId(e.session),
       },
     }));
-    process.stdout.write(JSON.stringify({ sessions: rows, queryOk: Boolean(fetchResult.ok) }, null, 2) + '\n');
+    emitJson({ sessions: rows, queryOk: Boolean(fetchResult.ok) });
     return;
   }
 
@@ -810,7 +814,7 @@ function cmdSync(argv) {
     process.stderr.write(`herdr sync failed: ${fetchResult.error || 'query failed'}\n`);
     process.exitCode = 1;
     if (asJson) {
-      process.stdout.write(JSON.stringify({ ok: false, error: fetchResult.error, dryRun, updated: [] }, null, 2) + '\n');
+      emitJson({ ok: false, error: fetchResult.error, dryRun, updated: [] });
     }
     return;
   }
@@ -823,8 +827,15 @@ function cmdSync(argv) {
     fs.mkdirSync(path.dirname(bak), { recursive: true });
     fs.copyFileSync(registryPath(), bak);
     process.stderr.write(`backup: ${bak}\n`);
+    let cosmeticWarned = false;
     for (const e of toPersist) {
-      registry.update(e.session.id, { herdr: herdr.herdrEvidence(e) });
+      const wr = registry.bestEffortUpdate(e.session.id, { herdr: herdr.herdrEvidence(e) });
+      if (!wr.ok && !cosmeticWarned) {
+        cosmeticWarned = true;
+        if (!asJson) {
+          process.stderr.write(`warning: cosmetic registry write failed: ${wr.error}\n`);
+        }
+      }
     }
   }
 
@@ -842,18 +853,12 @@ function cmdSync(argv) {
   }));
 
   if (asJson) {
-    process.stdout.write(
-      JSON.stringify(
-        {
+    emitJson({
           ok: true,
           dryRun,
           checkedAt: fetchResult.checkedAt,
           updated: rows,
-        },
-        null,
-        2
-      ) + '\n'
-    );
+        });
     return;
   }
 
@@ -916,12 +921,23 @@ async function cmdResume(argv) {
         fail(err.message);
       }
     }
-    const plan = backends.executeResumeAll([session], {
-      via: 'herdr',
+    const plan = launchViaHerdr([session], {
       dryRun: Boolean(flags['dry-run']),
       resumeOpts,
+      flags,
+      json: Boolean(flags.json),
     });
     reportHerdr(plan, flags);
+    return;
+  }
+
+  if (flags['dry-run']) {
+    process.stderr.write(
+      `Resuming "${session.title}" (${shortId(session.chatId)}, ${session.engine || 'cursor'}) in ${session.cwd}\n`
+    );
+    process.stdout.write(
+      `cd ${JSON.stringify(session.cwd)} && ${engine.buildInteractiveCommandString(session, resumeOpts)}\n`
+    );
     return;
   }
 
@@ -934,13 +950,7 @@ async function cmdResume(argv) {
   process.stderr.write(
     `Resuming "${session.title}" (${shortId(session.chatId)}, ${session.engine || 'cursor'}) in ${session.cwd}\n`
   );
-  registry.touch(session.id);
-  if (flags['dry-run']) {
-    process.stdout.write(
-      `cd ${JSON.stringify(session.cwd)} && ${engine.buildInteractiveCommandString(session, resumeOpts)}\n`
-    );
-    return;
-  }
+  registry.bestEffortTouch(session.id);
   try {
     engine.assertEngineAvailable(session);
   } catch (err) {
@@ -1018,12 +1028,25 @@ async function cmdResumeAll(flags) {
     }
   }
 
-  const plan = backends.executeResumeAll(sessions, {
-    via,
-    tmuxSession: flags['tmux-session'],
-    dryRun: dryRun || (via || backends.detectBackend()) === 'plain',
-    resumeOpts: buildResumeOpts(flags),
-  });
+  const resumeOpts = buildResumeOpts(flags);
+  const detected = via || backends.detectBackend();
+  const planDry = dryRun || detected === 'plain';
+  let plan;
+  if (detected === 'herdr') {
+    plan = launchViaHerdr(sessions, {
+      dryRun: planDry,
+      resumeOpts,
+      flags,
+      json: Boolean(flags.json),
+    });
+  } else {
+    plan = backends.executeResumeAll(sessions, {
+      via,
+      tmuxSession: flags['tmux-session'],
+      dryRun: planDry,
+      resumeOpts,
+    });
+  }
 
   process.stderr.write(
     `resume --all via ${plan.backend} (${sessions.length} session${sessions.length === 1 ? '' : 's'})${dryRun || !plan.executed ? ' [dry]' : ''}\n`
@@ -1054,7 +1077,7 @@ async function cmdResumeAll(flags) {
   // Mark lastUsed
   for (const s of sessions) {
     try {
-      registry.touch(s.id);
+      registry.bestEffortTouch(s.id);
     } catch (_) {
       /* ignore */
     }
@@ -1076,28 +1099,62 @@ async function cmdResumeAll(flags) {
 
 function reportHerdr(plan, flags = {}) {
   const dryRun = Boolean(flags['dry-run'] || flags.dryRun) || !plan.executed;
+  const asJson = Boolean(flags.json);
   if (dryRun || !plan.executed) {
-    for (const c of plan.commands) {
-      process.stdout.write(c.shell + '\n');
-      if (c.name) process.stdout.write(backends.herdrAttachLine(c.name) + '\n');
+    if (!asJson) {
+      for (const c of plan.commands || []) {
+        process.stdout.write(c.shell + '\n');
+        if (c.name) process.stdout.write(backends.herdrAttachLine(c.name) + '\n');
+      }
+      maybeOpenITermAttach(plan, flags, { executed: false, dryRun: true });
     }
-    maybeOpenITermAttach(plan, flags, { executed: false, dryRun: true });
     return;
   }
   let ok = 0;
-  for (const r of plan.results) {
+  for (const r of plan.results || []) {
+    if (r.busy) {
+      process.stderr.write(`skip "${r.title}": already running/launching\n`);
+      continue;
+    }
     if (r.skipped) {
       process.stderr.write(`skip "${r.title}": already live in herdr\n`);
-      if (r.name) process.stdout.write(backends.herdrAttachLine(r.name) + '\n');
+      if (!asJson && r.name) process.stdout.write(backends.herdrAttachLine(r.name) + '\n');
     } else if (r.status === 0) {
       ok++;
-      try { registry.touch(plan.commands.find((c) => c.title === r.title).id); } catch (_) { /* ignore */ }
-      if (r.name) process.stdout.write(backends.herdrAttachLine(r.name) + '\n');
+      try {
+        const cmd = (plan.commands || []).find((c) => c.title === r.title);
+        if (cmd && cmd.id) {
+          const runId = crypto.randomUUID();
+          const runStartedAt = nowIso();
+          let resultMtimeAtStart = null;
+          try {
+            const sess = registry.find(cmd.id);
+            const rp = sess && (sess.result || orchestrate.defaultResultPath(sess.id));
+            if (rp && fs.existsSync(rp)) resultMtimeAtStart = fs.statSync(rp).mtimeMs;
+          } catch (_) {}
+          registry.criticalUpdate(
+            cmd.id,
+            { runId, runStartedAt, resultMtimeAtStart, resultRunId: null },
+            { phase: 'after-spawn' }
+          );
+          registry.bestEffortTouch(cmd.id);
+        }
+      } catch (_) { /* ignore */ }
+      if (!asJson && r.name) process.stdout.write(backends.herdrAttachLine(r.name) + '\n');
+      if (r.tabRename && r.tabRename.ok === false) {
+        process.stderr.write(
+          `herdr-app tab.rename failed for "${r.title}": ${r.tabRename.reason || r.tabRename.error || ''}\n`
+        );
+      }
     } else process.stderr.write(`hc run failed for "${r.title}": ${r.stderr || ''}\n`);
   }
-  process.stdout.write(`Launched ${ok} Herdr terminal(s).\n`);
-  maybeOpenITermAttach(plan, flags, { executed: true, dryRun: false });
-  if (plan.results.some((r) => !r.skipped && r.status !== 0)) process.exitCode = 1;
+  if (!asJson) {
+    process.stdout.write(`Launched ${ok} Herdr terminal(s).\n`);
+    maybeOpenITermAttach(plan, flags, { executed: true, dryRun: false });
+  }
+  if ((plan.results || []).some((r) => r.busy || (!r.skipped && r.status != null && r.status !== 0))) {
+    process.exitCode = 1;
+  }
 }
 
 function maybeOpenITermAttach(plan, flags, { executed, dryRun }) {
@@ -1199,10 +1256,11 @@ async function cmdResumePick(flags) {
       }
     }
   }
-  const plan = backends.executeResumeAll(selected, {
-    via: 'herdr',
+  const plan = launchViaHerdr(selected, {
     dryRun: Boolean(flags['dry-run']),
     resumeOpts,
+    flags,
+    json: Boolean(flags.json),
   });
   reportHerdr(plan, flags);
 }
@@ -1240,15 +1298,15 @@ function cmdAdopt(argv) {
 
   const fetchResult = herdr.fetchHerdrTerminals();
   if (!fetchResult.ok) {
-    fail(`herdr adopt failed: ${fetchResult.error || 'query failed'}`);
+    fail(launch.discoveryRefuseMessage(fetchResult.error), { json: asJson });
   }
 
   const plan = herdrapp.planAdopt(sessions, fetchResult.terminals || []);
-  if (!plan.ok) fail(plan.error || 'adopt failed');
+  if (!plan.ok) fail(plan.error || 'adopt failed', { json: asJson });
 
   if (plan.items.length === 0) {
     if (asJson) {
-      process.stdout.write(JSON.stringify({ ok: true, dryRun, adopted: [] }, null, 2) + '\n');
+      emitJson({ ok: true, dryRun, adopted: [] });
       return;
     }
     process.stdout.write('(no live af Herdr terminals to adopt)\n');
@@ -1269,13 +1327,26 @@ function cmdAdopt(argv) {
       labeled: false,
       kept: false,
       renamed: false,
+      ok: true,
+      error: null,
+      tabRename: null,
     };
 
     if (item.alreadyAdopted) {
       if (!dryRun) {
         const renamed = herdrapp.nameHerdrAppTab(item.tabId, item.title);
         row.renamed = Boolean(renamed && renamed.ok);
+        row.tabRename = {
+          ok: Boolean(renamed && renamed.ok),
+          error: renamed && renamed.ok ? null : (renamed && renamed.reason) || 'rename failed',
+        };
+        if (!row.tabRename.ok) {
+          process.stderr.write(
+            `herdr-app tab.rename failed for ${item.title}: ${row.tabRename.error}\n`
+          );
+        }
       }
+      row.ok = true;
       rows.push(row);
       if (!asJson) {
         process.stdout.write(
@@ -1311,8 +1382,24 @@ function cmdAdopt(argv) {
         `hc keep failed for ${item.address}: ${kep.stderr || kep.stdout || ''}\n`
       );
     }
+    if (!row.labeled || !row.kept) {
+      row.ok = false;
+      const parts = [];
+      if (!row.labeled) parts.push(`label: ${(lab.stderr || lab.stdout || '').trim() || lab.status}`);
+      if (!row.kept) parts.push(`keep: ${(kep.stderr || kep.stdout || '').trim() || kep.status}`);
+      row.error = parts.join('; ');
+    }
     const renamed = herdrapp.nameHerdrAppTab(item.tabId, item.title);
     row.renamed = Boolean(renamed && renamed.ok);
+    row.tabRename = {
+      ok: Boolean(renamed && renamed.ok),
+      error: renamed && renamed.ok ? null : (renamed && renamed.reason) || 'rename failed',
+    };
+    if (!row.tabRename.ok) {
+      process.stderr.write(
+        `herdr-app tab.rename failed for ${item.title}: ${row.tabRename.error}\n`
+      );
+    }
     rows.push(row);
     if (!asJson) {
       process.stdout.write(
@@ -1321,8 +1408,10 @@ function cmdAdopt(argv) {
     }
   }
 
+  const anyFail = rows.some((r) => r.ok === false);
   if (asJson) {
-    process.stdout.write(JSON.stringify({ ok: true, dryRun, adopted: rows }, null, 2) + '\n');
+    emitJson({ ok: !anyFail, dryRun, adopted: rows });
+    if (anyFail) process.exitCode = 1;
     return;
   }
 
@@ -1331,7 +1420,7 @@ function cmdAdopt(argv) {
       'Hint: labeled terminals now show in the Herdr desktop app (open Herdr if it is not running).\n'
     );
   }
-  if (rows.some((r) => !r.alreadyAdopted && !dryRun && (!r.labeled || !r.kept))) {
+  if (anyFail) {
     process.exitCode = 1;
   }
 }
@@ -1492,8 +1581,9 @@ function collectTags(flags) {
   return tags;
 }
 
-function printSession(s, verb) {
-  process.stdout.write(
+function printSession(s, verb, { stream } = {}) {
+  const out = stream || process.stdout;
+  out.write(
     `${verb}: ${s.title}\n` +
       `  id:      ${s.id}\n` +
       `  chatId:  ${s.chatId}\n` +
@@ -1570,22 +1660,46 @@ async function executeHeadlessRun(session, opts = {}) {
   const outPath = runlib.newRunLogPath(session.id, engineName);
   runlib.writeRunLogHeader(outPath, { argv: [bin, ...argvRun], cwd: session.cwd });
 
-  if (trackRun) {
+  const asJson = Boolean(opts.json);
+  const runId = crypto.randomUUID();
+  const runStartedAt = nowIso();
+  let resultMtimeAtStart = null;
+  const resultPathHint = session.result || null;
+  if (resultPathHint) {
     try {
-      registry.update(session.id, {
-        lastOutput: outPath,
-        lastPrompt: prompt,
-        runHost: os.hostname(),
-        runStartedAt: nowIso(),
-        stopRequested: false,
-        runPid: null,
-        runPgid: null,
-      });
+      if (fs.existsSync(resultPathHint)) resultMtimeAtStart = fs.statSync(resultPathHint).mtimeMs;
     } catch (_) {
-      /* ignore */
+      resultMtimeAtStart = null;
     }
   }
 
+  let registryWriteError = null;
+  if (trackRun) {
+    const before = registry.criticalUpdate(
+      session.id,
+      {
+        lastOutput: outPath,
+        lastPrompt: prompt,
+        runHost: os.hostname(),
+        runStartedAt,
+        runId,
+        resultMtimeAtStart,
+        resultRunId: null,
+        stopRequested: false,
+        runPid: null,
+        runPgid: null,
+      },
+      { phase: 'before-launch' }
+    );
+    if (!before.ok) {
+      fail(
+        `critical registry write failed before launch: ${before.error}`,
+        { json: asJson }
+      );
+    }
+  }
+
+  let spawnIdentityError = null;
   const result = await runlib.spawnCaptured(bin, argvRun, {
     cwd: session.cwd,
     timeoutMs: timeoutSec ? timeoutSec * 1000 : 0,
@@ -1595,17 +1709,19 @@ async function executeHeadlessRun(session, opts = {}) {
     logPath: outPath,
     onSpawn: ({ pid, pgid }) => {
       if (!trackRun) return;
-      try {
-        registry.update(session.id, {
+      const idWrite = registry.criticalUpdate(
+        session.id,
+        {
           runPid: pid,
           runPgid: pgid,
           runHost: os.hostname(),
-          runStartedAt: nowIso(),
+          runStartedAt,
+          runId,
           lastOutput: outPath,
-        });
-      } catch (_) {
-        /* ignore */
-      }
+        },
+        { phase: 'after-spawn' }
+      );
+      if (!idWrite.ok) spawnIdentityError = idWrite.error;
     },
   });
 
@@ -1624,37 +1740,68 @@ async function executeHeadlessRun(session, opts = {}) {
   const lastExit = result.timedOut ? 124 : exitFromSignal != null ? exitFromSignal : result.code;
 
   const patch = {
-    lastUsed: nowIso(),
     lastRunAt: nowIso(),
     lastExit,
     lastOutput: outPath,
     lastPrompt: prompt,
     runPid: null,
     runPgid: null,
+    runId,
+    runStartedAt,
+    resultMtimeAtStart,
   };
   if (result.interruptedBy && (session.role === 'worker' || session.role === 'master')) {
     patch.workerStatus = 'stopped';
     patch.stopRequested = true;
   }
-  try {
-    registry.update(session.id, patch);
-  } catch (_) {
-    /* ignore */
+  registry.bestEffortUpdate(session.id, { lastUsed: nowIso() });
+  if (trackRun) {
+    const after = registry.criticalUpdate(session.id, patch, { phase: 'after-exit' });
+    if (!after.ok) {
+      registryWriteError = after.error;
+      process.stderr.write(
+        `ERROR: critical registry write failed after run (exit will be ${registry.REGISTRY_WRITE_EXIT}): ${after.error}\n`
+      );
+    }
+  }
+  if (spawnIdentityError && !registryWriteError) {
+    registryWriteError = spawnIdentityError;
+    process.stderr.write(
+      `ERROR: critical registry write failed recording runPid (exit will be ${registry.REGISTRY_WRITE_EXIT}): ${spawnIdentityError}\n`
+    );
   }
 
-  if (result.stdout) process.stdout.write(result.stdout.endsWith('\n') ? result.stdout : result.stdout + '\n');
-  if (result.stderr) process.stderr.write(result.stderr.endsWith('\n') ? result.stderr : result.stderr + '\n');
+  if (!asJson) {
+    if (result.stdout) process.stdout.write(result.stdout.endsWith('\n') ? result.stdout : result.stdout + '\n');
+    if (result.stderr) process.stderr.write(result.stderr.endsWith('\n') ? result.stderr : result.stderr + '\n');
+  } else if (result.stderr) {
+    process.stderr.write(result.stderr.endsWith('\n') ? result.stderr : result.stderr + '\n');
+  }
   process.stderr.write(`output: ${outPath}\n`);
   if (result.interruptedBy) {
     process.stderr.write(
       `interrupted (${result.interruptedBy}): forwarded SIGTERM to engine process group\n`
     );
   }
-  const code = result.timedOut ? 124 : exitFromSignal != null ? exitFromSignal : result.code || 0;
+  let code = result.timedOut ? 124 : exitFromSignal != null ? exitFromSignal : result.code || 0;
   if (result.timedOut) {
     process.stderr.write(`timed out after ${timeoutSec}s (signal ${result.signal || 'SIGTERM'})\n`);
   }
-  return { code, timedOut: result.timedOut, outPath, result, stopped, interruptedBy: result.interruptedBy || null };
+  if (registryWriteError) {
+    code = registry.REGISTRY_WRITE_EXIT;
+  }
+  return {
+    code,
+    timedOut: result.timedOut,
+    outPath,
+    result,
+    stopped,
+    interruptedBy: result.interruptedBy || null,
+    registryWriteError,
+    runId,
+    runStartedAt,
+    resultMtimeAtStart,
+  };
 }
 
 function headlessCommandPreview(session, { prompt, mode, force, outputFormat, trust, silent }) {
@@ -1696,6 +1843,7 @@ async function cmdRun(argv) {
   const outputFormat = flags['output-format'] ? String(flags['output-format']) : 'text';
   const force = Boolean(flags.force);
   const dryRun = Boolean(flags['dry-run']);
+  const asJson = Boolean(flags.json);
   const trust = !flags['no-trust'];
   const timeoutSec = flags.timeout != null && flags.timeout !== true ? Number(flags.timeout) : 0;
   if (flags.timeout && (Number.isNaN(timeoutSec) || timeoutSec < 0)) {
@@ -1750,7 +1898,8 @@ async function cmdRun(argv) {
       session = { ...entry, id: 'dry-run' };
     } else {
       session = registry.add(entry);
-      printSession(session, 'registered');
+      if (!asJson) printSession(session, 'registered');
+      else printSession(session, 'registered', { stream: process.stderr });
     }
   }
 
@@ -1770,6 +1919,15 @@ async function cmdRun(argv) {
   };
 
   if (dryRun) {
+    if (asJson) {
+      emitJson({
+        ok: true,
+        dryRun: true,
+        session: { id: session.id, title: session.title, engine: session.engine || 'cursor' },
+        command: headlessCommandPreview(session, runOpts),
+      });
+      return;
+    }
     const shell = headlessCommandPreview(session, runOpts);
     process.stdout.write(`cd ${JSON.stringify(session.cwd)} && ${shell}\n`);
     return;
@@ -1778,7 +1936,26 @@ async function cmdRun(argv) {
   // Copilot --help says --allow-all-tools is required for non-interactive mode,
   // but a no-tool text prompt succeeded without it (Mini, 2026-11-10, 1.0.83).
   // Do not add that grant unless the caller passes --force.
-  const { code } = await executeHeadlessRun(session, runOpts);
+  const { code, timedOut, outPath, result, registryWriteError } = await executeHeadlessRun(session, {
+    ...runOpts,
+    json: asJson,
+  });
+  if (asJson) {
+    const excerptSrc = (result && result.stdout) || '';
+    const payload = {
+      ok: code === 0 && !timedOut && !registryWriteError,
+      session: {
+        id: session.id,
+        title: session.title,
+        engine: session.engine || 'cursor',
+      },
+      lastExit: timedOut ? 124 : code,
+      outputPath: outPath,
+      outputExcerpt: runlib.outputExcerpt(excerptSrc),
+    };
+    if (registryWriteError) payload.registryWriteError = registryWriteError;
+    emitJson(payload);
+  }
   process.exitCode = code;
 }
 
@@ -1877,19 +2054,13 @@ async function cmdSpawn(argv) {
       prompt,
     });
     if (asJson) {
-      process.stdout.write(
-        JSON.stringify(
-          {
+      emitJson({
             dryRun: true,
             parent: { id: parent.id, title: parent.title, role: parent.role || 'master' },
             worker: previewEntry,
             interactive,
             prompt: previewWrapped,
-          },
-          null,
-          2
-        ) + '\n'
-      );
+          });
     } else {
       process.stderr.write(
         `[dry-run] would spawn worker "${title}" under "${parent.title}" (${parent.id})\n` +
@@ -1983,14 +2154,8 @@ async function cmdSpawn(argv) {
     try {
       engine.assertEngineAvailable(worker);
     } catch (err) {
-      fail(err.message);
+      fail(err.message, { json: asJson });
     }
-    worker = registry.update(worker.id, {
-      workerStatus: 'running',
-      lastUsed: nowIso(),
-      force,
-      stopRequested: false,
-    });
     const resumeOpts = {
       prompt: finalWrapped,
       trust,
@@ -1998,29 +2163,66 @@ async function cmdSpawn(argv) {
       herdrApp: herdrapp.herdrAppEnabled(flags),
       envOverlay,
     };
-    const plan = backends.executeResumeAll([worker], {
-      via: 'herdr',
+    const plan = launchViaHerdr([worker], {
       dryRun: false,
       resumeOpts,
+      flags,
+      json: asJson,
     });
-    if (asJson) {
-      process.stdout.write(
-        JSON.stringify(
-          {
-            worker: {
-              id: worker.id,
-              title: worker.title,
-              engine: worker.engine,
-              result: finalResult,
-              workerStatus: worker.workerStatus,
-            },
-            parent: { id: parent.id, title: parent.title },
-            herdr: plan,
+    const launchErr = herdrLaunchFailed(plan);
+    if (launchErr) {
+      try {
+        worker = registry.update(worker.id, {
+          workerStatus: 'failed',
+          lastError: launchErr,
+          lastUsed: nowIso(),
+        });
+      } catch (_) { /* ignore */ }
+      if (asJson) {
+        emitJson({
+          ok: false,
+          error: launchErr,
+          worker: {
+            id: worker.id,
+            title: worker.title,
+            engine: worker.engine,
+            result: finalResult,
+            workerStatus: 'failed',
+            lastError: launchErr,
           },
-          null,
-          2
-        ) + '\n'
-      );
+          parent: { id: parent.id, title: parent.title },
+          herdr: plan,
+        });
+      } else {
+        process.stderr.write(`spawn failed: ${launchErr}\n`);
+        reportHerdr(plan, flags);
+      }
+      process.exitCode = 1;
+      return;
+    }
+    try {
+      worker = registry.update(worker.id, {
+        workerStatus: 'running',
+        lastUsed: nowIso(),
+        force,
+        stopRequested: false,
+        lastError: null,
+      });
+    } catch (_) { /* ignore */ }
+    if (asJson) {
+      emitJson({
+        ok: true,
+        worker: {
+          id: worker.id,
+          title: worker.title,
+          engine: worker.engine,
+          result: finalResult,
+          workerStatus: 'running',
+        },
+        parent: { id: parent.id, title: parent.title },
+        herdr: plan,
+      });
+      reportHerdr(plan, { ...flags, json: true });
     } else {
       printSession(worker, 'spawned');
       process.stdout.write(`  result:  ${finalResult}\n`);
@@ -2035,7 +2237,7 @@ async function cmdSpawn(argv) {
     force,
     stopRequested: false,
   });
-  const { code, timedOut, outPath, stopped, result } = await executeHeadlessRun(worker, {
+  const { code, timedOut, outPath, stopped, result, runId, registryWriteError } = await executeHeadlessRun(worker, {
     prompt: finalWrapped,
     force,
     outputFormat: 'text',
@@ -2044,6 +2246,7 @@ async function cmdSpawn(argv) {
     silent: true,
     env: { ...process.env, ...envOverlay },
     quietCopilotHints: false,
+    json: asJson,
   });
 
   let workerStatus;
@@ -2061,28 +2264,26 @@ async function cmdSpawn(argv) {
     stopped,
     stdout: result && result.stdout,
     resultPath: finalResult,
+    runId,
   });
 
   if (asJson) {
-    process.stdout.write(
-      JSON.stringify(
-        {
-          worker: {
-            id: worker.id,
-            title: worker.title,
-            engine: worker.engine,
-            result: finalResult,
-            workerStatus,
-            resultSource: worker.resultSource || null,
-            lastExit: timedOut ? 124 : code,
-            lastOutput: outPath,
-          },
-          parent: { id: parent.id, title: parent.title },
-        },
-        null,
-        2
-      ) + '\n'
-    );
+    emitJson({
+      ok: code === 0 && !timedOut,
+      worker: {
+        id: worker.id,
+        title: worker.title,
+        engine: worker.engine,
+        result: finalResult,
+        workerStatus,
+        resultSource: worker.resultSource || null,
+        lastExit: timedOut ? 124 : code,
+        lastOutput: outPath,
+      },
+      parent: { id: parent.id, title: parent.title },
+      outputPath: outPath,
+      outputExcerpt: runlib.outputExcerpt((result && result.stdout) || ''),
+    });
   } else {
     process.stderr.write(
       `worker: ${worker.title} (${worker.id})\n` +
@@ -2193,18 +2394,12 @@ async function cmdMaster(argv) {
       prompt,
     };
     if (asJson) {
-      process.stdout.write(
-        JSON.stringify(
-          {
+      emitJson({
             dryRun: true,
             master: previewEntry,
             headless,
             prompt,
-          },
-          null,
-          2
-        ) + '\n'
-      );
+          });
     } else {
       process.stderr.write(
         `[dry-run] would create master "${title}" (${engineName})\n` +
@@ -2288,10 +2483,6 @@ async function cmdMaster(argv) {
   }
 
   if (!headless) {
-    master = registry.update(master.id, {
-      workerStatus: 'running',
-      lastUsed: nowIso(),
-    });
     const resumeOpts = {
       prompt: finalPrompt,
       trust,
@@ -2299,30 +2490,66 @@ async function cmdMaster(argv) {
       herdrApp: herdrapp.herdrAppEnabled(flags),
       envOverlay,
     };
-    const plan = backends.executeResumeAll([master], {
-      via: 'herdr',
+    const plan = launchViaHerdr([master], {
       dryRun: false,
       resumeOpts,
+      flags,
+      json: asJson,
     });
-    if (asJson) {
-      process.stdout.write(
-        JSON.stringify(
-          {
-            master: {
-              id: master.id,
-              title: master.title,
-              engine: master.engine,
-              result: finalResult,
-              plan: finalPlan,
-              workerStatus: master.workerStatus,
-              role: 'master',
-            },
-            herdr: plan,
+    const launchErr = herdrLaunchFailed(plan);
+    if (launchErr) {
+      try {
+        master = registry.update(master.id, {
+          workerStatus: 'failed',
+          lastError: launchErr,
+          lastUsed: nowIso(),
+        });
+      } catch (_) { /* ignore */ }
+      if (asJson) {
+        emitJson({
+          ok: false,
+          error: launchErr,
+          master: {
+            id: master.id,
+            title: master.title,
+            engine: master.engine,
+            result: finalResult,
+            plan: finalPlan,
+            workerStatus: 'failed',
+            role: 'master',
+            lastError: launchErr,
           },
-          null,
-          2
-        ) + '\n'
-      );
+          herdr: plan,
+        });
+      } else {
+        process.stderr.write(`master launch failed: ${launchErr}\n`);
+        reportHerdr(plan, flags);
+      }
+      process.exitCode = 1;
+      return;
+    }
+    try {
+      master = registry.update(master.id, {
+        workerStatus: 'running',
+        lastUsed: nowIso(),
+        lastError: null,
+      });
+    } catch (_) { /* ignore */ }
+    if (asJson) {
+      emitJson({
+        ok: true,
+        master: {
+          id: master.id,
+          title: master.title,
+          engine: master.engine,
+          result: finalResult,
+          plan: finalPlan,
+          workerStatus: 'running',
+          role: 'master',
+        },
+        herdr: plan,
+      });
+      reportHerdr(plan, { ...flags, json: true });
     } else {
       printSession(master, 'master');
       process.stdout.write(`  result:  ${finalResult}\n`);
@@ -2337,7 +2564,7 @@ async function cmdMaster(argv) {
     workerStatus: 'running',
     lastUsed: nowIso(),
   });
-  const { code, timedOut, outPath, stopped, result } = await executeHeadlessRun(master, {
+  const { code, timedOut, outPath, stopped, result, runId, registryWriteError } = await executeHeadlessRun(master, {
     prompt: finalPrompt,
     force,
     outputFormat: 'text',
@@ -2346,6 +2573,7 @@ async function cmdMaster(argv) {
     silent: true,
     env: { ...process.env, ...envOverlay },
     quietCopilotHints: false,
+    json: asJson,
   });
 
   let workerStatus;
@@ -2363,29 +2591,27 @@ async function cmdMaster(argv) {
     stopped,
     stdout: result && result.stdout,
     resultPath: finalResult,
+    runId,
   });
 
   if (asJson) {
-    process.stdout.write(
-      JSON.stringify(
-        {
-          master: {
-            id: master.id,
-            title: master.title,
-            engine: master.engine,
-            result: finalResult,
-            plan: finalPlan,
-            workerStatus,
-            role: 'master',
-            resultSource: master.resultSource || null,
-            lastExit: timedOut ? 124 : code,
-            lastOutput: outPath,
-          },
-        },
-        null,
-        2
-      ) + '\n'
-    );
+    emitJson({
+      ok: code === 0 && !timedOut,
+      master: {
+        id: master.id,
+        title: master.title,
+        engine: master.engine,
+        result: finalResult,
+        plan: finalPlan,
+        workerStatus,
+        role: 'master',
+        resultSource: master.resultSource || null,
+        lastExit: timedOut ? 124 : code,
+        lastOutput: outPath,
+      },
+      outputPath: outPath,
+      outputExcerpt: runlib.outputExcerpt((result && result.stdout) || ''),
+    });
   } else {
     printSession(master, 'master');
     process.stdout.write(`  result:  ${finalResult}\n`);
@@ -2466,7 +2692,7 @@ function cmdChildren(argv) {
     });
 
     if (asJson) {
-      process.stdout.write(JSON.stringify({ masters: rows }, null, 2) + '\n');
+      emitJson({ masters: rows });
       return;
     }
     if (rows.length === 0) {
@@ -2511,7 +2737,13 @@ function cmdChildren(argv) {
       { isAlive: orchestrate.defaultIsAlive, hostname: os.hostname() }
     );
     const resultPath = s.result || orchestrate.defaultResultPath(s.id);
-    const handoff = orchestrate.handoffDisplay(s, resultPath);
+    const hand = orchestrate.handoffInfo(s, resultPath);
+    const meta = orchestrate.waitOutcomeMeta(s, {
+      runtime: e.runtime,
+      exitCode: e.exitCode,
+      agentState,
+      derivedStatus: derived,
+    });
     return {
       id: s.id,
       title: s.title,
@@ -2519,10 +2751,15 @@ function cmdChildren(argv) {
       cwd: s.cwd,
       task: s.task || '',
       workerStatus: derived,
-      result: resultPath,
-      resultExists: handoff !== 'no',
-      resultSource: s.resultSource || null,
-      handoff,
+      outcome: meta.outcome,
+      stateSource: meta.stateSource,
+      conclusive: meta.conclusive,
+      result: hand.result,
+      resultExists: hand.resultExists,
+      fresh: hand.fresh,
+      stale: hand.stale,
+      resultSource: hand.resultSource,
+      handoff: hand.handoff,
       lastExit: s.lastExit != null ? s.lastExit : null,
       lastOutput: s.lastOutput || null,
       herdr: {
@@ -2536,7 +2773,7 @@ function cmdChildren(argv) {
   });
 
   if (asJson) {
-    process.stdout.write(JSON.stringify(rows, null, 2) + '\n');
+    emitJson(rows);
     return;
   }
   if (rows.length === 0) {
@@ -2556,7 +2793,7 @@ function cmdChildren(argv) {
 
 function cmdResult(argv) {
   const { args, flags } = parseArgs(argv);
-  if (!args[0]) fail('usage: af result <id|title> [--path]');
+  if (!args[0]) fail('usage: af result <id|title> [--path] [--json] [--require-fresh]');
   let session;
   try {
     session = registry.find(args[0]);
@@ -2565,26 +2802,49 @@ function cmdResult(argv) {
   }
   if (!session) fail(`session not found: ${args[0]}`);
 
+  const asJson = Boolean(flags.json);
+  const requireFresh = Boolean(flags['require-fresh']);
   const resultPath = session.result || orchestrate.defaultResultPath(session.id);
+  const hand = orchestrate.handoffInfo(session, resultPath);
+
   if (flags.path) {
-    process.stdout.write(resultPath + '\n');
+    if (asJson) emitJson({ path: resultPath, ...hand });
+    else process.stdout.write(resultPath + '\n');
     return;
   }
 
-  if (fs.existsSync(resultPath)) {
+  if (hand.resultExists) {
+    if (hand.stale) {
+      process.stderr.write(
+        `warning: handoff at ${resultPath} is stale (mtime not after latest run)\n`
+      );
+    }
     const body = fs.readFileSync(resultPath, 'utf8');
-    process.stdout.write(body.endsWith('\n') ? body : body + '\n');
-    process.exitCode = 0;
+    if (asJson) {
+      emitJson({
+        ok: !(requireFresh && hand.stale),
+        path: resultPath,
+        body,
+        ...hand,
+      });
+    } else {
+      process.stdout.write(body.endsWith('\n') ? body : body + '\n');
+    }
+    process.exitCode = requireFresh && hand.stale ? 1 : 0;
     return;
   }
 
   process.stderr.write(`no handoff yet at ${resultPath}\n`);
   const logFile = session.lastOutput;
+  let tail = '';
   if (logFile && fs.existsSync(logFile)) {
-    const text = fs.readFileSync(logFile, 'utf8');
-    const lines = text.split(/\r?\n/);
-    const tail = lines.slice(-40).join('\n');
-    process.stdout.write(tail.endsWith('\n') ? tail : tail + '\n');
+    const raw = fs.readFileSync(logFile, 'utf8');
+    const lines = raw.split(/\r?\n/);
+    tail = lines.slice(-40).join('\n');
+    if (!asJson) process.stdout.write(tail.endsWith('\n') ? tail : tail + '\n');
+  }
+  if (asJson) {
+    emitJson({ ok: false, path: resultPath, body: tail || null, ...hand });
   }
   process.exitCode = 1;
 }
@@ -2618,27 +2878,42 @@ function resolveLiveHerdrForSession(session, fetchResult) {
   return { key, address: enriched.address, name: enriched.name, enriched };
 }
 
-function snapshotWorkerRow(session, { herdrInfo = null, waitingHint = null } = {}) {
+function snapshotWorkerRow(session, { herdrInfo = null, waitingHint = null, agentState = null } = {}) {
+  const runtime = herdrInfo ? herdrInfo.runtime : null;
+  const effectiveHint =
+    runtime === 'running' && (agentState == null || agentState === '') ? null : waitingHint;
   const derived = orchestrate.deriveWorkerStatus(
     session,
     {
-      runtime: herdrInfo ? herdrInfo.runtime : null,
+      runtime,
       exitCode: herdrInfo ? herdrInfo.exitCode : null,
-      waitingHint,
+      waitingHint: effectiveHint,
     },
     { isAlive: orchestrate.defaultIsAlive, hostname: os.hostname() }
   );
   const resultPath = session.result || orchestrate.defaultResultPath(session.id);
-  const handoff = orchestrate.handoffDisplay(session, resultPath);
+  const hand = orchestrate.handoffInfo(session, resultPath);
+  const meta = orchestrate.waitOutcomeMeta(session, {
+    runtime,
+    exitCode: herdrInfo ? herdrInfo.exitCode : null,
+    agentState,
+    derivedStatus: derived,
+  });
   return {
     id: session.id,
     title: session.title,
     engine: session.engine || 'cursor',
     workerStatus: derived,
-    resultExists: handoff !== 'no',
-    resultSource: session.resultSource || null,
-    handoff,
-    result: resultPath,
+    outcome: meta.outcome,
+    stateSource: meta.stateSource,
+    conclusive: meta.conclusive,
+    agentState: meta.agentState,
+    resultExists: hand.resultExists,
+    fresh: hand.fresh,
+    stale: hand.stale,
+    resultSource: hand.resultSource,
+    handoff: hand.handoff,
+    result: hand.result,
     lastExit: session.lastExit != null ? session.lastExit : null,
     lastOutput: session.lastOutput || null,
   };
@@ -2702,20 +2977,23 @@ function resolveWaitTargets(args, flags = {}) {
  * After a successful headless worker/master run, ensure a result handoff exists
  * (af writes a fallback from stdout when the agent did not).
  */
-function applyResultHandoffFallback(session, { code, timedOut, stopped, stdout, resultPath }) {
+function applyResultHandoffFallback(session, { code, timedOut, stopped, stdout, resultPath, runId }) {
   if (stopped || timedOut || code !== 0) return session;
+  const dest = resultPath || session.result;
   const source = orchestrate.ensureResultHandoff(session, {
     code,
     timedOut,
     stdout,
-    resultPath: resultPath || session.result,
+    resultPath: dest,
+    runId: runId || session.runId,
   });
   if (!source) return session;
-  try {
-    return registry.update(session.id, { resultSource: source });
-  } catch (_) {
-    return session;
+  const patch = { resultSource: source };
+  if (source === 'worker' || source === 'af-fallback') {
+    patch.resultRunId = runId || session.runId || null;
   }
+  const wr = registry.criticalUpdate(session.id, patch, { phase: 'after-exit' });
+  return wr.ok && wr.session ? wr.session : session;
 }
 
 async function cmdWait(argv) {
@@ -2766,11 +3044,10 @@ async function cmdWait(argv) {
     const rows = [];
     for (const e of enrichedList) {
       const s = registry.find(e.session.id) || e.session;
-      let st = waitState.get(s.id) || { seenWorking: false, idleTicks: 0 };
+      let st = waitState.get(s.id) || { seenWorking: false, idleTicks: 0, noStateWarned: false };
       let waitingHint = null;
+      let agentState = null;
       if (e.runtime === 'running') {
-        // Prefer a fresh hc get for agent status (ls may omit status or be stale
-        // right after af send). Fall back to enrich/ls status when get fails.
         let statusObj = e.status;
         if ((e.address || e.name) && fetchResult.ok) {
           const got = runHcCli(['get', '--json', e.address || e.name], { timeoutMs: 3000 });
@@ -2785,7 +3062,7 @@ async function cmdWait(argv) {
             }
           }
         }
-        const agentState = orchestrate.agentStateFromHerdr({ status: statusObj });
+        agentState = orchestrate.agentStateFromHerdr({ status: statusObj });
         const next = orchestrate.detectWaitingTransition({
           agentState,
           seenWorking: st.seenWorking,
@@ -2794,15 +3071,28 @@ async function cmdWait(argv) {
           sendGraceMs,
           now: Date.now(),
         });
-        st = { seenWorking: next.seenWorking, idleTicks: next.idleTicks };
+        st = {
+          seenWorking: next.seenWorking,
+          idleTicks: next.idleTicks,
+          noStateWarned: st.noStateWarned,
+        };
         waitingHint = next.hint === 'waiting' ? 'waiting' : null;
       }
       waitState.set(s.id, st);
       const row = snapshotWorkerRow(s, {
         herdrInfo: { runtime: e.runtime, exitCode: e.exitCode },
         waitingHint,
+        agentState,
       });
       rows.push(row);
+
+      if (row.stateSource === 'none' && !st.noStateWarned) {
+        process.stderr.write(
+          `no agent state from Herdr for ${s.id}; cannot detect completion — use af tail / af result\n`
+        );
+        st.noStateWarned = true;
+        waitState.set(s.id, st);
+      }
 
       if (!asJson) {
         const prev = lastPrinted.get(s.id);
@@ -2827,7 +3117,7 @@ async function cmdWait(argv) {
     if (finished) {
       const code = orchestrate.waitExitCode(statuses, { timedOut: false });
       if (asJson) {
-        process.stdout.write(JSON.stringify(rows, null, 2) + '\n');
+        emitJson(rows);
       } else {
         process.stdout.write(
           `${pad('TITLE', 24)} ${pad('ID', ID_COL)} ${pad('ENGINE', 8)} ${pad('WORKER', 8)} ${pad('HANDOFF', 7)} EXIT\n`
@@ -2847,7 +3137,7 @@ async function cmdWait(argv) {
         { timedOut: true }
       );
       if (asJson) {
-        process.stdout.write(JSON.stringify(rows, null, 2) + '\n');
+        emitJson(rows);
       } else {
         process.stderr.write(`wait: timed out after ${timeoutSec}s\n`);
         process.stdout.write(
@@ -3016,10 +3306,11 @@ async function cmdTail(argv) {
 
 async function cmdSend(argv) {
   const { args, flags } = parseArgs(argv);
-  if (args.length < 2) fail('usage: af send <id|title> "text" [--timeout SEC] [--force]');
+  const asJsonEarly = Boolean(flags.json);
+  if (args.length < 2) fail('usage: af send <id|title> "text" [--timeout SEC] [--force] [--json]', { json: asJsonEarly });
   const session = requireSession(args[0]);
   const text = args.slice(1).join(' ');
-  if (!text) fail('usage: af send <id|title> "text" [--timeout SEC] [--force]');
+  if (!text) fail('usage: af send <id|title> "text" [--timeout SEC] [--force] [--json]', { json: asJsonEarly });
   const forceFlag = flags.force != null ? Boolean(flags.force) : null;
   const timeoutSec =
     flags.timeout != null && flags.timeout !== true ? Number(flags.timeout) : 0;
@@ -3034,14 +3325,28 @@ async function cmdSend(argv) {
     if (r.status !== 0) {
       fail(`hc send failed: ${(r.stderr || r.stdout || '').trim() || r.status}`);
     }
+    const runId = crypto.randomUUID();
+    const runStartedAt = nowIso();
+    let resultMtimeAtStart = null;
+    const rp = session.result || orchestrate.defaultResultPath(session.id);
     try {
-      registry.update(session.id, {
+      if (fs.existsSync(rp)) resultMtimeAtStart = fs.statSync(rp).mtimeMs;
+    } catch (_) {}
+    const wr = registry.criticalUpdate(
+      session.id,
+      {
         workerStatus: 'running',
         lastSendAt: nowIso(),
-        lastUsed: nowIso(),
-      });
-    } catch (_) {
-      /* ignore */
+        runId,
+        runStartedAt,
+        resultMtimeAtStart,
+        resultRunId: null,
+      },
+      { phase: 'before-launch' }
+    );
+    registry.bestEffortUpdate(session.id, { lastUsed: nowIso() });
+    if (!wr.ok) {
+      fail(`critical registry write failed before send: ${wr.error}`, { json: asJsonEarly });
     }
     process.stderr.write(`sent to ${session.title} via hc send ${live.key}\n`);
     return;
@@ -3074,6 +3379,8 @@ async function cmdSend(argv) {
   if (session.parent) envOverlay.AGENTFLEET_PARENT = session.parent;
   if (resultPath) envOverlay.AGENTFLEET_RESULT = resultPath;
 
+  const asJson = Boolean(flags.json);
+
   registry.update(session.id, {
     workerStatus: session.role === 'worker' ? 'running' : session.workerStatus,
     lastUsed: nowIso(),
@@ -3081,7 +3388,7 @@ async function cmdSend(argv) {
     force,
   });
 
-  const { code, timedOut, outPath, stopped, result } = await executeHeadlessRun(session, {
+  const { code, timedOut, outPath, stopped, result, runId, registryWriteError } = await executeHeadlessRun(session, {
     prompt,
     force,
     outputFormat: 'text',
@@ -3090,10 +3397,11 @@ async function cmdSend(argv) {
     silent: true,
     env: { ...process.env, ...envOverlay },
     quietCopilotHints: session.engine === 'copilot',
+    json: asJson,
   });
 
+  let workerStatus = null;
   if (session.role === 'worker' || session.role === 'master') {
-    let workerStatus;
     if (stopped) workerStatus = 'stopped';
     else if (!timedOut && code === 0) workerStatus = 'done';
     else workerStatus = 'failed';
@@ -3108,10 +3416,25 @@ async function cmdSend(argv) {
       stopped,
       stdout: result && result.stdout,
       resultPath,
+      runId,
     });
-    if (session.role === 'worker') {
+    if (session.role === 'worker' && !asJson) {
       process.stderr.write(`send: ${session.title} → ${workerStatus} (log ${outPath})\n`);
     }
+  }
+  if (asJson) {
+    emitJson({
+      ok: code === 0 && !timedOut,
+      session: {
+        id: session.id,
+        title: session.title,
+        engine: session.engine || 'cursor',
+        workerStatus,
+      },
+      lastExit: timedOut ? 124 : code,
+      outputPath: outPath,
+      outputExcerpt: runlib.outputExcerpt((result && result.stdout) || ''),
+    });
   }
   process.exitCode = code;
 }
@@ -3243,7 +3566,7 @@ async function cmdStop(argv) {
   }
 
   if (asJson) {
-    process.stdout.write(JSON.stringify(allChildren ? results : results[0], null, 2) + '\n');
+    emitJson(allChildren ? results : results[0]);
   } else if (!results.every((r) => r.noop)) {
     for (const r of results) {
       if (r.noop) continue;
@@ -3270,13 +3593,14 @@ function cmdLog(argv) {
 
 function cmdHerdrTemplates(argv) {
   const { flags } = parseArgs(argv);
+  const dryRun = Boolean(flags['dry-run']);
   const srcDir = path.join(__dirname, '..', 'templates');
   const destDir = path.join(require('../lib/util').homeDir(), '.config', 'herdr-core', 'templates');
   if (!fs.existsSync(srcDir)) fail(`bundled templates not found at ${srcDir}`);
-  fs.mkdirSync(destDir, { recursive: true });
   const files = fs.readdirSync(srcDir).filter((f) => f.endsWith('.md'));
   let copied = 0;
   let skipped = 0;
+  if (!dryRun) fs.mkdirSync(destDir, { recursive: true });
   for (const f of files) {
     const dest = path.join(destDir, f);
     if (fs.existsSync(dest) && !flags.force) {
@@ -3284,11 +3608,18 @@ function cmdHerdrTemplates(argv) {
       skipped++;
       continue;
     }
+    if (dryRun) {
+      process.stdout.write(`[dry-run] would install ${dest}\n`);
+      copied++;
+      continue;
+    }
     fs.copyFileSync(path.join(srcDir, f), dest);
     process.stdout.write(`installed ${dest}\n`);
     copied++;
   }
-  process.stderr.write(`herdr templates: installed ${copied}, skipped ${skipped}. Then: hc templates\n`);
+  process.stderr.write(
+    `herdr templates: ${dryRun ? 'would install' : 'installed'} ${copied}, skipped ${skipped}. Then: hc templates\n`
+  );
 }
 
 function cmdHerdrApp(argv) {
@@ -3331,10 +3662,181 @@ function cmdHerdrApp(argv) {
   fail(`unknown herdr-app subcommand: ${sub}\nusage: af herdr-app install|status`);
 }
 
-function fail(msg) {
-  process.stderr.write(msg + '\n');
+
+function cmdDoctor(argv) {
+  const { flags } = parseArgs(argv);
+  const asJson = Boolean(flags.json);
+  const checks = [];
+  function add(name, ok, detail) {
+    checks.push({ name, ok: Boolean(ok), detail: detail || null });
+  }
+  add('node', true, process.version);
+  add('agentfleet_home', true, fleetDir());
+  add('registry', true, fs.existsSync(registryPath()) ? registryPath() : `${registryPath()} (will create on first write)`);
+  try {
+    const eng = engine.resolveEngine({});
+    add('default_engine', true, `${eng.engine} (from ${eng.source})`);
+  } catch (err) {
+    add('default_engine', false, err.message);
+  }
+  const hcPath = backends.resolveHcBin();
+  const hcWhich = require('../lib/util').which('hc');
+  add('hc_on_path', Boolean(hcWhich), hcWhich || hcPath);
+  if (hcWhich) {
+    const st = herdr.defaultRunHc(['server', 'status'], { timeoutMs: 3000 });
+    add(
+      'hc_server_status',
+      st.status === 0,
+      st.status === 0 ? (st.stdout || '').trim().slice(0, 200) : (st.stderr || st.stdout || `exit ${st.status}`).trim().slice(0, 200)
+    );
+    const ls = herdr.fetchHerdrTerminals({ timeoutMs: 3000 });
+    add('hc_ls', ls.ok, ls.ok ? `${(ls.terminals || []).length} terminals` : ls.error);
+  } else {
+    add('hc_server_status', false, 'hc not on PATH');
+    add('hc_ls', false, 'hc not on PATH');
+  }
+  try {
+    const bin = cursor.resolveCursorBin();
+    const present = Boolean(bin) && (fs.existsSync(bin) || Boolean(require('../lib/util').which(bin)));
+    add('cursor_bin', present, bin);
+  } catch (err) {
+    add('cursor_bin', false, err.message);
+  }
+  try {
+    const bin = copilot.resolveCopilotBin();
+    const present = Boolean(
+      process.env.AGENTFLEET_COPILOT_BIN || require('../lib/util').which('copilot') || (bin && fs.existsSync(bin))
+    );
+    add('copilot_bin', present, bin);
+  } catch (err) {
+    add('copilot_bin', false, err.message);
+  }
+  // copilot is optional; hc optional for plain-only workflows — still report but only fail on home/node/cursor when missing
+  const ok = checks
+    .filter((c) => !['copilot_bin', 'hc_on_path', 'hc_server_status', 'hc_ls'].includes(c.name))
+    .every((c) => c.ok);
+  if (asJson) {
+    emitJson({ ok, checks });
+  } else {
+    for (const c of checks) {
+      process.stdout.write(`${c.ok ? 'ok ' : '!! '} ${c.name}: ${c.detail || ''}\n`);
+    }
+    process.stdout.write(
+      '\nHerdr smoke: hc server status && hc ls --json | head -c 200 && af ls\n'
+    );
+  }
+  process.exitCode = ok ? 0 : 1;
+}
+
+function emitJson(value) {
+  process.stdout.write(JSON.stringify(value, null, 2) + '\n');
+}
+
+function fail(msg, opts = {}) {
+  const asJson = Boolean(opts && opts.json);
+  if (asJson) {
+    emitJson({ ok: false, error: String(msg) });
+  } else {
+    process.stderr.write(String(msg) + '\n');
+  }
   process.exit(1);
 }
+
+/**
+ * Launch sessions via Herdr with discovery refuse + per-id launch locks.
+ * Dry-run never executes hc run / labels; discovery failure on dry-run plans as empty live.
+ */
+function launchViaHerdr(sessions, { dryRun = false, resumeOpts, flags = {}, json = false } = {}) {
+  const discovery = herdr.fetchHerdrTerminals();
+  if (!discovery.ok) {
+    if (!dryRun) {
+      fail(launch.discoveryRefuseMessage(discovery.error), { json });
+    }
+    process.stderr.write(`herdr: ${discovery.error || 'query failed'} (dry-run assuming none live)\n`);
+  }
+  const live = discovery.ok
+    ? (discovery.terminals || [])
+        .filter((t) => herdr.isLiveTerminal(t))
+        .map((t) => ({
+          name: t.name || null,
+          labels: {
+            ...(t.labels || {}),
+            ...(t.afId ? { af_id: t.afId } : {}),
+          },
+          address: t.address || null,
+          afId: t.afId || null,
+        }))
+    : [];
+
+  if (dryRun) {
+    return backends.executeResumeAll(sessions, {
+      via: 'herdr',
+      dryRun: true,
+      resumeOpts,
+      herdrLive: live,
+    });
+  }
+
+  const allResults = [];
+  const allCommands = [];
+  for (const s of sessions) {
+    let held = null;
+    try {
+      held = launch.tryAcquireLaunchLock(s.id);
+      if (!held) {
+        allResults.push({
+          title: s.title,
+          id: s.id,
+          skipped: true,
+          busy: true,
+          name: null,
+          error: 'already running/launching',
+        });
+        process.stderr.write(`skip "${s.title}": already running/launching\n`);
+        continue;
+      }
+      const again = backends.fetchHerdrLive();
+      if (!again.ok) {
+        fail(launch.discoveryRefuseMessage(again.error), { json });
+      }
+      const plan = backends.executeResumeAll([s], {
+        via: 'herdr',
+        dryRun: false,
+        resumeOpts,
+        herdrLive: again.terminals,
+      });
+      if (plan.commands) allCommands.push(...plan.commands);
+      if (plan.results) allResults.push(...plan.results);
+    } finally {
+      if (held) launch.releaseLaunchLock(held);
+    }
+  }
+  return {
+    backend: 'herdr',
+    executed: true,
+    commands: allCommands,
+    results: allResults,
+    discoveryOk: true,
+    discoveryError: null,
+  };
+}
+
+function herdrLaunchFailed(plan) {
+  if (!plan || !plan.results) return null;
+  for (const r of plan.results) {
+    if (r.busy) return r.error || 'already running/launching';
+    if (!r.skipped && r.status != null && r.status !== 0) {
+      return (r.stderr && String(r.stderr).trim()) || `hc run failed (exit ${r.status})`;
+    }
+  }
+  return null;
+}
+
+// `af ls | head` closes stdout early; exit quietly instead of crashing with EPIPE.
+process.stdout.on('error', (err) => {
+  if (err && err.code === 'EPIPE') process.exit(0);
+  throw err;
+});
 
 main().catch((err) => {
   process.stderr.write(String(err && err.stack ? err.stack : err) + '\n');

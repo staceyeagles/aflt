@@ -4,6 +4,8 @@ Track Cursor CLI (`cursor-agent` / `agent`) and optional GitHub Copilot CLI chat
 
 Built for a macOS workflow (Herdr / iTerm2 / tmux / WezTerm / Zellij-as-plain) with **one git worktree per agent**. Sessions launched in Herdr also show up in the native Herdr desktop app (one space per repo, one tab per session).
 
+Engine × mode behavior (liveness, completion, handoffs, `af wait`): see [docs/CAPABILITIES.md](docs/CAPABILITIES.md).
+
 ## Why Node?
 
 Zero runtime dependencies beyond Node ≥18. A single `npm i -g .` installs both `agentfleet` and the short alias `af`. The Cursor CLI itself ships as a Node binary, so the toolchain is already familiar.
@@ -32,6 +34,14 @@ Optional shell completion (bash):
 
 ```bash
 source /path/to/agentfleet/completions/af.bash
+```
+
+### Herdr smoke / `af doctor`
+
+```bash
+hc server status && hc ls --json | head -c 200 && af ls
+af doctor          # read-only checks (node, home, hc, engines)
+af doctor --json
 ```
 
 ## Verified Cursor CLI facts
@@ -112,7 +122,7 @@ af adopt --all                      # label already-live af terminals for the He
 | `af log <title\|id>` | Print last captured run (or `--path`) |
 | `af spawn --parent … --prompt …` | Create a worker under a master (headless by default; `--interactive` → Herdr) |
 | `af children [<id\|title>]` | List workers for a master, or summarize masters |
-| `af result <id\|title>` | Print a worker handoff file (or `--path`) |
+| `af result <id\|title>` | Print handoff (`--path`, `--json`, `--require-fresh` exits 1 if stale) |
 | `af resume <title\|id>` | Resume one (argv from `session.engine`). Default: Herdr when `hc` is on PATH; prints `Attach: hc attach <name>`. `--here` / `--via plain` = this terminal. `--open` = new iTerm2 attach tab (default in an iTerm TTY). `--force` → Copilot `--allow-all-tools` only. |
 | `af resume` / `af pick` | Interactive multi-select (TTY only; shows ENGINE); resume via Herdr |
 | `af resume --all [--tag X] [--via …]` | Fleet reopen (mixed engines OK; `--all` still auto-detects backend; not default-Herdr) |
@@ -121,24 +131,27 @@ af adopt --all                      # label already-live af terminals for the He
 | `af engine [cursor\|copilot]` | Print default engine + source (flag/env/config/builtin), or set it |
 | `af herdr-templates` | Install Cursor/OpenCode/Copilot templates into `~/.config/herdr-core/templates` |
 | `af herdr-app install` / `status` | Install the af-sessions Herdr panel + `af` layout (symlink by default) |
+| `af doctor [--json]` | Read-only environment checks |
 | `af rename` / `af done` / `af note` | Metadata |
-| `af rm <title\|id>` | Remove session + af-owned files under `$AGENTFLEET_HOME` (`--keep-files`, `--children`, `--with-master`, `--dry-run`, `--force`) |
+| `af rm <title\|id>` | Remove session + af-owned files under `$AGENTFLEET_HOME` by default. Prefer `--dry-run` first; `--keep-files` keeps handoffs/logs (`--children`, `--with-master`, `--force`) |
 | `af export [file]` / `af import-file <file>` | Backup / restore registry |
 
 Registry file: `~/.agentfleet/sessions.json` (atomic write: temp + rename). Override with `AGENTFLEET_HOME` or `AGENTFLEET_REGISTRY`. Default engine config: `~/.agentfleet/config.json` (separate file).
 
 Each entry stores: `id`, `title`, `chatId`, `cwd`, `branch`, `model`, `engine` (`cursor`\|`copilot`, default `cursor`), `created`, `lastUsed`, `status` (`active`\|`paused`\|`done`), `tags`, `notes`, `prompt`, and optionally `herdr` (last-known runtime evidence from `af sync`). Orchestrator fields (stage 1): `parent`, `role`, `task`, `result`, `workerStatus` (see below).
 
-### Default engine
+### Launch defaults
 
-For **new** sessions (`af new`, `af add`, `af run` when the title is not already registered), engine resolution is:
+Single source of truth for how launches behave (also see [docs/CAPABILITIES.md](docs/CAPABILITIES.md)):
 
-1. Explicit `--engine cursor|copilot`
-2. `AGENTFLEET_ENGINE` env
-3. `defaultEngine` in `$AGENTFLEET_HOME/config.json`
-4. Builtin `cursor`
+1. **Default engine** (new sessions only: `af new` / `af add` / first `af run`): `--engine` → `AGENTFLEET_ENGINE` → `$AGENTFLEET_HOME/config.json` `defaultEngine` → builtin `cursor`. Existing sessions keep their recorded `engine`.
+2. **Herdr vs plain:** single `af resume <title>` defaults to Herdr when `hc` is on PATH; `--here` / `--via plain` stays in this terminal. `af resume --all` still auto-detects (`AGENTFLEET_VIA` → inside Herdr → tmux → TERM_PROGRAM → … → plain).
+3. **`--trust` / `--force`:** Cursor gets `--trust` unless `--no-trust`. `--force` is Copilot `--allow-all-tools` only (Cursor unchanged here).
+4. **TERM/color:** Herdr launches prefix `env -u NO_COLOR -u FORCE_COLOR` and, if caller `TERM` is empty/dumb, set `TERM=xterm-256color` `COLORTERM=truecolor`.
+5. **Herdr app labels:** on by default (`--keep` + `herdr.space` / `herdr.tab`); opt out with `--no-herdr-app` or `AGENTFLEET_HERDR_APP=0`.
+6. **Env on launch:** `AGENTFLEET_ID` always; workers also `AGENTFLEET_PARENT` / `AGENTFLEET_RESULT`; masters `AGENTFLEET_ROLE` / `AGENTFLEET_PLAN` as applicable.
 
-Existing sessions always keep their recorded `engine`. `af run` on an existing session without `--engine` is never blocked by a differing default; only an explicit `--engine` that mismatches the session errors.
+Exit **75**: critical registry write failed after a run finished (result still printed; `--json` includes `registryWriteError`).
 
 ### STATUS vs HERDR
 
@@ -168,7 +181,7 @@ The Herdr desktop app (herdr-app) shows any core terminal that carries labels `h
 - **On launch:** `af resume` / `--via herdr` / interactive pick / `resume --all --via herdr` add `--keep` plus those labels (before the `env -u …` argv), then best-effort `herdr-app do tab.rename` to the af title (retries ~3s; never fails the resume if rename misses).
 - **Opt out:** `--no-herdr-app`, or `AGENTFLEET_HERDR_APP=0|false|off|no`. Override the app binary with `AGENTFLEET_HERDR_APP_BIN`.
 - **Already-running terminals:** `af adopt <title|id …>` or `af adopt --all` runs `hc label` + `hc keep` (skips label/keep when labels already match; still tries tab rename).
-- **Agents panel:** Cursor does not report OSC 7501, so the app's Agents panel stays empty for these sessions.
+- **Herdr Agents panel (OSC 7501):** Cursor does not emit OSC 7501, so Cursor sessions do not appear as agent-state rows there. **Copilot** can report `idle`/`working`/`done`/`blocked` via OSC 7501 when the Herdr core supports it.
 - **Keep:** core `--keep` / `hc keep` means a lost program is replaced with a shell — Cursor is **not** re-run. Use `af resume` again to relaunch the agent.
 
 Auto-detect order: `$AGENTFLEET_VIA` → inside Herdr (`$HERDR`/`$HC_TERMINAL` set and `hc` on PATH) → inside tmux → `TERM_PROGRAM` (WezTerm / iTerm) → `tmux` on PATH → `wezterm` → plain.
@@ -193,7 +206,14 @@ herdr-app do layout.switch --name main
 
 Symlinked edits are not hot-reloaded (the app watches `~/.config/herdr-app`, not the link targets): after editing the repo copy, switch layouts away and back (`ctrl-shift-l`) or restart the app. Verified on herdr-app 0.1.15.
 
-Escape hatch (always works): `ctrl-alt-shift-escape` restores the default `main` layout. The panel lists sessions from `af ls --json` (title, folder, branch, engine, lifecycle, Herdr runtime dot, last used; Copilot rows show a small `copilot` marker); click a running row to focus its space/tab, or a stopped one to `af resume … --no-open` (`af` picks the session engine).
+Escape hatch (always works): `ctrl-alt-shift-escape` restores the default `main` layout.
+
+**af-sessions panel actions** (viewer, not a second registry):
+
+- Lists sessions from `af ls --json --all` (title, folder, engine, lifecycle, Herdr runtime, last used).
+- **Running + tab already in app:** click → focus space/tab.
+- **Running but not labeled into the app:** click → `af adopt <title>` then focus.
+- **Not running:** click → `af resume <title> --no-open`, then poll until the Herdr tab appears and focus it.
 
 ## Master and worker agents (stage 1)
 
@@ -233,7 +253,7 @@ af result auth-refactor-w1 --path
 
 The worker prompt is wrapped with instructions to write a markdown handoff (`Summary`, `Files changed`, `Open questions`) to `result` and not to commit/push.
 
-Because the handoff lives outside the worker's folder, af passes `--add-dir <results dir>` to Copilot and Cursor for any session with a `result` path. Copilot also gets `--allow-tool=write(<result>)` so the handoff is writable without `--force` (see stage 3 “Permissions and handoffs”). `workerStatus` reflects the exit code; the `HANDOFF` column shows `yes` / `af` / `no` (`resultSource` / `handoff` in `--json`).
+Because the handoff lives outside the worker's folder, af passes `--add-dir <results dir>` to Copilot and Cursor for any session with a `result` path. Copilot also gets `--allow-tool=write(<result>)` so the handoff is writable without `--force` (see stage 3 “Permissions and handoffs”). `workerStatus` reflects the exit code; the `HANDOFF` column shows `yes` / `af` / `stale` / `no` (`resultExists` / `fresh` / `stale` / `resultSource` in `--json`). Prefer `af result --require-fresh` when a master must not read an old handoff.
 
 ## Master and worker agents (stage 2)
 
@@ -271,7 +291,7 @@ af stop --all-children auth-refactor
 | 2 | `--timeout` elapsed |
 | 3 | At least one `waiting` (needs input) and none failed/stopped |
 
-Interactive `waiting` is best-effort from Herdr agent state (`hc get --json` → `status.state`: `idle`\|`working`\|`done`\|`blocked`\|`error`, via OSC 7501). Cursor does **not** emit OSC 7501 (`status` stays null). When status is present: `blocked` → `waiting`; after a `working` sighting, `idle` for ≥ one `--interval` → `waiting`.
+Interactive `waiting` is best-effort from Herdr agent state (`hc get --json` → `status.state`: `idle`|`working`|`done`|`blocked`|`error`, via OSC 7501). Cursor does **not** emit OSC 7501 (`status` stays null): `af wait` keeps those workers `running` with `stateSource: "none"` / `conclusive: false` until the **terminal exits** or `--timeout` (exit 2), and prints a one-time stderr note. When status is present (Copilot): `blocked` → `waiting`; after a `working` sighting, `idle`/`done` → `waiting`. Details: [docs/CAPABILITIES.md](docs/CAPABILITIES.md).
 
 **Master loop example:**
 
@@ -321,7 +341,7 @@ The orchestrator template teaches the master to keep its plan at `$AGENTFLEET_PL
 
 Headless engine processes run in their own process group. If the wrapping `af` process gets **SIGINT / SIGTERM / SIGHUP**, it forwards **SIGTERM** to that group (then SIGKILL after a short wait), records `workerStatus: stopped` for workers/masters, finishes the run log footer, and exits **130** / **143** (or 129 for SIGHUP) so the engine is not orphaned.
 
-`af rm` removes the registry row and, unless `--keep-files`, af-owned paths under `$AGENTFLEET_HOME` only: `results/<…>` handoff, `runs/<id>/`, and `plans/<…>` for masters. Paths outside those dirs are skipped with a warning. `--children <master>` removes workers (`--with-master` includes the master). `--dry-run` lists actions. A running session is refused unless `--force` (which does **not** stop the process — use `af stop` first).
+`af rm` removes the registry row and, **by default**, af-owned paths under `$AGENTFLEET_HOME`: `results/<…>` handoff, `runs/<id>/`, and `plans/<…>` for masters. **Always run `--dry-run` first** if you are unsure. Use `--keep-files` to drop only the registry row and keep handoffs/logs. Paths outside those dirs are skipped with a warning. `--children <master>` removes workers (`--with-master` includes the master). A running session is refused unless `--force` (which does **not** stop the process — use `af stop` first).
 
 **End-to-end sketch:**
 
@@ -437,3 +457,9 @@ Session metadata is read from `~/.copilot/session-state/<uuid>/` (`workspace.yam
 - Always resume with the **same cwd/workspace** the chat was created in.
 - iTerm2 / WezTerm backends need those apps installed; on Linux CI only tmux/plain are exercised.
 - This tool does not implement Zellij integration beyond `--via plain`.
+
+## History / changelog
+
+- **Hardening (2026-11):** dry-run purity; single-JSON stdout; Herdr discovery refuse + launch locks; critical vs cosmetic registry writes (exit 75); handoff freshness (`stale` / `--require-fresh`); `af wait` inconclusive when no OSC agent state; `af doctor`; capability matrix in `docs/CAPABILITIES.md`.
+- Copilot interactive can report OSC 7501 agent state to Herdr; Cursor still does not — older docs that said "Cursor and Copilot don't report status" are outdated for Copilot.
+- Herdr app labeling (`herdr.space` / `herdr.tab`) and the af-sessions panel (focus / adopt / resume) landed after the initial registry + resume backends.

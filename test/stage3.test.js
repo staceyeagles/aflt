@@ -301,6 +301,7 @@ esac
     );
     assert.equal(r.status, 0, r.stderr + r.stdout);
     const body = JSON.parse(r.stdout);
+    assert.equal(body.ok, true);
     assert.equal(body.master.role, 'master');
     assert.equal(body.master.title, 'MasterFleet');
     assert.equal(body.master.workerStatus, 'running');

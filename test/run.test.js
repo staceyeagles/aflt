@@ -149,6 +149,7 @@ describe('af run CLI dry-run', () => {
     assert.ok(r.stdout.includes('af send'));
     assert.ok(r.stdout.includes('af stop'));
     assert.ok(r.stdout.includes('af rm'));
+    assert.ok(r.stdout.includes('doctor') || r.stdout.includes('af doctor'));
     assert.ok(r.stdout.includes('--keep-files'));
     assert.ok(r.stdout.includes('--children'));
     assert.ok(r.stdout.includes('af adopt'));

@@ -491,6 +491,16 @@ Names are lowercased, sanitized to `[a-z0-9_-]`, truncated to 32 chars, and de-d
 
 #### Herdr app (desktop)
 
+### Smoke
+
+```bash
+hc server status && hc ls --json | head -c 200 && af ls
+af doctor
+```
+
+Capability matrix: [CAPABILITIES.md](CAPABILITIES.md).
+
+
 The Herdr desktop app shows any core terminal labeled `herdr.space=<id>` and `herdr.tab=<id>` (unknown ids become a new space/tab). `af` derives:
 
 - `herdr.space` = `sp` + md5(`agentfleet:space:` + normalized cwd) — sessions in the same repo/cwd share a space
@@ -505,7 +515,7 @@ af adopt --all                 # or: af adopt <title|id …>
 af adopt --all --dry-run
 ```
 
-That runs `hc label <addr> herdr.space=… herdr.tab=…` and `hc keep <addr>`, then tries tab rename. Cursor does not report OSC 7501, so the app's Agents panel stays empty for these sessions.
+That runs `hc label <addr> herdr.space=… herdr.tab=…` and `hc keep <addr>`, then tries tab rename. Cursor does not emit OSC 7501 (Agents panel empty for Cursor); Copilot may report agent state when supported. See [CAPABILITIES.md](CAPABILITIES.md).
 
 Optional sidebar panel (lists af sessions; click to focus/resume):
 
@@ -549,7 +559,8 @@ af rename "$TASK" "auth-jwt-done"
 af done "$TASK"          # status=done (hidden from default ls)
 af ls --all              # include done
 af export ~/backup-af-sessions.json
-af rm "$TASK"            # remove registry row only (does not delete the Cursor chat or worktree)
+af rm --dry-run "$TASK"  # preview; default deletes af-owned results/runs/plans under $AGENTFLEET_HOME
+af rm --keep-files "$TASK"  # registry row only (keeps handoffs/logs; never deletes Cursor/Copilot chats)
 
 # When finished with the worktree itself (your git hygiene — af does not delete trees)
 git -C "$REPO" worktree remove "$REPO-wt-${TASK}"
