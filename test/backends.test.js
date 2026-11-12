@@ -162,8 +162,11 @@ describe('command building', () => {
 });
 
 describe('herdr backend', () => {
-  it('herdr plan uses hc run --bg with name, cwd, labels, env color clear, and no -- separator', () => {
-    const plan = backends.buildResumeAllPlan(sample, { via: 'herdr' });
+  it('herdr plan uses hc run --bg with name, cwd, labels, keep, herdr app labels, env color clear, and no -- separator', () => {
+    const plan = backends.buildResumeAllPlan(sample, {
+      via: 'herdr',
+      resumeOpts: { herdrApp: true, env: { TERM: 'xterm-256color' } },
+    });
     assert.equal(plan.backend, 'herdr');
     assert.equal(plan.commands.length, 2);
     const c0 = plan.commands[0];
@@ -171,18 +174,77 @@ describe('herdr backend', () => {
     assert.deepEqual(c0.argv.slice(5, 9), ['--name', 'auth-refactor', '--cwd', '/tmp/wt-auth']);
     assert.ok(c0.argv.includes('af_id=auth-aaa'));
     assert.ok(c0.argv.includes('title=Auth refactor'));
+    assert.ok(c0.argv.includes('--keep'));
+    assert.ok(c0.argv.some((a) => String(a).startsWith('herdr.space=sp')));
+    assert.ok(c0.argv.some((a) => String(a).startsWith('herdr.tab=tb')));
+    const keepIdx = c0.argv.indexOf('--keep');
+    const envIdx = c0.argv.indexOf('env');
+    assert.ok(keepIdx > 0 && keepIdx < envIdx);
     // Verified 2026-11-10 on Mini hc 0.1.16: a `--` token is treated as the
     // program name and fails with spawn_failed ("cannot start \"--\"").
     assert.ok(!c0.argv.includes('--'));
     const resume = cursor.buildResumeCommand(sample[0]);
     const wrapped = ['env', '-u', 'NO_COLOR', '-u', 'FORCE_COLOR', ...resume];
     assert.deepEqual(c0.argv.slice(-wrapped.length), wrapped);
-    const envIdx = c0.argv.indexOf('env');
     assert.deepEqual(c0.argv.slice(envIdx, envIdx + 5), ['env', '-u', 'NO_COLOR', '-u', 'FORCE_COLOR']);
     assert.equal(c0.argv[envIdx + 5], resume[0]);
+    assert.ok(!c0.argv.includes('TERM=xterm-256color'));
     assert.ok(c0.shell.startsWith('hc run --bg'));
     assert.ok(c0.shell.includes('env -u NO_COLOR -u FORCE_COLOR'));
+    assert.ok(c0.shell.includes('--keep'));
     assert.ok(!c0.shell.includes(' -- -- '));
+  });
+
+  it('herdrEnvArgs sets TERM/COLORTERM when TERM is dumb, empty, or unset', () => {
+    const expected = [
+      'env',
+      '-u',
+      'NO_COLOR',
+      '-u',
+      'FORCE_COLOR',
+      'TERM=xterm-256color',
+      'COLORTERM=truecolor',
+    ];
+    assert.deepEqual(backends.herdrEnvArgs({ TERM: 'dumb' }), expected);
+    assert.deepEqual(backends.herdrEnvArgs({ TERM: '' }), expected);
+    assert.deepEqual(backends.herdrEnvArgs({}), expected);
+    assert.deepEqual(backends.herdrEnvArgs({ TERM: 'xterm-256color' }), [
+      'env',
+      '-u',
+      'NO_COLOR',
+      '-u',
+      'FORCE_COLOR',
+    ]);
+  });
+
+  it('buildHerdrCommands inserts TERM assignments for dumb caller env', () => {
+    const cmds = backends.buildHerdrCommands(sample.slice(0, 1), {
+      resumeOpts: { herdrApp: false, env: { TERM: 'dumb' } },
+    });
+    const argv = cmds[0].argv;
+    const envIdx = argv.indexOf('env');
+    assert.deepEqual(argv.slice(envIdx, envIdx + 7), [
+      'env',
+      '-u',
+      'NO_COLOR',
+      '-u',
+      'FORCE_COLOR',
+      'TERM=xterm-256color',
+      'COLORTERM=truecolor',
+    ]);
+  });
+
+  it('herdr plan omits --keep and herdr.space/tab when herdrApp disabled', () => {
+    const plan = backends.buildResumeAllPlan(sample, {
+      via: 'herdr',
+      resumeOpts: { herdrApp: false },
+    });
+    const c0 = plan.commands[0];
+    assert.ok(!c0.argv.includes('--keep'));
+    assert.ok(!c0.argv.some((a) => String(a).startsWith('herdr.space=')));
+    assert.ok(!c0.argv.some((a) => String(a).startsWith('herdr.tab=')));
+    assert.equal(c0.herdrApp, false);
+    assert.equal(c0.tabId, null);
   });
 
   it('herdr plan does not include saved session.prompt', () => {

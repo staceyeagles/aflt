@@ -9,6 +9,7 @@ const copilot = require('../lib/copilot');
 const backends = require('../lib/backends');
 const runlib = require('../lib/run');
 const herdr = require('../lib/herdr');
+const herdrapp = require('../lib/herdrapp');
 const {
   parseArgs,
   resolveCwd,
@@ -39,15 +40,21 @@ Usage:
                             Same, resuming an existing tracked session
   af log <title|id> [--path]  Print last captured run output (or its path)
   af resume <title|id> [--via herdr|plain] [--here] [--open|--no-open]
-                            [--prompt "..."] [--dry-run]
+                            [--prompt "..."] [--dry-run] [--no-herdr-app]
                             Resume one session. Default: Herdr when hc is on PATH
                             (prints Attach: hc attach <name>). --here / --via plain:
                             this terminal. --open: new iTerm2 tab running hc attach
                             (default in an iTerm TTY; --no-open disables).
+                            Herdr launches also label herdr.space / herdr.tab (and
+                            --keep) so the desktop app shows the tab; --no-herdr-app
+                            disables that.
   af resume | af resume -i | af pick
                             Interactive multi-select (TTY only); resume via Herdr
   af resume --all [--tag T] [--via tmux|iterm2|wezterm|herdr|plain]
-                            [--open|--no-open] [--dry-run]
+                            [--open|--no-open] [--dry-run] [--no-herdr-app]
+  af adopt <title|id ...> | af adopt --all [--dry-run] [--json]
+                            Label live af Herdr terminals with herdr.space/tab +
+                            enable keep so they appear in the Herdr desktop app
   af rename <title|id> "<new title>"
   af done <title|id>
   af rm <title|id>
@@ -66,6 +73,8 @@ Environment:
   AGENTFLEET_VIA          Default --via backend (resume --all; also overrides
                             single-session default: herdr vs plain)
   AGENTFLEET_TMUX_SESSION tmux session name (default: agentfleet)
+  AGENTFLEET_HERDR_APP    Set to 0/false/off/no to skip herdr.space/tab labels
+  AGENTFLEET_HERDR_APP_BIN Override herdr-app binary (default: herdr-app on PATH)
 `;
 
 async function main() {
@@ -103,6 +112,9 @@ async function main() {
       break;
     case 'sync':
       cmdSync(rest);
+      break;
+    case 'adopt':
+      cmdAdopt(rest);
       break;
     case 'resume':
       await cmdResume(rest);
@@ -410,9 +422,7 @@ async function cmdResume(argv) {
 
   // Resume restores chat context via --resume; do not resend session.prompt.
   // An explicit --prompt on this invocation may still be passed.
-  const trust = !flags['no-trust'];
-  const resumeOpts = { trust };
-  if (typeof flags.prompt === 'string' && flags.prompt) resumeOpts.prompt = flags.prompt;
+  const resumeOpts = buildResumeOpts(flags);
 
   let resolved;
   try {
@@ -453,6 +463,15 @@ async function cmdResume(argv) {
   process.exitCode = code || 0;
 }
 
+function buildResumeOpts(flags = {}) {
+  const resumeOpts = {
+    trust: !flags['no-trust'],
+    herdrApp: herdrapp.herdrAppEnabled(flags),
+  };
+  if (typeof flags.prompt === 'string' && flags.prompt) resumeOpts.prompt = flags.prompt;
+  return resumeOpts;
+}
+
 async function cmdResumeAll(flags) {
   const via = flags.via || undefined;
   const tag = flags.tag || undefined;
@@ -467,6 +486,7 @@ async function cmdResumeAll(flags) {
     via,
     tmuxSession: flags['tmux-session'],
     dryRun: dryRun || (via || backends.detectBackend()) === 'plain',
+    resumeOpts: buildResumeOpts(flags),
   });
 
   process.stderr.write(
@@ -633,15 +653,142 @@ async function cmdResumePick(flags) {
     return;
   }
 
-  const trust = !flags['no-trust'];
-  const resumeOpts = { trust };
-  if (typeof flags.prompt === 'string' && flags.prompt) resumeOpts.prompt = flags.prompt;
+  const resumeOpts = buildResumeOpts(flags);
   const plan = backends.executeResumeAll(selected, {
     via: 'herdr',
     dryRun: Boolean(flags['dry-run']),
     resumeOpts,
   });
   reportHerdr(plan, flags);
+}
+
+function cmdAdopt(argv) {
+  const { args, flags } = parseArgs(argv);
+  const dryRun = Boolean(flags['dry-run']);
+  const asJson = Boolean(flags.json);
+  const all = Boolean(flags.all);
+
+  if (!all && args.length === 0) {
+    fail('usage: af adopt <title|id ...> | af adopt --all [--dry-run] [--json]');
+  }
+
+  let sessions;
+  if (all) {
+    sessions = registry.list({ includeDone: true });
+  } else {
+    sessions = [];
+    const seen = new Set();
+    for (const q of args) {
+      let s;
+      try {
+        s = registry.find(q);
+      } catch (err) {
+        fail(err.message);
+      }
+      if (!s) fail(`session not found: ${q}`);
+      if (!seen.has(s.id)) {
+        seen.add(s.id);
+        sessions.push(s);
+      }
+    }
+  }
+
+  const fetchResult = herdr.fetchHerdrTerminals();
+  if (!fetchResult.ok) {
+    fail(`herdr adopt failed: ${fetchResult.error || 'query failed'}`);
+  }
+
+  const plan = herdrapp.planAdopt(sessions, fetchResult.terminals || []);
+  if (!plan.ok) fail(plan.error || 'adopt failed');
+
+  if (plan.items.length === 0) {
+    if (asJson) {
+      process.stdout.write(JSON.stringify({ ok: true, dryRun, adopted: [] }, null, 2) + '\n');
+      return;
+    }
+    process.stdout.write('(no live af Herdr terminals to adopt)\n');
+    return;
+  }
+
+  const { spawnSync } = require('child_process');
+  const rows = [];
+  for (const item of plan.items) {
+    const row = {
+      title: item.title,
+      id: item.id,
+      address: item.address,
+      name: item.name,
+      spaceId: item.spaceId,
+      tabId: item.tabId,
+      alreadyAdopted: item.alreadyAdopted,
+      labeled: false,
+      kept: false,
+      renamed: false,
+    };
+
+    if (item.alreadyAdopted) {
+      if (!dryRun) {
+        const renamed = herdrapp.nameHerdrAppTab(item.tabId, item.title);
+        row.renamed = Boolean(renamed && renamed.ok);
+      }
+      rows.push(row);
+      if (!asJson) {
+        process.stdout.write(
+          `already adopted  ${item.address}  ${item.title}  ${item.spaceId}  ${item.tabId}\n`
+        );
+      }
+      continue;
+    }
+
+    if (dryRun) {
+      rows.push(row);
+      if (!asJson) {
+        process.stdout.write(
+          `[dry-run] adopt  ${item.address}  ${item.title}  ${item.spaceId}  ${item.tabId}\n`
+        );
+        process.stdout.write(`  hc ${item.labelArgv.join(' ')}\n`);
+        process.stdout.write(`  hc ${item.keepArgv.join(' ')}\n`);
+      }
+      continue;
+    }
+
+    const lab = spawnSync('hc', item.labelArgv, { encoding: 'utf8' });
+    const kep = spawnSync('hc', item.keepArgv, { encoding: 'utf8' });
+    row.labeled = lab.status === 0;
+    row.kept = kep.status === 0;
+    if (lab.status !== 0) {
+      process.stderr.write(
+        `hc label failed for ${item.address}: ${lab.stderr || lab.stdout || ''}\n`
+      );
+    }
+    if (kep.status !== 0) {
+      process.stderr.write(
+        `hc keep failed for ${item.address}: ${kep.stderr || kep.stdout || ''}\n`
+      );
+    }
+    const renamed = herdrapp.nameHerdrAppTab(item.tabId, item.title);
+    row.renamed = Boolean(renamed && renamed.ok);
+    rows.push(row);
+    if (!asJson) {
+      process.stdout.write(
+        `adopted  ${item.address}  ${item.title}  ${item.spaceId}  ${item.tabId}\n`
+      );
+    }
+  }
+
+  if (asJson) {
+    process.stdout.write(JSON.stringify({ ok: true, dryRun, adopted: rows }, null, 2) + '\n');
+    return;
+  }
+
+  if (!dryRun) {
+    process.stdout.write(
+      'Hint: labeled terminals now show in the Herdr desktop app (open Herdr if it is not running).\n'
+    );
+  }
+  if (rows.some((r) => !r.alreadyAdopted && !dryRun && (!r.labeled || !r.kept))) {
+    process.exitCode = 1;
+  }
 }
 
 function cmdRename(argv) {

@@ -2,7 +2,7 @@
 
 Track Cursor CLI (`cursor-agent` / `agent`) chat sessions so you can resume a whole fleet after a restart or reboot, and run headless prompts from a controller (Grok Bot, scripts) that collects the output without babysitting a TUI.
 
-Built for a macOS workflow (iTerm2 / tmux / WezTerm / Zellij-as-plain) with **one git worktree per agent**.
+Built for a macOS workflow (Herdr / iTerm2 / tmux / WezTerm / Zellij-as-plain) with **one git worktree per agent**. Sessions launched in Herdr also show up in the native Herdr desktop app (one space per repo, one tab per session).
 
 ## Why Node?
 
@@ -82,6 +82,7 @@ af resume --all --via herdr         # hc run --bg … per session (skips ones al
 af resume auth --via herdr          # one session in Herdr (same as the default)
 af resume --all --via plain         # just print the commands
 af resume --all --dry-run           # show plan without executing
+af adopt --all                      # label already-live af terminals for the Herdr app
 ```
 
 ## Reboot-recovery workflow
@@ -107,6 +108,7 @@ af resume --all --dry-run           # show plan without executing
 | `af resume <title\|id>` | Resume one (default: Herdr when `hc` is on PATH; prints `Attach: hc attach <name>`). `--here` / `--via plain` = this terminal. `--open` = new iTerm2 attach tab (default in an iTerm TTY). |
 | `af resume` / `af pick` | Interactive multi-select (TTY only); resume via Herdr |
 | `af resume --all [--tag X] [--via …]` | Fleet reopen (`--all` still auto-detects backend; not default-Herdr) |
+| `af adopt <title\|id …>` / `af adopt --all` | Label live af Herdr terminals with `herdr.space` / `herdr.tab` + `hc keep` so they appear in the desktop app |
 | `af herdr-templates` | Install Cursor/OpenCode templates into `~/.config/herdr-core/templates` |
 | `af rename` / `af done` / `af rm` / `af note` | Metadata |
 | `af export [file]` / `af import-file <file>` | Backup / restore registry |
@@ -132,8 +134,19 @@ Each entry stores: `id`, `title`, `chatId`, `cwd`, `branch`, `model`, `created`,
 - **tmux** — windows in a named session (`agentfleet` by default; `AGENTFLEET_TMUX_SESSION` / `--tmux-session`).
 - **iterm2** — `osascript` creates a titled tab per session (macOS).
 - **wezterm** — `wezterm cli spawn --cwd … -- cursor-agent --resume …` then `set-tab-title`.
-- **herdr** — `hc run --bg --no-parent --outlive-parent --name <slug> --cwd <cwd> --label af_id=<id> --label title=<title> env -u NO_COLOR -u FORCE_COLOR cursor-agent --resume …`. **Do not insert a `--` separator:** on herdr-core 0.1.16 (`hc run`, verified 2026-11-10 on the Mini) a `--` token is treated as the program name and fails with `spawn_failed` / `cannot start "--"`. The `env -u …` prefix clears Herdr/parent `NO_COLOR` / `FORCE_COLOR` so the Cursor TUI can use color. Names are lowercased, sanitized to `[a-z0-9_-]`, truncated to 32 chars and de-duplicated. Sessions whose `af_id` label already appears in `hc ls --json` are skipped. After launch or skip, `af resume` (default Herdr when `hc` is on PATH) and `af resume --via herdr` print a copy-pasteable `Attach: hc attach <name>`. In an iTerm2 TTY, `--open` is the default and opens a new tab running `hc attach` with an absolute `hc` path (pass `--no-open` to only print the line). Works for `resume --all --via herdr` and `resume <id>`. Bundled interactive templates (`af herdr-templates`) are `cursor` and `opencode` (`ready: quiet`, because those CLIs do not speak Herdr's OSC 7501 status protocol).
+- **herdr** — `hc run --bg --no-parent --outlive-parent --name <slug> --cwd <cwd> --label af_id=<id> --label title=<title> [--keep --label herdr.space=… --label herdr.tab=…] env -u NO_COLOR -u FORCE_COLOR cursor-agent --resume …`. **Do not insert a `--` separator:** on herdr-core 0.1.16 (`hc run`, verified 2026-11-10 on the Mini) a `--` token is treated as the program name and fails with `spawn_failed` / `cannot start "--"`. The `env -u …` prefix clears Herdr/parent `NO_COLOR` / `FORCE_COLOR` so the Cursor TUI can use color; if the caller's `TERM` is unset, empty, or `dumb` (common for non-TTY af callers), it also sets `TERM=xterm-256color` and `COLORTERM=truecolor`. Names are lowercased, sanitized to `[a-z0-9_-]`, truncated to 32 chars and de-duplicated. Sessions whose `af_id` label already appears in `hc ls --json` are skipped. After launch or skip, `af resume` (default Herdr when `hc` is on PATH) and `af resume --via herdr` print a copy-pasteable `Attach: hc attach <name>`. In an iTerm2 TTY, `--open` is the default and opens a new tab running `hc attach` with an absolute `hc` path (pass `--no-open` to only print the line). Works for `resume --all --via herdr` and `resume <id>`. Bundled interactive templates (`af herdr-templates`) are `cursor` and `opencode` (`ready: quiet`, because those CLIs do not speak Herdr's OSC 7501 status protocol).
 - **plain** — print shell commands (use this under Zellij or anything else).
+
+### Herdr app
+
+The Herdr desktop app (herdr-app) shows any core terminal that carries labels `herdr.space=<id>` and `herdr.tab=<id>`. Unknown ids become a new space/tab automatically.
+
+- **Ids:** `sp` + md5hex(`agentfleet:space:` + normalized cwd) and `tb` + md5hex(`agentfleet:tab:` + session id). Same repo/cwd → same space; one tab per af session (stable across resumes).
+- **On launch:** `af resume` / `--via herdr` / interactive pick / `resume --all --via herdr` add `--keep` plus those labels (before the `env -u …` argv), then best-effort `herdr-app do tab.rename` to the af title (retries ~3s; never fails the resume if rename misses).
+- **Opt out:** `--no-herdr-app`, or `AGENTFLEET_HERDR_APP=0|false|off|no`. Override the app binary with `AGENTFLEET_HERDR_APP_BIN`.
+- **Already-running terminals:** `af adopt <title|id …>` or `af adopt --all` runs `hc label` + `hc keep` (skips label/keep when labels already match; still tries tab rename).
+- **Agents panel:** Cursor does not report OSC 7501, so the app's Agents panel stays empty for these sessions.
+- **Keep:** core `--keep` / `hc keep` means a lost program is replaced with a shell — Cursor is **not** re-run. Use `af resume` again to relaunch the agent.
 
 Auto-detect order: `$AGENTFLEET_VIA` → inside Herdr (`$HERDR`/`$HC_TERMINAL` set and `hc` on PATH) → inside tmux → `TERM_PROGRAM` (WezTerm / iTerm) → `tmux` on PATH → `wezterm` → plain.
 
@@ -180,7 +193,7 @@ Copilot `--help` says **`--allow-all-tools` is required for non-interactive mode
 
 Optional: Cursor also has `cursor-agent persist` (sessions that survive disconnects). `af` does not wrap it.
 
-## Supported vs verified (home Mini, 2026-11-10)
+## Supported vs verified (home Mini, 2026-11-10 / 2026-11-11)
 
 | Path | Status |
 |------|--------|
@@ -189,7 +202,10 @@ Optional: Cursor also has `cursor-agent persist` (sessions that survive disconne
 | Copilot `af run --engine copilot` without `--force` (no-tool text prompt) | **Verified** live (see engine notes above) |
 | Copilot `--force` / `--allow-all-tools` | Supported, **not** live-tested here (broad tool grant) |
 | OpenCode | Herdr **template only**; not wrapped by `af run`; first-message send not live-tested |
-| Herdr desktop app Cursor/OpenCode integrations | **Unconfigured** (`~/Applications/Herdr.app` present; `~/.config/herdr-app` absent) |
+| Herdr desktop app (0.1.15, herdr-core 0.1.16): af sessions appear as space/tab via `herdr.space`/`herdr.tab` labels, tab renamed to af title | **Verified** live (2026-11-11) |
+| `af adopt` on an already-live terminal | **Verified** live on a throwaway terminal |
+| Cursor color in Herdr from a non-TTY / `TERM=dumb` caller (`TERM=xterm-256color` fallback) | **Verified** live |
+| Herdr app Agents panel status for Cursor | **Not supported** (Cursor does not emit OSC 7501) |
 | Reboot persistence of resumed terminals | **Not tested** |
 
 ## Tests

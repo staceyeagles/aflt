@@ -407,7 +407,22 @@ describe('af sync / af ls CLI', () => {
     assert.match(r.stdout, /^Attach: hc attach img2img-upscale-workflow$/m);
     assert.ok(!r.stdout.includes(' -- -- '));
     assert.ok(r.stdout.includes('env -u NO_COLOR -u FORCE_COLOR'));
+    assert.ok(r.stdout.includes('--keep'));
+    assert.match(r.stdout, /herdr\.space=sp[0-9a-f]{32}/);
+    assert.match(r.stdout, /herdr\.tab=tb[0-9a-f]{32}/);
     assert.equal(fs.existsSync(marker), false);
+
+    const off = runAf([
+      'resume',
+      'img2img-upscale-workflow',
+      '--via',
+      'herdr',
+      '--dry-run',
+      '--no-herdr-app',
+    ]);
+    assert.equal(off.status, 0, off.stderr);
+    assert.ok(!off.stdout.includes('--keep'));
+    assert.ok(!off.stdout.includes('herdr.space='));
   });
 
   it('af resume defaults to herdr --dry-run and prints Attach', () => {

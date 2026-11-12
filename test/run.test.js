@@ -133,11 +133,15 @@ describe('af run CLI dry-run', () => {
     assert.ok(!forced.stdout.includes('--allow-all ') && !forced.stdout.includes('--yolo'));
   });
 
-  it('help mentions run, log, and herdr-templates', () => {
+  it('help mentions run, log, adopt, herdr-templates, and herdr-app env', () => {
     const r = spawnSync(process.execPath, [afJs, 'help'], { encoding: 'utf8' });
     assert.equal(r.status, 0);
     assert.ok(r.stdout.includes('af run'));
     assert.ok(r.stdout.includes('af log'));
+    assert.ok(r.stdout.includes('af adopt'));
+    assert.ok(r.stdout.includes('--no-herdr-app'));
+    assert.ok(r.stdout.includes('AGENTFLEET_HERDR_APP'));
+    assert.ok(r.stdout.includes('AGENTFLEET_HERDR_APP_BIN'));
     assert.ok(r.stdout.includes('herdr-templates'));
   });
 });

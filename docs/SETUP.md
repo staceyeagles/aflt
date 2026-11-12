@@ -312,6 +312,8 @@ export AGENTFLEET_CURSOR_BIN="$HOME/.local/bin/cursor-agent"
 | `AGENTFLEET_CURSOR_BIN` | Force path to `cursor-agent` / `agent`. |
 | `AGENTFLEET_VIA` | Default `--via` backend. |
 | `AGENTFLEET_TMUX_SESSION` | tmux session name (default `agentfleet`). |
+| `AGENTFLEET_HERDR_APP` | Set `0` / `false` / `off` / `no` to skip Herdr-app space/tab labels. |
+| `AGENTFLEET_HERDR_APP_BIN` | Override `herdr-app` binary path. |
 | `~/.config/herdr-core/config.toml` | herdr-core settings. |
 | `~/.config/opencode/opencode.json` | OpenCode global config (v2). |
 | `CURSOR_API_KEY` | Headless Cursor auth alternative to `agent login`. |
@@ -430,11 +432,34 @@ hc run --bg --no-parent --outlive-parent \
   --cwd <workdir> \
   --label af_id=<session-id> \
   --label title=<title> \
-  env -u NO_COLOR -u FORCE_COLOR \
+  --keep \
+  --label herdr.space=sp<md5hex> \
+  --label herdr.tab=tb<md5hex> \
+  env -u NO_COLOR -u FORCE_COLOR [TERM=xterm-256color COLORTERM=truecolor] \
   cursor-agent --resume <chatId> [--model …] --workspace <cwd> --trust
 ```
 
+(`TERM`/`COLORTERM` assignments are added only when the caller's `TERM` is unset, empty, or `dumb`, so non-TTY af launches still get a color-capable Cursor TUI.)
+
 Names are lowercased, sanitized to `[a-z0-9_-]`, truncated to 32 chars, and de-duplicated. Sessions already present in `hc ls --json` with matching `af_id` are skipped. Resume restores chat context via `--resume <chatId>` and does **not** resend the saved original task prompt (a prompt is sent only on `af new --prompt` or an explicit `--prompt` on that resume).
+
+#### Herdr app (desktop)
+
+The Herdr desktop app shows any core terminal labeled `herdr.space=<id>` and `herdr.tab=<id>` (unknown ids become a new space/tab). `af` derives:
+
+- `herdr.space` = `sp` + md5(`agentfleet:space:` + normalized cwd) — sessions in the same repo/cwd share a space
+- `herdr.tab` = `tb` + md5(`agentfleet:tab:` + session.id) — one tab per af session; stable across resumes
+
+On Herdr launch, `af` also passes `--keep` (lost program → shell; Cursor is **not** re-run — use `af resume` again) and best-effort renames the tab to the af title via `herdr-app do tab.rename` (retries ~0.5–3s; never fails the resume). Opt out with `--no-herdr-app` or `AGENTFLEET_HERDR_APP=0|false|off|no`. Override the binary with `AGENTFLEET_HERDR_APP_BIN` (default: `herdr-app` on PATH, typically `~/.local/bin/herdr-app`).
+
+Adopt terminals that were started before this labeling existed:
+
+```bash
+af adopt --all                 # or: af adopt <title|id …>
+af adopt --all --dry-run
+```
+
+That runs `hc label <addr> herdr.space=… herdr.tab=…` and `hc keep <addr>`, then tries tab rename. Cursor does not report OSC 7501, so the app's Agents panel stays empty for these sessions.
 
 List / attach:
 
@@ -442,6 +467,7 @@ List / attach:
 hc ls              # live only (finished are hidden)
 hc ls --all --json # includes finished (what af ls / af sync query)
 ~/.local/bin/hc attach <name>
+herdr-app ls       # desktop spaces/tabs (when the app window is running)
 ```
 
 `af resume` / `af resume --via herdr` (and `--dry-run`) prints a copy-pasteable `Attach: hc attach <name>` for each launched or already-live skipped session. In an iTerm2 TTY, a new tab running the attach command (absolute `~/.local/bin/hc` path) opens by default; `--no-open` prints the line only. `--all` still auto-detects its backend and does not default to Herdr just because `hc` is on PATH.
@@ -532,7 +558,7 @@ af import-file ~/af-sessions.json
 | `cursor-agent: command not found` | `ls ~/.local/bin/agent`; add `~/.local/bin` to PATH; re-run Cursor install. |
 | `hc: command not found` | Re-run core or app installer; check `~/.local/bin/hc`. |
 | `af resume --via herdr` / `cannot start "--"` | Confirmed on hc 0.1.16: do **not** put `--` before the program. Current `af` already omits it. If an older copy still emits `--`, update `lib/backends.js`. |
-| Cursor TUI is plain white / uncolored in Herdr | Herdr/parent may set `NO_COLOR=1` and `FORCE_COLOR=0`. `af` clears them with `env -u NO_COLOR -u FORCE_COLOR` before `cursor-agent` on interactive Herdr launches. |
+| Cursor TUI is plain white / uncolored in Herdr | Herdr/parent may set `NO_COLOR=1` and `FORCE_COLOR=0`; non-TTY callers may also pass `TERM=dumb`. `af` clears the color vars with `env -u NO_COLOR -u FORCE_COLOR` and, when `TERM` is unset/empty/`dumb`, sets `TERM=xterm-256color` `COLORTERM=truecolor` before `cursor-agent`. |
 | Herdr skips a session | `hc ls --json` already has `af_id=<id>`. Attach that terminal or kill it before re-launching. |
 | Resume lost context / wrong files | Always use the **same cwd/worktree** the chat was created with. `af` passes `--workspace`. |
 | Resume re-triggers the original task | Older `af` fell back to `session.prompt` on resume. Current `af` does not; only `af new --prompt` or an explicit resume `--prompt` sends a prompt. |
