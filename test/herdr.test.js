@@ -380,6 +380,190 @@ describe('af sync / af ls CLI', () => {
     assert.equal(byId[LIVE_ID].status, 'active');
   });
 
+  it('af resume --via herdr --dry-run prints Attach line and does not spawn hc run', () => {
+    const marker = path.join(tmp, 'hc-run-count');
+    stubHc(`
+      const fs = require('fs');
+      const marker = ${JSON.stringify(marker)};
+      if (process.argv[2] === 'ls') {
+        process.stdout.write(JSON.stringify({ terminals: [] }));
+        process.exit(0);
+      }
+      if (process.argv[2] === 'run') {
+        fs.writeFileSync(marker, '1');
+        process.exit(99);
+      }
+      process.exit(1);
+    `);
+    registry.add({
+      title: 'img2img-upscale-workflow',
+      chatId: 'e3a5c66a-6726-43bd-95de-380ea37dd373',
+      cwd: tmp,
+      id: 'img2img-upscale-workflow-test',
+    });
+    const r = runAf(['resume', 'img2img-upscale-workflow', '--via', 'herdr', '--dry-run']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /^hc run --bg --no-parent --outlive-parent --name img2img-upscale-workflow /m);
+    assert.match(r.stdout, /^Attach: hc attach img2img-upscale-workflow$/m);
+    assert.ok(!r.stdout.includes(' -- -- '));
+    assert.ok(r.stdout.includes('env -u NO_COLOR -u FORCE_COLOR'));
+    assert.equal(fs.existsSync(marker), false);
+  });
+
+  it('af resume defaults to herdr --dry-run and prints Attach', () => {
+    const marker = path.join(tmp, 'hc-run-count-default');
+    stubHc(`
+      const fs = require('fs');
+      const marker = ${JSON.stringify(marker)};
+      if (process.argv[2] === 'ls') {
+        process.stdout.write(JSON.stringify({ terminals: [] }));
+        process.exit(0);
+      }
+      if (process.argv[2] === 'run') {
+        fs.writeFileSync(marker, '1');
+        process.exit(99);
+      }
+      process.exit(1);
+    `);
+    registry.add({
+      title: 'img2img-default',
+      chatId: 'e3a5c66a-6726-43bd-95de-380ea37dd373',
+      cwd: tmp,
+      id: 'img2img-default-test',
+    });
+    const r = runAf(['resume', 'img2img-default', '--dry-run']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /^hc run --bg /m);
+    assert.match(r.stdout, /^Attach: hc attach img2img-default$/m);
+    assert.equal(fs.existsSync(marker), false);
+  });
+
+  it('af resume --here / --via plain --dry-run stays in this terminal', () => {
+    stubHc(`
+      if (process.argv[2] === 'ls') {
+        process.stdout.write(JSON.stringify({ terminals: [] }));
+        process.exit(0);
+      }
+      process.exit(1);
+    `);
+    registry.add({
+      title: 'plain-here',
+      chatId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      cwd: tmp,
+      id: 'plain-here-test',
+    });
+    for (const args of [
+      ['resume', 'plain-here', '--via', 'plain', '--dry-run'],
+      ['resume', 'plain-here', '--here', '--dry-run'],
+    ]) {
+      const r = runAf(args);
+      assert.equal(r.status, 0, r.stderr + r.stdout);
+      assert.ok(r.stdout.includes('--resume'));
+      assert.ok(!r.stdout.includes('hc run'));
+      assert.ok(!r.stdout.includes('Attach: hc attach'));
+    }
+  });
+
+  it('af resume --open --dry-run prints iTerm AppleScript with absolute hc', () => {
+    const hcPath = stubHc(`
+      if (process.argv[2] === 'ls') {
+        process.stdout.write(JSON.stringify({ terminals: [] }));
+        process.exit(0);
+      }
+      process.exit(1);
+    `);
+    registry.add({
+      title: 'open-dry',
+      chatId: 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee',
+      cwd: tmp,
+      id: 'open-dry-test',
+    });
+    const r = runAf(['resume', 'open-dry', '--open', '--dry-run']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /^Attach: hc attach open-dry$/m);
+    assert.ok(r.stdout.includes('tell application "iTerm"'));
+    assert.ok(r.stdout.includes(hcPath) || r.stdout.includes('hc attach'));
+    assert.ok(r.stdout.includes('write text'));
+  });
+
+  it('af resume with no title is an error on a non-TTY and does not hang', () => {
+    stubHc(`
+      if (process.argv[2] === 'ls') {
+        process.stdout.write(JSON.stringify({ terminals: [] }));
+        process.exit(0);
+      }
+      process.exit(1);
+    `);
+    const r = runAf(['resume']);
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /TTY|usage: af resume/);
+  });
+
+  it('af pick on a non-TTY is an error and does not hang', () => {
+    stubHc(`
+      if (process.argv[2] === 'ls') {
+        process.stdout.write(JSON.stringify({ terminals: [] }));
+        process.exit(0);
+      }
+      process.exit(1);
+    `);
+    const r = runAf(['pick']);
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /TTY|usage: af resume/);
+  });
+
+
+  it('af resume --dry-run skips a live terminal whose ls JSON omitted labels', () => {
+    const LIVE = 'img2img-upscale-workflow-3570cb';
+    const lsNoLabels = JSON.stringify({
+      terminals: [
+        {
+          address: 't12',
+          name: 'img2img-upscale-workflow',
+          state: 'live',
+          cwd: tmp,
+        },
+      ],
+    });
+    const getWithLabels = JSON.stringify({
+      address: 't12',
+      name: 'img2img-upscale-workflow',
+      state: 'live',
+      cwd: tmp,
+      labels: { af_id: LIVE, title: 'img2img-upscale-workflow' },
+    });
+    const marker = path.join(tmp, 'hc-run-skip');
+    stubHc(`
+      const fs = require('fs');
+      if (process.argv[2] === 'ls') {
+        process.stdout.write(${JSON.stringify(lsNoLabels)});
+        process.exit(0);
+      }
+      if (process.argv[2] === 'get') {
+        process.stdout.write(${JSON.stringify(getWithLabels)});
+        process.exit(0);
+      }
+      if (process.argv[2] === 'run') {
+        fs.writeFileSync(${JSON.stringify(marker)}, '1');
+        process.exit(99);
+      }
+      process.exit(1);
+    `);
+    registry.add({
+      title: 'img2img-upscale-workflow',
+      chatId: 'e3a5c66a-6726-43bd-95de-380ea37dd373',
+      cwd: tmp,
+      id: LIVE,
+    });
+    const r = runAf(['resume', 'img2img-upscale-workflow', '--dry-run']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /already live in herdr/);
+    assert.match(r.stdout, /^Attach: hc attach img2img-upscale-workflow$/m);
+    assert.ok(!r.stdout.includes('img2img-upscale-workflow-2'));
+    assert.ok(!r.stdout.includes('hc run --bg'));
+    assert.equal(fs.existsSync(marker), false);
+  });
+
   it('normalizeEntry / import preserves herdr', () => {
     const s = registry.add({
       title: 'KeepHerdr',

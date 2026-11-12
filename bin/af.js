@@ -38,9 +38,16 @@ Usage:
   af run <title|id> --prompt "..." [...]
                             Same, resuming an existing tracked session
   af log <title|id> [--path]  Print last captured run output (or its path)
-  af resume <title|id> [--via herdr] [--dry-run]
-                            Resume one session in this terminal (or in Herdr)
-  af resume --all [--tag T] [--via tmux|iterm2|wezterm|herdr|plain] [--dry-run]
+  af resume <title|id> [--via herdr|plain] [--here] [--open|--no-open]
+                            [--prompt "..."] [--dry-run]
+                            Resume one session. Default: Herdr when hc is on PATH
+                            (prints Attach: hc attach <name>). --here / --via plain:
+                            this terminal. --open: new iTerm2 tab running hc attach
+                            (default in an iTerm TTY; --no-open disables).
+  af resume | af resume -i | af pick
+                            Interactive multi-select (TTY only); resume via Herdr
+  af resume --all [--tag T] [--via tmux|iterm2|wezterm|herdr|plain]
+                            [--open|--no-open] [--dry-run]
   af rename <title|id> "<new title>"
   af done <title|id>
   af rm <title|id>
@@ -56,7 +63,8 @@ Environment:
   AGENTFLEET_HOME         Registry dir (default: ~/.agentfleet)
   AGENTFLEET_REGISTRY     Override sessions.json path
   AGENTFLEET_CURSOR_BIN   Override cursor-agent binary
-  AGENTFLEET_VIA          Default --via backend
+  AGENTFLEET_VIA          Default --via backend (resume --all; also overrides
+                            single-session default: herdr vs plain)
   AGENTFLEET_TMUX_SESSION tmux session name (default: agentfleet)
 `;
 
@@ -98,6 +106,9 @@ async function main() {
       break;
     case 'resume':
       await cmdResume(rest);
+      break;
+    case 'pick':
+      await cmdResume(['-i', ...rest]);
       break;
     case 'rename':
       cmdRename(rest);
@@ -384,6 +395,13 @@ async function cmdResume(argv) {
     await cmdResumeAll(flags);
     return;
   }
+
+  const pick = Boolean(flags.i || flags.interactive || flags.pick);
+  if (pick || args.length === 0) {
+    await cmdResumePick(flags);
+    return;
+  }
+
   const query = args[0];
   if (!query) fail('usage: af resume <title|id>  OR  af resume --all [--via …]');
 
@@ -396,13 +414,21 @@ async function cmdResume(argv) {
   const resumeOpts = { trust };
   if (typeof flags.prompt === 'string' && flags.prompt) resumeOpts.prompt = flags.prompt;
 
-  if (flags.via === 'herdr') {
+  let resolved;
+  try {
+    resolved = backends.resolveSingleResumeVia(flags);
+  } catch (err) {
+    fail(err.message);
+  }
+  if (resolved.note) process.stderr.write(`${resolved.note}\n`);
+
+  if (resolved.via === 'herdr') {
     const plan = backends.executeResumeAll([session], {
       via: 'herdr',
       dryRun: Boolean(flags['dry-run']),
       resumeOpts,
     });
-    reportHerdr(plan, Boolean(flags['dry-run']));
+    reportHerdr(plan, flags);
     return;
   }
 
@@ -448,7 +474,7 @@ async function cmdResumeAll(flags) {
   );
 
   if (plan.backend === 'herdr') {
-    reportHerdr(plan, dryRun);
+    reportHerdr(plan, { ...flags, 'dry-run': dryRun || !plan.executed });
     return;
   }
 
@@ -492,21 +518,130 @@ async function cmdResumeAll(flags) {
   }
 }
 
-function reportHerdr(plan, dryRun) {
+function reportHerdr(plan, flags = {}) {
+  const dryRun = Boolean(flags['dry-run'] || flags.dryRun) || !plan.executed;
   if (dryRun || !plan.executed) {
-    for (const c of plan.commands) process.stdout.write(c.shell + '\n');
+    for (const c of plan.commands) {
+      process.stdout.write(c.shell + '\n');
+      if (c.name) process.stdout.write(backends.herdrAttachLine(c.name) + '\n');
+    }
+    maybeOpenITermAttach(plan, flags, { executed: false, dryRun: true });
     return;
   }
   let ok = 0;
   for (const r of plan.results) {
-    if (r.skipped) process.stderr.write(`skip "${r.title}": already live in herdr\n`);
-    else if (r.status === 0) {
+    if (r.skipped) {
+      process.stderr.write(`skip "${r.title}": already live in herdr\n`);
+      if (r.name) process.stdout.write(backends.herdrAttachLine(r.name) + '\n');
+    } else if (r.status === 0) {
       ok++;
       try { registry.touch(plan.commands.find((c) => c.title === r.title).id); } catch (_) { /* ignore */ }
+      if (r.name) process.stdout.write(backends.herdrAttachLine(r.name) + '\n');
     } else process.stderr.write(`hc run failed for "${r.title}": ${r.stderr || ''}\n`);
   }
   process.stdout.write(`Launched ${ok} Herdr terminal(s).\n`);
+  maybeOpenITermAttach(plan, flags, { executed: true, dryRun: false });
   if (plan.results.some((r) => !r.skipped && r.status !== 0)) process.exitCode = 1;
+}
+
+function maybeOpenITermAttach(plan, flags, { executed, dryRun }) {
+  if (!backends.wantITermOpen(flags)) return;
+  const entries = backends.herdrAttachEntries(plan, { executed });
+  if (entries.length === 0) return;
+  const script = backends.buildITermAttachAppleScript(entries);
+  if (dryRun) {
+    process.stdout.write('# would open iTerm2 tab(s) running hc attach (absolute hc path):\n');
+    process.stdout.write(script);
+    return;
+  }
+  if (!backends.canOpenITerm()) {
+    process.stderr.write('iTerm/osascript unavailable; printed attach commands instead\n');
+    return;
+  }
+  const { spawnSync } = require('child_process');
+  const r = spawnSync('osascript', ['-e', script], { encoding: 'utf8' });
+  if (r.status !== 0) {
+    process.stderr.write(`osascript failed; printed attach commands instead: ${r.stderr || r.stdout || ''}\n`);
+  } else {
+    process.stdout.write(`Opened ${entries.length} iTerm2 tab(s).\n`);
+  }
+}
+
+async function cmdResumePick(flags) {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    fail(
+      'usage: af resume <title|id>  OR  af resume --all [--via …]\n' +
+        'interactive selection requires a TTY (or pass a title / --all)'
+    );
+  }
+
+  let resolved;
+  try {
+    resolved = backends.resolveSingleResumeVia({ ...flags, here: false, via: flags.via });
+  } catch (err) {
+    fail(err.message);
+  }
+  // Picker always uses the Herdr path (skip if already live, print attach lines).
+  if (flags.here || flags.via === 'plain' || flags.via === 'here') {
+    fail('interactive resume uses Herdr; drop --here / --via plain, or resume one title with --here');
+  }
+  if (resolved.via !== 'herdr') {
+    fail('interactive resume requires Herdr (hc on PATH); use af resume <title> --here for this terminal');
+  }
+
+  const sessions = registry.list({ status: 'active', tag: flags.tag });
+  if (sessions.length === 0) {
+    process.stdout.write('No active sessions to resume.\n');
+    return;
+  }
+
+  const fetchResult = herdr.fetchHerdrTerminals();
+  if (!fetchResult.ok) {
+    process.stderr.write(`herdr: ${fetchResult.error || 'query failed'} (showing unknown/-)\n`);
+  }
+  const enriched = herdr.enrichSessions(sessions, fetchResult);
+
+  process.stdout.write(
+    `    ${pad('#', 3)} ${pad('TITLE', 24)} ${pad('FOLDER', 24)} ${pad('HERDR', 8)} LAST USED\n`
+  );
+  enriched.forEach((e, i) => {
+    const s = e.session;
+    const folder = s.cwd ? path.basename(s.cwd) : '';
+    process.stdout.write(
+      `    ${pad(String(i + 1), 3)} ${pad(s.title, 24)} ${pad(folder, 24)} ${pad(herdr.displayRuntime(e.runtime), 8)} ${s.lastUsed || ''}\n`
+    );
+  });
+
+  const readline = require('readline/promises');
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  let answer;
+  try {
+    answer = await rl.question('Select sessions (e.g. 1,3 or 1-3; a = all): ');
+  } finally {
+    rl.close();
+  }
+
+  let indexes;
+  try {
+    indexes = backends.parseResumeSelection(answer, sessions.length);
+  } catch (err) {
+    fail(err.message);
+  }
+  const selected = indexes.map((i) => sessions[i]);
+  if (selected.length === 0) {
+    process.stdout.write('No sessions selected.\n');
+    return;
+  }
+
+  const trust = !flags['no-trust'];
+  const resumeOpts = { trust };
+  if (typeof flags.prompt === 'string' && flags.prompt) resumeOpts.prompt = flags.prompt;
+  const plan = backends.executeResumeAll(selected, {
+    via: 'herdr',
+    dryRun: Boolean(flags['dry-run']),
+    resumeOpts,
+  });
+  reportHerdr(plan, flags);
 }
 
 function cmdRename(argv) {

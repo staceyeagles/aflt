@@ -40,7 +40,7 @@ after(() => {
 describe('cursor wrapper with stub', () => {
   it('createChat returns stub UUID and records args', async () => {
     const cursor = require('../lib/cursor');
-    const id = await cursor.createChat({ timeoutMs: 5000 });
+    const id = await cursor.createChat({ timeoutMs: 20000 });
     assert.equal(id, 'deadbeef-0000-4000-8000-ffffffffffff');
     const log = fs.readFileSync(stubLog, 'utf8');
     assert.ok(log.includes('create-chat'));

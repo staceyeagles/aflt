@@ -4,7 +4,7 @@ _af() {
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  cmds="new add import ls list sync run log resume rename done rm remove note export import-file which-backend herdr-templates help"
+  cmds="new add import ls list sync run log resume pick rename done rm remove note export import-file which-backend herdr-templates help"
 
   if [[ ${COMP_CWORD} -eq 1 ]]; then
     COMPREPLY=( $(compgen -W "${cmds}" -- "${cur}") )
@@ -12,8 +12,8 @@ _af() {
   fi
 
   case "${COMP_WORDS[1]}" in
-    resume)
-      COMPREPLY=( $(compgen -W "--all --via --tag --dry-run --tmux-session tmux iterm2 wezterm herdr plain" -- "${cur}") )
+    resume|pick)
+      COMPREPLY=( $(compgen -W "--all --via --tag --dry-run --tmux-session --here --open --no-open --prompt --interactive -i tmux iterm2 wezterm herdr plain" -- "${cur}") )
       ;;
     new|add)
       COMPREPLY=( $(compgen -W "--cwd --prompt --model --tag --chat --dry-run" -- "${cur}") )

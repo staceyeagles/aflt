@@ -226,10 +226,17 @@ describe('herdr backend', () => {
   });
 
   it('skips sessions already live by af_id label', () => {
-    const live = backends.parseHerdrList(JSON.stringify([{ name: 'foo', labels: { af_id: 'pay-bbb' } }]));
+    // Use a de-duplicated live name so skip.name comes from live, not a regenerated slug.
+    const live = backends.parseHerdrList(
+      JSON.stringify([{ name: 'auth-refactor-2', labels: { af_id: 'pay-bbb' } }])
+    );
     const plan = backends.buildResumeAllPlan(sample, { via: 'herdr', herdrLive: live });
     assert.ok(!plan.commands[0].skip);
+    assert.equal(plan.commands[0].name, 'auth-refactor');
+    assert.equal(backends.herdrAttachLine(plan.commands[0].name), 'Attach: hc attach auth-refactor');
     assert.ok(plan.commands[1].skip);
+    assert.equal(plan.commands[1].name, 'auth-refactor-2');
+    assert.equal(backends.herdrAttachLine(plan.commands[1].name), 'Attach: hc attach auth-refactor-2');
   });
 
   it('parseHerdrList tolerates bad JSON and alternate shapes', () => {
@@ -243,5 +250,89 @@ describe('herdr backend', () => {
     assert.equal(backends.insideHerdr({}), false);
     assert.equal(backends.insideHerdr({ HERDR: '1' }), true);
     assert.equal(backends.insideHerdr({ HC_TERMINAL: 'abc' }), true);
+  });
+});
+
+describe('single-session resume helpers', () => {
+  it('resolveSingleResumeVia defaults to herdr when hc is present', () => {
+    assert.deepEqual(
+      backends.resolveSingleResumeVia({}, { env: {}, hasHc: true }),
+      { via: 'herdr', note: null }
+    );
+  });
+
+  it('resolveSingleResumeVia falls back to plain with a note when hc is missing', () => {
+    const r = backends.resolveSingleResumeVia({}, { env: {}, hasHc: false });
+    assert.equal(r.via, 'plain');
+    assert.match(r.note, /hc not found/);
+  });
+
+  it('resolveSingleResumeVia honors --here, --via plain, and AGENTFLEET_VIA', () => {
+    assert.equal(backends.resolveSingleResumeVia({ here: true }, { hasHc: true }).via, 'plain');
+    assert.equal(backends.resolveSingleResumeVia({ via: 'plain' }, { hasHc: true }).via, 'plain');
+    assert.equal(backends.resolveSingleResumeVia({ via: 'here' }, { hasHc: true }).via, 'plain');
+    assert.equal(backends.resolveSingleResumeVia({ via: 'herdr' }, { hasHc: true }).via, 'herdr');
+    assert.equal(
+      backends.resolveSingleResumeVia({}, { env: { AGENTFLEET_VIA: 'plain' }, hasHc: true }).via,
+      'plain'
+    );
+    assert.equal(
+      backends.resolveSingleResumeVia({}, { env: { AGENTFLEET_VIA: 'tmux' }, hasHc: true }).via,
+      'plain'
+    );
+    assert.equal(
+      backends.resolveSingleResumeVia({}, { env: { AGENTFLEET_VIA: 'herdr' }, hasHc: true }).via,
+      'herdr'
+    );
+    const missing = backends.resolveSingleResumeVia({}, { env: { AGENTFLEET_VIA: 'herdr' }, hasHc: false });
+    assert.equal(missing.via, 'plain');
+    assert.match(missing.note, /hc not found/);
+    assert.throws(
+      () => backends.resolveSingleResumeVia({ here: true, via: 'herdr' }, { hasHc: true }),
+      /cannot combine --here/
+    );
+  });
+
+  it('parseResumeSelection accepts lists, ranges, all, and rejects bad input', () => {
+    assert.deepEqual(backends.parseResumeSelection('', 4), []);
+    assert.deepEqual(backends.parseResumeSelection('  ', 4), []);
+    assert.deepEqual(backends.parseResumeSelection('1,3', 4), [0, 2]);
+    assert.deepEqual(backends.parseResumeSelection('1 3', 4), [0, 2]);
+    assert.deepEqual(backends.parseResumeSelection('1-3', 4), [0, 1, 2]);
+    assert.deepEqual(backends.parseResumeSelection('3-1', 4), [0, 1, 2]);
+    assert.deepEqual(backends.parseResumeSelection('1,2,2,1', 4), [0, 1]);
+    assert.deepEqual(backends.parseResumeSelection('all', 3), [0, 1, 2]);
+    assert.deepEqual(backends.parseResumeSelection('a', 2), [0, 1]);
+    assert.deepEqual(backends.parseResumeSelection('*', 2), [0, 1]);
+    assert.throws(() => backends.parseResumeSelection('0', 3), /out of range/);
+    assert.throws(() => backends.parseResumeSelection('4', 3), /out of range/);
+    assert.throws(() => backends.parseResumeSelection('1-9', 3), /out of range/);
+    assert.throws(() => backends.parseResumeSelection('foo', 3), /invalid selection/);
+  });
+
+  it('wantITermOpen defaults on iTerm TTY, honors --open / --no-open', () => {
+    const iterm = { env: { TERM_PROGRAM: 'iTerm.app' }, isTTY: true, platform: 'darwin' };
+    assert.equal(backends.wantITermOpen({}, iterm), true);
+    assert.equal(backends.wantITermOpen({ 'no-open': true }, iterm), false);
+    assert.equal(backends.wantITermOpen({ open: true }, { env: {}, isTTY: false, platform: 'darwin' }), true);
+    assert.equal(backends.wantITermOpen({}, { env: { TERM_PROGRAM: 'iTerm.app' }, isTTY: false, platform: 'darwin' }), false);
+    assert.equal(backends.wantITermOpen({}, { env: { TERM_PROGRAM: 'iTerm.app' }, isTTY: true, platform: 'linux' }), false);
+    assert.equal(backends.canOpenITerm({ platform: 'linux' }), false);
+    assert.equal(backends.canOpenITerm({ platform: 'darwin', hasOsascript: true }), true);
+    assert.equal(backends.canOpenITerm({ platform: 'darwin', hasOsascript: false }), false);
+  });
+
+  it('buildITermAttachAppleScript uses an absolute hc path and tab name', () => {
+    const script = backends.buildITermAttachAppleScript(
+      [{ name: 'img2img-upscale-workflow', title: 'img2img-upscale-workflow' }],
+      { hcBin: '/Users/andrewrapo/.local/bin/hc' }
+    );
+    assert.ok(script.includes('tell application "iTerm"'));
+    assert.ok(script.includes('create tab with default profile'));
+    assert.ok(script.includes('write text'));
+    assert.ok(script.includes('/Users/andrewrapo/.local/bin/hc'));
+    assert.ok(script.includes('attach'));
+    assert.ok(script.includes('img2img-upscale-workflow'));
+    assert.ok(!script.includes('cursor-agent'));
   });
 });

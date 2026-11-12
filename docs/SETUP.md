@@ -409,9 +409,13 @@ Do not combine `af run` with `--via herdr`. Long-lived interactive sessions use 
 ### 5.3 Launch / resume via Herdr
 
 ```bash
-# One session into Herdr (skips if af_id label already live)
-af resume "$TASK" --via herdr
-af resume "$TASK" --via herdr --dry-run   # print hc command only
+# One session into Herdr (default when hc is on PATH; skips if already live)
+af resume "$TASK"
+af resume "$TASK" --via herdr             # same
+af resume "$TASK" --dry-run               # print hc command + Attach line
+af resume "$TASK" --here                  # Cursor TUI in this terminal
+af resume "$TASK" --open                  # also open an iTerm2 tab: hc attach <name>
+af resume                                 # TTY picker (or: af resume -i / af pick)
 
 # Entire active fleet
 af resume --all --via herdr
@@ -440,6 +444,8 @@ hc ls --all --json # includes finished (what af ls / af sync query)
 ~/.local/bin/hc attach <name>
 ```
 
+`af resume` / `af resume --via herdr` (and `--dry-run`) prints a copy-pasteable `Attach: hc attach <name>` for each launched or already-live skipped session. In an iTerm2 TTY, a new tab running the attach command (absolute `~/.local/bin/hc` path) opens by default; `--no-open` prints the line only. `--all` still auto-detects its backend and does not default to Herdr just because `hc` is on PATH.
+
 `af ls` shows a HERDR column from that `--all` query without writing the registry. `af sync` persists last-known `herdr` evidence (runtime/address/exit) and does **not** overwrite `status` or `lastUsed`. Process exit ≠ task done.
 
 ### 5.4 Launch / resume via tmux / WezTerm / iTerm2 / plain
@@ -452,7 +458,7 @@ af resume --all --via wezterm
 af resume --all --via iterm2
 af resume --all --via plain          # print commands only
 af resume --all --dry-run
-af resume "$TASK"                    # this terminal; sets OSC tab title
+af resume "$TASK" --here             # this terminal; sets OSC tab title
 ```
 
 ### 5.5 Track → finish → cleanup

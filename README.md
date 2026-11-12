@@ -66,15 +66,20 @@ af run "auth-refactor" --prompt "Summarize the current branch" --mode ask --cwd 
 af log auth-refactor            # last captured output
 af log auth-refactor --path
 
-# Resume one in this terminal (sets OSC tab title)
+# Resume one (default: Herdr when hc is on PATH; prints Attach: hc attach <name>)
 af resume auth-refactor
+af resume auth-refactor --open      # also open an iTerm2 tab running hc attach
+af resume auth-refactor --here      # old behavior: Cursor TUI in this terminal
+
+# Interactive multi-select (TTY only)
+af resume                           # or: af resume -i  /  af pick
 
 # After reboot: reopen every active session
 af resume --all --via tmux          # window per session in tmux session "agentfleet"
 af resume --all --via iterm2        # AppleScript → new iTerm2 tab per session
 af resume --all --via wezterm       # wezterm cli spawn + set-tab-title
 af resume --all --via herdr         # hc run --bg … per session (skips ones already live)
-af resume auth --via herdr          # one session in Herdr
+af resume auth --via herdr          # one session in Herdr (same as the default)
 af resume --all --via plain         # just print the commands
 af resume --all --dry-run           # show plan without executing
 ```
@@ -99,8 +104,9 @@ af resume --all --dry-run           # show plan without executing
 | `af sync [--dry-run] [--json]` | Query `hc ls --all --json`; persist last-known Herdr runtime (not status) |
 | `af run "<title>" --prompt "…"` | Headless create-or-resume; capture stdout to `~/.agentfleet/runs/` |
 | `af log <title\|id>` | Print last captured run (or `--path`) |
-| `af resume <title\|id>` | cd + resume one (interactive TUI) |
-| `af resume --all [--tag X] [--via …]` | Fleet reopen (interactive) |
+| `af resume <title\|id>` | Resume one (default: Herdr when `hc` is on PATH; prints `Attach: hc attach <name>`). `--here` / `--via plain` = this terminal. `--open` = new iTerm2 attach tab (default in an iTerm TTY). |
+| `af resume` / `af pick` | Interactive multi-select (TTY only); resume via Herdr |
+| `af resume --all [--tag X] [--via …]` | Fleet reopen (`--all` still auto-detects backend; not default-Herdr) |
 | `af herdr-templates` | Install Cursor/OpenCode templates into `~/.config/herdr-core/templates` |
 | `af rename` / `af done` / `af rm` / `af note` | Metadata |
 | `af export [file]` / `af import-file <file>` | Backup / restore registry |
@@ -126,7 +132,7 @@ Each entry stores: `id`, `title`, `chatId`, `cwd`, `branch`, `model`, `created`,
 - **tmux** — windows in a named session (`agentfleet` by default; `AGENTFLEET_TMUX_SESSION` / `--tmux-session`).
 - **iterm2** — `osascript` creates a titled tab per session (macOS).
 - **wezterm** — `wezterm cli spawn --cwd … -- cursor-agent --resume …` then `set-tab-title`.
-- **herdr** — `hc run --bg --no-parent --outlive-parent --name <slug> --cwd <cwd> --label af_id=<id> --label title=<title> env -u NO_COLOR -u FORCE_COLOR cursor-agent --resume …`. **Do not insert a `--` separator:** on herdr-core 0.1.16 (`hc run`, verified 2026-11-10 on the Mini) a `--` token is treated as the program name and fails with `spawn_failed` / `cannot start "--"`. The `env -u …` prefix clears Herdr/parent `NO_COLOR` / `FORCE_COLOR` so the Cursor TUI can use color. Names are lowercased, sanitized to `[a-z0-9_-]`, truncated to 32 chars and de-duplicated. Sessions whose `af_id` label already appears in `hc ls --json` are skipped. Works for `resume --all` and `resume <id>`. Bundled interactive templates (`af herdr-templates`) are `cursor` and `opencode` (`ready: quiet`, because those CLIs do not speak Herdr's OSC 7501 status protocol).
+- **herdr** — `hc run --bg --no-parent --outlive-parent --name <slug> --cwd <cwd> --label af_id=<id> --label title=<title> env -u NO_COLOR -u FORCE_COLOR cursor-agent --resume …`. **Do not insert a `--` separator:** on herdr-core 0.1.16 (`hc run`, verified 2026-11-10 on the Mini) a `--` token is treated as the program name and fails with `spawn_failed` / `cannot start "--"`. The `env -u …` prefix clears Herdr/parent `NO_COLOR` / `FORCE_COLOR` so the Cursor TUI can use color. Names are lowercased, sanitized to `[a-z0-9_-]`, truncated to 32 chars and de-duplicated. Sessions whose `af_id` label already appears in `hc ls --json` are skipped. After launch or skip, `af resume` (default Herdr when `hc` is on PATH) and `af resume --via herdr` print a copy-pasteable `Attach: hc attach <name>`. In an iTerm2 TTY, `--open` is the default and opens a new tab running `hc attach` with an absolute `hc` path (pass `--no-open` to only print the line). Works for `resume --all --via herdr` and `resume <id>`. Bundled interactive templates (`af herdr-templates`) are `cursor` and `opencode` (`ready: quiet`, because those CLIs do not speak Herdr's OSC 7501 status protocol).
 - **plain** — print shell commands (use this under Zellij or anything else).
 
 Auto-detect order: `$AGENTFLEET_VIA` → inside Herdr (`$HERDR`/`$HC_TERMINAL` set and `hc` on PATH) → inside tmux → `TERM_PROGRAM` (WezTerm / iTerm) → `tmux` on PATH → `wezterm` → plain.
