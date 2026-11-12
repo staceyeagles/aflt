@@ -352,6 +352,13 @@ export AGENTFLEET_CURSOR_BIN="$HOME/.local/bin/cursor-agent"
 | `~/.agentfleet/results/<id>.md` | Worker handoff files from `af spawn` (see README “Master and worker agents”). |
 | `AGENTFLEET_ID` / `PARENT` / `RESULT` | Set on launched sessions / spawned workers for orchestration. |
 | `af wait` / `af tail` / `af send` / `af stop` | Stage 2 master/worker controls (see README “Master and worker agents (stage 2)”). |
+| `af master` / `--send-grace` / `AGENTFLEET_SEND_GRACE` | Stage 3: bootstrap a master with `templates/orchestrator.md`; wait grace after interactive send (see README “Master and worker agents (stage 3)”). |
+| `AGENTFLEET_ROLE` / `AGENTFLEET_PLAN` | Set on `af master` launches (`master`; plan under `~/.agentfleet/plans/<id>.md`). |
+| `af wait --parent` | Wait on all children of a master (ids on the CLI still win). |
+| Copilot `--allow-tool=write(<result>)` | Pre-approves the handoff/plan path without `--force`; af falls back from stdout if the file is still missing. |
+| `~/.agentfleet/plans/<id>.md` | Master plan file (not in the project cwd). |
+| Headless SIGINT/SIGTERM/SIGHUP | `af` forwards SIGTERM to the engine process group; exits 130/143 (does not orphan the CLI). |
+| `af rm` / `--keep-files` / `--children` | Removes registry row + af-owned files under `$AGENTFLEET_HOME` only (never project/`~/.cursor`/`~/.copilot`). |
 
 Backend auto-detect order in `af` (`lib/backends.js`):  
 `$AGENTFLEET_VIA` → inside Herdr (`HERDR` / `HC_TERMINAL` / … and `hc` on PATH) → inside tmux → `TERM_PROGRAM` WezTerm / iTerm → `tmux` on PATH → `wezterm` → `plain`.

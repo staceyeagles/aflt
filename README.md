@@ -121,7 +121,8 @@ af adopt --all                      # label already-live af terminals for the He
 | `af engine [cursor\|copilot]` | Print default engine + source (flag/env/config/builtin), or set it |
 | `af herdr-templates` | Install Cursor/OpenCode/Copilot templates into `~/.config/herdr-core/templates` |
 | `af herdr-app install` / `status` | Install the af-sessions Herdr panel + `af` layout (symlink by default) |
-| `af rename` / `af done` / `af rm` / `af note` | Metadata |
+| `af rename` / `af done` / `af note` | Metadata |
+| `af rm <title\|id>` | Remove session + af-owned files under `$AGENTFLEET_HOME` (`--keep-files`, `--children`, `--with-master`, `--dry-run`, `--force`) |
 | `af export [file]` / `af import-file <file>` | Backup / restore registry |
 
 Registry file: `~/.agentfleet/sessions.json` (atomic write: temp + rename). Override with `AGENTFLEET_HOME` or `AGENTFLEET_REGISTRY`. Default engine config: `~/.agentfleet/config.json` (separate file).
@@ -232,7 +233,7 @@ af result auth-refactor-w1 --path
 
 The worker prompt is wrapped with instructions to write a markdown handoff (`Summary`, `Files changed`, `Open questions`) to `result` and not to commit/push.
 
-Because the handoff lives outside the worker's folder, af passes `--add-dir <results dir>` to Copilot and Cursor for any session with a `result` path (Copilot otherwise refuses to write there). `workerStatus` reflects the exit code only; the `HANDOFF` column in `af children` (and `resultExists` in `--json`) shows whether the worker actually wrote its handoff.
+Because the handoff lives outside the worker's folder, af passes `--add-dir <results dir>` to Copilot and Cursor for any session with a `result` path. Copilot also gets `--allow-tool=write(<result>)` so the handoff is writable without `--force` (see stage 3 “Permissions and handoffs”). `workerStatus` reflects the exit code; the `HANDOFF` column shows `yes` / `af` / `no` (`resultSource` / `handoff` in `--json`).
 
 ## Master and worker agents (stage 2)
 
@@ -285,6 +286,57 @@ af stop --all-children auth-refactor   # cancel stragglers
 ```
 
 `af send` on a non-worker session is allowed (headless continue / `hc send` when live). Headless send refuses with exit 1 while `runPid` is alive.
+
+## Master and worker agents (stage 3)
+
+Stage 3 adds `af master` (bootstrap a master with an orchestrator prompt) and fixes a race after interactive `af send`. Parallel `af spawn … &` is safe: registry read-modify-write uses a cross-process `<sessions.json>.lock`, and default worker titles (`<master>-wN`) are chosen under that lock so two spawns cannot overwrite each other or collide on the same title.
+
+### Permissions and handoffs
+
+Workers/masters write handoffs under `$AGENTFLEET_HOME/results/` (outside the project cwd). **Copilot** gets `--add-dir` for that folder and `--allow-tool=write(<absolute result path>)` so the handoff is writable **without** `--force` / `--allow-all-tools`. Masters also get the same for `$AGENTFLEET_HOME/plans/<id>.md` (`AGENTFLEET_PLAN`). **Cursor** has no per-path allow flag; without `--force` it may refuse the write. If a headless worker/master exits 0 and the result file is missing/empty, **af writes a fallback handoff** from final stdout (`resultSource: af-fallback`; `af children` HANDOFF column shows `yes` / `af` / `no`).
+
+### Post-send stale `done` / `af wait`
+
+After `af send` to an interactive worker, Herdr may still report the previous turn’s OSC 7501 state (`done` / `idle`) for a moment, so `af wait` could return `waiting` immediately. Interactive `af send` now records `lastSendAt` and sets `workerStatus=running`. `af wait` ignores `done`/`idle` until the worker is seen `working` **or** a grace period since `lastSendAt` elapses (default **15s**; `--send-grace SEC` or `AGENTFLEET_SEND_GRACE`). After grace with no `working` sighting, `done`/`idle` counts as waiting (instant turn). `blocked` is always immediate waiting.
+
+### `af master`
+
+```bash
+# Interactive master in Herdr (orchestrator.md injected as the initial prompt)
+af master --goal "Split auth into helpers + tests" --cwd ~/src/app --worker-engine copilot
+
+# Headless master (tracked like a worker; af wait works on it too)
+af master --goal "…" --headless --force --timeout 1800
+
+af master --goal "…" --dry-run   # preview; no registry write
+```
+
+Creates a registry session with `role=master`, `task` = first ~80 chars of the goal, `result` default `$AGENTFLEET_HOME/results/<id>.md`, `plan` default `$AGENTFLEET_HOME/plans/<id>.md`, title default `master-<slug>` (unique). The prompt is rendered from `templates/orchestrator.md` (`{{GOAL}}`, `{{MASTER_ID}}`, `{{MASTER_TITLE}}`, `{{CWD}}`, `{{DEFAULT_WORKER_ENGINE}}`, `{{PLAN}}`) and injected as the initial message (no rules files written into the user’s repo). Launch env includes `AGENTFLEET_ID`, `AGENTFLEET_RESULT`, `AGENTFLEET_PLAN`, `AGENTFLEET_ROLE=master`, and a `PATH` that prepends the `af` binary dir plus `~/.local/bin`. Masters get `--add-dir` for results and plans like workers.
+
+The orchestrator template teaches the master to keep its plan at `$AGENTFLEET_PLAN`, spawn workers (`af spawn --parent "$AGENTFLEET_ID" …`), loop with `af wait` / `af children` / `af result` / `af send` / `af stop`, and write a final summary to `$AGENTFLEET_RESULT`.
+
+`af wait --parent <master>` waits on all children of that master (explicit worker ids/titles on the command line win over `--parent`). Table **ID** columns show a width-16 `slug…-hex6` form so siblings stay distinguishable; `af` accepts unique id prefixes and a unique trailing hex6.
+
+### Headless interrupt + `af rm`
+
+Headless engine processes run in their own process group. If the wrapping `af` process gets **SIGINT / SIGTERM / SIGHUP**, it forwards **SIGTERM** to that group (then SIGKILL after a short wait), records `workerStatus: stopped` for workers/masters, finishes the run log footer, and exits **130** / **143** (or 129 for SIGHUP) so the engine is not orphaned.
+
+`af rm` removes the registry row and, unless `--keep-files`, af-owned paths under `$AGENTFLEET_HOME` only: `results/<…>` handoff, `runs/<id>/`, and `plans/<…>` for masters. Paths outside those dirs are skipped with a warning. `--children <master>` removes workers (`--with-master` includes the master). `--dry-run` lists actions. A running session is refused unless `--force` (which does **not** stop the process — use `af stop` first).
+
+**End-to-end sketch:**
+
+```bash
+af master --goal "Extract JWT helpers and add unit tests" --cwd ~/src/app-wt-auth --force
+# Attach: hc attach <name>  (or work headlessly with --headless)
+
+# Inside the master (or from a controller driving the same loop):
+af spawn --parent "$AGENTFLEET_ID" --engine copilot --task "JWT helpers" --prompt "…" &
+af spawn --parent "$AGENTFLEET_ID" --engine cursor --task "tests" --prompt "…" --force &
+af wait --parent "$AGENTFLEET_ID" --any --timeout 900
+af result <worker-id>
+af send <worker-id> "Tighten Open questions"
+af wait <worker-id> --send-grace 15
+```
 
 ## Headless / controller usage
 

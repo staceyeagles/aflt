@@ -22,7 +22,7 @@ _af() {
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  cmds="new add import ls list sync run log spawn children result wait tail send stop resume pick adopt cursor copilot engine rename done rm remove note export import-file which-backend herdr-templates herdr-app help"
+  cmds="new add import ls list sync run log spawn master children result wait tail send stop resume pick adopt cursor copilot engine rename done rm remove note export import-file which-backend herdr-templates herdr-app help"
 
   if [[ ${COMP_CWORD} -eq 1 ]]; then
     COMPREPLY=( $(compgen -W "${cmds}" -- "${cur}") )
@@ -50,6 +50,9 @@ _af() {
         COMPREPLY=( $(compgen -W "--parent --prompt --engine --cwd --title --task --model --timeout --force --interactive --dry-run --json --no-trust cursor copilot" -- "${cur}") )
       fi
       ;;
+    master)
+      COMPREPLY=( $(compgen -W "--goal --engine --cwd --title --model --worker-engine --headless --timeout --force --dry-run --json --no-trust cursor copilot" -- "${cur}") )
+      ;;
     children)
       if [[ "$cur" == -* ]]; then
         COMPREPLY=( $(compgen -W "--json --all" -- "${cur}") )
@@ -67,11 +70,14 @@ _af() {
       fi
       ;;
     wait)
-      if [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "--any --timeout --interval --json" -- "${cur}") )
+      if [[ "$prev" == "--parent" ]]; then
+        titles="$(_af_session_titles)"
+        COMPREPLY=( $(compgen -W "${titles}" -- "${cur}") )
+      elif [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "--parent --any --timeout --interval --send-grace --json" -- "${cur}") )
       else
         titles="$(_af_session_titles)"
-        COMPREPLY=( $(compgen -W "--any --timeout --interval --json ${titles}" -- "${cur}") )
+        COMPREPLY=( $(compgen -W "--parent --any --timeout --interval --send-grace --json ${titles}" -- "${cur}") )
       fi
       ;;
     tail)
@@ -101,6 +107,17 @@ _af() {
       else
         titles="$(_af_session_titles)"
         COMPREPLY=( $(compgen -W "--all-children --json ${titles}" -- "${cur}") )
+      fi
+      ;;
+    rm|remove)
+      if [[ "$prev" == "--children" ]]; then
+        titles="$(_af_session_titles)"
+        COMPREPLY=( $(compgen -W "${titles}" -- "${cur}") )
+      elif [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "--children --with-master --keep-files --force --dry-run" -- "${cur}") )
+      else
+        titles="$(_af_session_titles)"
+        COMPREPLY=( $(compgen -W "--children --with-master --keep-files --force --dry-run ${titles}" -- "${cur}") )
       fi
       ;;
     engine)

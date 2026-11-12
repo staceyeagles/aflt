@@ -20,12 +20,15 @@ const {
   gitBranch,
   nowIso,
   shortId,
+  displayId,
   pad,
   oscTitle,
   fleetDir,
   registryPath,
   sleep,
 } = require('../lib/util');
+
+const ID_COL = 16;
 
 const USAGE = `agentfleet (af) — track & resume Cursor / Copilot CLI agent sessions
 
@@ -52,6 +55,12 @@ Usage:
                             [--force] [--interactive] [--dry-run] [--json]
                             Create a worker under a master; headless by default
                             (same machinery as af run). --interactive launches via Herdr.
+  af master --goal TEXT [--engine cursor|copilot] [--cwd DIR] [--title T] [--model X]
+                            [--worker-engine copilot|cursor] [--headless] [--timeout SEC]
+                            [--force] [--dry-run] [--json]
+                            Create a master session with the orchestrator template as
+                            the initial prompt. Default: interactive via Herdr.
+                            --headless uses af run machinery (workerStatus tracked).
   af children [<id|title>] [--json] [--all]
                             List a master's workers, or (no arg) resolve master from
                             AGENTFLEET_ID / AGENTFLEET_PARENT, or summarize all masters.
@@ -59,16 +68,21 @@ Usage:
   af result <id|title> [--path]
                             Print a worker's handoff file (or its path). If missing,
                             stderr note + last ~40 lines of the run log; exit 1.
-  af wait [<id|title>...] [--any] [--timeout SEC] [--interval SEC] [--json]
+  af wait [<id|title>...] [--parent <master>] [--any] [--timeout SEC] [--interval SEC]
+                            [--send-grace SEC] [--json]
                             Block until listed workers reach done|failed|stopped|waiting.
-                            No ids: children of AGENTFLEET_ID (master) or AGENTFLEET_PARENT.
+                            Explicit ids/titles win over --parent. No ids: --parent children,
+                            else children of AGENTFLEET_ID (master) or AGENTFLEET_PARENT.
                             Exit: 0 ok, 1 failed/stopped, 2 timeout, 3 waiting.
+                            --send-grace: ignore stale Herdr done/idle after af send
+                            (default 15; env AGENTFLEET_SEND_GRACE).
   af tail <id|title> [-n N] [-f]
                             Last N lines of run log (or hc read for live Herdr). -f follows
                             until the worker leaves running (or Ctrl-C).
   af send <id|title> "text" [--timeout SEC] [--force]
-                            Interactive: hc send. Headless (not running): continue chat
-                            with a short handoff reminder. Refuses if headless runPid live.
+                            Interactive: hc send (records lastSendAt; workerStatus=running).
+                            Headless (not running): continue chat with a short handoff
+                            reminder. Refuses if headless runPid live.
   af stop <id|title> | af stop --all-children <master> [--json]
                             Stop a running worker (SIGTERM process group / hc interrupt+kill).
   af resume <title|id> [--via herdr|plain] [--here] [--open|--no-open]
@@ -93,7 +107,14 @@ Usage:
                             Print default engine + source, or set it
   af rename <title|id> "<new title>"
   af done <title|id>
-  af rm <title|id>
+  af rm <title|id> [--keep-files] [--force] [--dry-run]
+                            Remove a session and its af-owned files under
+                            $AGENTFLEET_HOME (results/, runs/<id>/, plans/).
+                            --keep-files: registry row only. Refuses if running
+                            unless --force (does not stop the process).
+  af rm --children <master> [--with-master] [--keep-files] [--force] [--dry-run]
+                            Remove all workers of a master; --with-master also
+                            removes the master. --dry-run lists actions only.
   af note <title|id> "<text>"
   af export [file]          Write registry JSON (default: stdout)
   af import-file <file>     Merge sessions from a backup file
@@ -122,7 +143,10 @@ Environment:
   HERDR_APP_HOME          Herdr app config dir (default: ~/.config/herdr-app)
   AGENTFLEET_ID           Set on launched sessions (af id); used by af children
   AGENTFLEET_PARENT       Set on spawned workers (master af id)
-  AGENTFLEET_RESULT       Set on spawned workers (handoff file path)
+  AGENTFLEET_RESULT       Set on spawned workers / masters (handoff or summary path)
+  AGENTFLEET_PLAN         Set on masters (plan file under $AGENTFLEET_HOME/plans/)
+  AGENTFLEET_ROLE         Set on masters (master) when launched via af master
+  AGENTFLEET_SEND_GRACE   Seconds for af wait to ignore stale done/idle after send
 `;
 
 async function main() {
@@ -147,6 +171,9 @@ async function main() {
       break;
     case 'spawn':
       await cmdSpawn(rest);
+      break;
+    case 'master':
+      await cmdMaster(rest);
       break;
     case 'children':
       cmdChildren(rest);
@@ -426,13 +453,13 @@ function cmdLs(argv) {
   }
 
   process.stdout.write(
-    `${pad('TITLE', 24)} ${pad('ID', 10)} ${pad('CHAT', 10)} ${pad('ENGINE', 8)} ${pad('FOLDER', 24)} ${pad('BRANCH', 12)} ${pad('STATUS', 8)} ${pad('HERDR', 8)} LAST USED\n`
+    `${pad('TITLE', 24)} ${pad('ID', ID_COL)} ${pad('CHAT', 10)} ${pad('ENGINE', 8)} ${pad('FOLDER', 24)} ${pad('BRANCH', 12)} ${pad('STATUS', 8)} ${pad('HERDR', 8)} LAST USED\n`
   );
   for (const e of enriched) {
     const s = e.session;
     const folder = s.cwd ? path.basename(s.cwd) : '';
     process.stdout.write(
-      `${pad(s.title, 24)} ${pad(shortId(s.id), 10)} ${pad(shortId(s.chatId), 10)} ${pad(s.engine || 'cursor', 8)} ${pad(folder, 24)} ${pad(s.branch || '', 12)} ${pad(s.status, 8)} ${pad(herdr.displayRuntime(e.runtime), 8)} ${s.lastUsed || ''}\n`
+      `${pad(s.title, 24)} ${pad(displayId(s.id, ID_COL), ID_COL)} ${pad(shortId(s.chatId), 10)} ${pad(s.engine || 'cursor', 8)} ${pad(folder, 24)} ${pad(s.branch || '', 12)} ${pad(s.status, 8)} ${pad(herdr.displayRuntime(e.runtime), 8)} ${s.lastUsed || ''}\n`
     );
   }
 }
@@ -1001,14 +1028,108 @@ function cmdDone(argv) {
   printSession(updated, 'done');
 }
 
+function sessionLooksRunning(session) {
+  const fetchResult = herdr.fetchHerdrTerminals();
+  if (resolveLiveHerdrForSession(session, fetchResult)) return { running: true, via: 'herdr' };
+  const derived = orchestrate.deriveWorkerStatus(session, null, {
+    isAlive: orchestrate.defaultIsAlive,
+    hostname: os.hostname(),
+  });
+  if (
+    derived === 'running' &&
+    session.runPid != null &&
+    (!session.runHost || session.runHost === os.hostname()) &&
+    orchestrate.defaultIsAlive(session.runPid)
+  ) {
+    return { running: true, via: 'headless' };
+  }
+  return { running: false, via: null };
+}
+
+function collectRmTargets(argvFlags, args) {
+  const childrenFlag = argvFlags.children;
+  const withMaster = Boolean(argvFlags['with-master']);
+  if (childrenFlag && childrenFlag !== true) {
+    const master = requireSession(String(childrenFlag));
+    const kids = listChildrenOf(master.id);
+    const targets = kids.slice();
+    if (withMaster) targets.push(master);
+    if (targets.length === 0 && !withMaster) {
+      fail(`af rm --children: master "${master.title}" has no workers`);
+    }
+    return { targets, master };
+  }
+  if (!args[0]) {
+    fail(
+      'usage: af rm <title|id> [--keep-files] [--force] [--dry-run]\n' +
+        '       af rm --children <master> [--with-master] [--keep-files] [--force] [--dry-run]'
+    );
+  }
+  if (withMaster) {
+    fail('--with-master requires --children <master>');
+  }
+  return { targets: [requireSession(args[0])], master: null };
+}
+
 function cmdRm(argv) {
   const { args, flags } = parseArgs(argv);
-  if (!args[0]) fail('usage: af rm <title|id>');
-  if (!flags.force && !flags.f) {
-    // non-interactive: require --force only if we want; for CLI simplicity just delete
+  const keepFiles = Boolean(flags['keep-files']);
+  const force = Boolean(flags.force || flags.f);
+  const dryRun = Boolean(flags['dry-run']);
+  const { targets } = collectRmTargets(flags, args);
+
+  const home = fleetDir();
+  const plan = [];
+  for (const s of targets) {
+    const run = sessionLooksRunning(s);
+    if (run.running && !force) {
+      fail(
+        `af rm: "${s.title}" appears to be running (${run.via}). ` +
+          `Stop it first with \`af stop ${s.title}\`, or pass --force to remove the record/files without stopping.`
+      );
+    }
+    const owned = keepFiles
+      ? { files: [], dirs: [], skipped: [] }
+      : orchestrate.sessionOwnedPaths(s, { home });
+    plan.push({ session: s, owned, running: run.running });
   }
-  const removed = registry.remove(args[0]);
-  process.stdout.write(`removed ${removed.title} (${removed.id})\n`);
+
+  if (dryRun) {
+    for (const item of plan) {
+      const s = item.session;
+      process.stdout.write(`[dry-run] would remove session ${s.title} (${s.id})\n`);
+      if (item.running) process.stdout.write(`[dry-run]   (currently running; --force would be required)\n`);
+      for (const f of item.owned.files) process.stdout.write(`[dry-run]   file ${f}\n`);
+      for (const d of item.owned.dirs) process.stdout.write(`[dry-run]   dir  ${d}\n`);
+      for (const sk of item.owned.skipped) {
+        process.stderr.write(`[dry-run]   skip ${sk.path} (${sk.reason})\n`);
+      }
+    }
+    return;
+  }
+
+  for (const item of plan) {
+    const s = item.session;
+    for (const sk of item.owned.skipped) {
+      process.stderr.write(`af rm: skip ${sk.path} (${sk.reason})\n`);
+    }
+    for (const f of item.owned.files) {
+      try {
+        if (fs.existsSync(f)) fs.unlinkSync(f);
+      } catch (err) {
+        process.stderr.write(`af rm: could not remove ${f}: ${err.message}\n`);
+      }
+    }
+    for (const d of item.owned.dirs) {
+      try {
+        if (fs.existsSync(d)) fs.rmSync(d, { recursive: true, force: true });
+      } catch (err) {
+        process.stderr.write(`af rm: could not remove ${d}: ${err.message}\n`);
+      }
+    }
+    const removed = registry.remove(s.id);
+    process.stdout.write(`removed ${removed.title} (${removed.id})\n`);
+  }
 }
 
 function cmdNote(argv) {
@@ -1108,9 +1229,15 @@ async function executeHeadlessRun(session, opts = {}) {
         'warning: --force adds Copilot --allow-all-tools (tools run without confirmation; not --allow-all/--yolo).\n'
       );
     } else if (engineName === 'copilot') {
-      process.stderr.write(
-        'Copilot run without --force: no --allow-all-tools. Tool calls will not auto-approve.\n'
-      );
+      if (session.result || session.plan) {
+        process.stderr.write(
+          'Copilot run without --force: no --allow-all-tools. Handoff/plan write path(s) are pre-approved via --allow-tool=write(…); other tools need confirmation or --force.\n'
+        );
+      } else {
+        process.stderr.write(
+          'Copilot run without --force: no --allow-all-tools. Tool calls will not auto-approve.\n'
+        );
+      }
     }
   }
 
@@ -1142,6 +1269,7 @@ async function executeHeadlessRun(session, opts = {}) {
     timeoutMs: timeoutSec ? timeoutSec * 1000 : 0,
     env: childEnv,
     detached: true,
+    forwardSignals: true,
     logPath: outPath,
     onSpawn: ({ pid, pgid }) => {
       if (!trackRun) return;
@@ -1166,17 +1294,28 @@ async function executeHeadlessRun(session, opts = {}) {
   } catch (_) {
     /* ignore */
   }
+  if (result.interruptedBy) stopped = true;
 
+  const exitFromSignal = result.interruptedBy
+    ? runlib.signalExitCode(result.interruptedBy)
+    : null;
+  const lastExit = result.timedOut ? 124 : exitFromSignal != null ? exitFromSignal : result.code;
+
+  const patch = {
+    lastUsed: nowIso(),
+    lastRunAt: nowIso(),
+    lastExit,
+    lastOutput: outPath,
+    lastPrompt: prompt,
+    runPid: null,
+    runPgid: null,
+  };
+  if (result.interruptedBy && (session.role === 'worker' || session.role === 'master')) {
+    patch.workerStatus = 'stopped';
+    patch.stopRequested = true;
+  }
   try {
-    registry.update(session.id, {
-      lastUsed: nowIso(),
-      lastRunAt: nowIso(),
-      lastExit: result.timedOut ? 124 : result.code,
-      lastOutput: outPath,
-      lastPrompt: prompt,
-      runPid: null,
-      runPgid: null,
-    });
+    registry.update(session.id, patch);
   } catch (_) {
     /* ignore */
   }
@@ -1184,11 +1323,16 @@ async function executeHeadlessRun(session, opts = {}) {
   if (result.stdout) process.stdout.write(result.stdout.endsWith('\n') ? result.stdout : result.stdout + '\n');
   if (result.stderr) process.stderr.write(result.stderr.endsWith('\n') ? result.stderr : result.stderr + '\n');
   process.stderr.write(`output: ${outPath}\n`);
-  const code = result.timedOut ? 124 : result.code || 0;
+  if (result.interruptedBy) {
+    process.stderr.write(
+      `interrupted (${result.interruptedBy}): forwarded SIGTERM to engine process group\n`
+    );
+  }
+  const code = result.timedOut ? 124 : exitFromSignal != null ? exitFromSignal : result.code || 0;
   if (result.timedOut) {
     process.stderr.write(`timed out after ${timeoutSec}s (signal ${result.signal || 'SIGTERM'})\n`);
   }
-  return { code, timedOut: result.timedOut, outPath, result, stopped };
+  return { code, timedOut: result.timedOut, outPath, result, stopped, interruptedBy: result.interruptedBy || null };
 }
 
 function headlessCommandPreview(session, { prompt, mode, force, outputFormat, trust, silent }) {
@@ -1366,16 +1510,19 @@ async function cmdSpawn(argv) {
       ? String(flags.task)
       : orchestrate.taskFromPrompt(prompt);
 
+  const explicitTitle =
+    typeof flags.title === 'string' && flags.title ? String(flags.title) : null;
+  // Preview / dry-run title only; real uniqueness for default titles is decided
+  // inside registry.add under the cross-process lock (autoTitle).
   const allSessions = registry.list({ includeDone: true });
   const children = allSessions.filter((s) => s.parent === parent.id);
   const title =
-    typeof flags.title === 'string' && flags.title
-      ? String(flags.title)
-      : orchestrate.nextWorkerTitle(
-          parent.title,
-          children.length,
-          allSessions.map((s) => s.title)
-        );
+    explicitTitle ||
+    orchestrate.nextWorkerTitle(
+      parent.title,
+      children.length,
+      allSessions.map((s) => s.title)
+    );
 
   if (!parent.role && !dryRun) {
     try {
@@ -1460,23 +1607,31 @@ async function cmdSpawn(argv) {
   fs.mkdirSync(resultsDir, { recursive: true, mode: 0o700 });
 
   // Create with role=worker so normalizeEntry sets default result path from id.
+  // Default titles are finalized under the registry lock so parallel
+  // `af spawn ... &` cannot collide on `<master>-wN`.
   let worker;
   try {
-    worker = registry.add({
-      title,
-      chatId,
-      cwd,
-      branch: gitBranch(cwd),
-      model: flags.model || null,
-      prompt: '',
-      tags: [],
-      status: 'active',
-      engine: engineName,
-      parent: parent.id,
-      role: 'worker',
-      task,
-      workerStatus: 'queued',
-    });
+    const addOpts = explicitTitle
+      ? {}
+      : { autoTitle: { parentTitle: parent.title, parentId: parent.id } };
+    worker = registry.add(
+      {
+        title: explicitTitle || title,
+        chatId,
+        cwd,
+        branch: gitBranch(cwd),
+        model: flags.model || null,
+        prompt: '',
+        tags: [],
+        status: 'active',
+        engine: engineName,
+        parent: parent.id,
+        role: 'worker',
+        task,
+        workerStatus: 'queued',
+      },
+      addOpts
+    );
   } catch (err) {
     fail(err.message);
   }
@@ -1558,7 +1713,7 @@ async function cmdSpawn(argv) {
     force,
     stopRequested: false,
   });
-  const { code, timedOut, outPath, stopped } = await executeHeadlessRun(worker, {
+  const { code, timedOut, outPath, stopped, result } = await executeHeadlessRun(worker, {
     prompt: finalWrapped,
     force,
     outputFormat: 'text',
@@ -1578,6 +1733,13 @@ async function cmdSpawn(argv) {
   } catch (_) {
     /* ignore */
   }
+  worker = applyResultHandoffFallback(worker, {
+    code,
+    timedOut,
+    stopped,
+    stdout: result && result.stdout,
+    resultPath: finalResult,
+  });
 
   if (asJson) {
     process.stdout.write(
@@ -1589,6 +1751,7 @@ async function cmdSpawn(argv) {
             engine: worker.engine,
             result: finalResult,
             workerStatus,
+            resultSource: worker.resultSource || null,
             lastExit: timedOut ? 124 : code,
             lastOutput: outPath,
           },
@@ -1604,6 +1767,309 @@ async function cmdSpawn(argv) {
         `result: ${finalResult}\n` +
         `log: ${outPath}\n`
     );
+  }
+  process.exitCode = code;
+}
+
+async function cmdMaster(argv) {
+  const { flags } = parseArgs(argv);
+  const goal = flags.goal;
+  if (!goal || goal === true) {
+    fail(
+      'usage: af master --goal TEXT [--engine cursor|copilot] [--cwd DIR] [--title T] [--model X] [--worker-engine copilot|cursor] [--headless] [--timeout SEC] [--force] [--dry-run] [--json]'
+    );
+  }
+  const goalText = String(goal);
+
+  const engineFlag = flags.engine ? String(flags.engine) : null;
+  if (engineFlag) {
+    try {
+      config.validateEngine(engineFlag);
+    } catch (err) {
+      fail(err.message);
+    }
+  }
+  let resolved;
+  try {
+    resolved = engine.resolveEngine({ flag: engineFlag });
+  } catch (err) {
+    fail(err.message);
+  }
+  const engineName = resolved.engine;
+
+  let workerEngine = flags['worker-engine'] ? String(flags['worker-engine']) : 'copilot';
+  try {
+    config.validateEngine(workerEngine);
+  } catch (err) {
+    fail(`--worker-engine: ${err.message}`);
+  }
+
+  const force = Boolean(flags.force);
+  const dryRun = Boolean(flags['dry-run']);
+  const headless = Boolean(flags.headless);
+  const trust = !flags['no-trust'];
+  const asJson = Boolean(flags.json);
+  const timeoutSec = flags.timeout != null && flags.timeout !== true ? Number(flags.timeout) : 0;
+  if (flags.timeout && (Number.isNaN(timeoutSec) || timeoutSec < 0)) {
+    fail('--timeout must be a number of seconds');
+  }
+
+  const cwd = resolveCwd(flags.cwd || flags.C);
+  const task = orchestrate.taskFromPrompt(goalText);
+  const allSessions = dryRun ? [] : registry.list({ includeDone: true });
+  const title =
+    typeof flags.title === 'string' && flags.title
+      ? String(flags.title)
+      : orchestrate.nextMasterTitle(
+          goalText,
+          allSessions.map((s) => s.title)
+        );
+
+  const resultsDir = path.join(fleetDir(), 'results');
+  const previewId = 'dry-run-master';
+  const previewResult = orchestrate.defaultResultPath(previewId);
+
+  function buildPromptFor(masterId, masterTitle, resultPath, planPath) {
+    const tpl = orchestrate.loadOrchestratorTemplate();
+    return orchestrate.renderTemplate(tpl, {
+      GOAL: goalText,
+      MASTER_ID: masterId,
+      MASTER_TITLE: masterTitle,
+      CWD: cwd,
+      DEFAULT_WORKER_ENGINE: workerEngine,
+      PLAN: planPath || '',
+    });
+  }
+
+  function masterEnvOverlay(session) {
+    const overlay = {
+      AGENTFLEET_ID: session.id,
+      AGENTFLEET_RESULT: session.result,
+      AGENTFLEET_ROLE: 'master',
+      PATH: orchestrate.pathWithAf(process.env),
+    };
+    if (session.plan) overlay.AGENTFLEET_PLAN = session.plan;
+    return overlay;
+  }
+
+  const previewPlan = orchestrate.defaultPlanPath(previewId);
+
+  if (dryRun) {
+    const prompt = buildPromptFor(previewId, title, previewResult, previewPlan);
+    const previewEntry = {
+      id: previewId,
+      title,
+      chatId: '00000000-0000-4000-8000-000000000000',
+      cwd,
+      engine: engineName,
+      model: flags.model || null,
+      role: 'master',
+      task,
+      result: previewResult,
+      plan: previewPlan,
+      workerStatus: headless ? 'queued' : 'running',
+      prompt,
+    };
+    if (asJson) {
+      process.stdout.write(
+        JSON.stringify(
+          {
+            dryRun: true,
+            master: previewEntry,
+            headless,
+            prompt,
+          },
+          null,
+          2
+        ) + '\n'
+      );
+    } else {
+      process.stderr.write(
+        `[dry-run] would create master "${title}" (${engineName})\n` +
+          `[dry-run] cwd=${cwd} headless=${headless}\n` +
+          `[dry-run] result=${previewResult}\n` +
+          `[dry-run] plan=${previewPlan}\n` +
+          `[dry-run] worker-engine=${workerEngine}\n`
+      );
+      if (headless) {
+        const shell = headlessCommandPreview(previewEntry, {
+          prompt,
+          force,
+          outputFormat: 'text',
+          trust,
+          silent: true,
+        });
+        process.stdout.write(`cd ${JSON.stringify(cwd)} && ${shell}\n`);
+      } else {
+        const cmd = engine.buildInteractiveCommandString(previewEntry, {
+          prompt,
+          trust,
+          force,
+        });
+        process.stdout.write(`cd ${JSON.stringify(cwd)} && ${cmd}\n`);
+      }
+    }
+    return;
+  }
+
+  let chatId;
+  if (engineName === 'cursor') {
+    process.stderr.write(`Creating chat via ${cursor.resolveCursorBin()} create-chat…\n`);
+    chatId = await cursor.createChat();
+  } else {
+    chatId = copilot.newSessionId();
+  }
+
+  fs.mkdirSync(resultsDir, { recursive: true, mode: 0o700 });
+  const plansDir = path.join(fleetDir(), 'plans');
+  fs.mkdirSync(plansDir, { recursive: true, mode: 0o700 });
+
+  let master;
+  try {
+    master = registry.add({
+      title,
+      chatId,
+      cwd,
+      branch: gitBranch(cwd),
+      model: flags.model || null,
+      prompt: '',
+      tags: [],
+      status: 'active',
+      engine: engineName,
+      role: 'master',
+      task,
+      workerStatus: 'queued',
+      force,
+      stopRequested: false,
+    });
+  } catch (err) {
+    fail(err.message);
+  }
+
+  const finalResult = master.result || orchestrate.defaultResultPath(master.id);
+  const finalPlan = master.plan || orchestrate.defaultPlanPath(master.id);
+  const finalPrompt = buildPromptFor(master.id, master.title, finalResult, finalPlan);
+  master = registry.update(master.id, {
+    prompt: finalPrompt,
+    result: finalResult,
+    plan: finalPlan,
+    force,
+    stopRequested: false,
+  });
+
+  const envOverlay = masterEnvOverlay(master);
+
+  try {
+    engine.assertEngineAvailable(master);
+  } catch (err) {
+    fail(err.message);
+  }
+
+  if (!headless) {
+    master = registry.update(master.id, {
+      workerStatus: 'running',
+      lastUsed: nowIso(),
+    });
+    const resumeOpts = {
+      prompt: finalPrompt,
+      trust,
+      force,
+      herdrApp: herdrapp.herdrAppEnabled(flags),
+      envOverlay,
+    };
+    const plan = backends.executeResumeAll([master], {
+      via: 'herdr',
+      dryRun: false,
+      resumeOpts,
+    });
+    if (asJson) {
+      process.stdout.write(
+        JSON.stringify(
+          {
+            master: {
+              id: master.id,
+              title: master.title,
+              engine: master.engine,
+              result: finalResult,
+              plan: finalPlan,
+              workerStatus: master.workerStatus,
+              role: 'master',
+            },
+            herdr: plan,
+          },
+          null,
+          2
+        ) + '\n'
+      );
+    } else {
+      printSession(master, 'master');
+      process.stdout.write(`  result:  ${finalResult}\n`);
+      process.stdout.write(`  plan:    ${finalPlan}\n`);
+      process.stdout.write(`  role:    master\n`);
+      reportHerdr(plan, flags);
+    }
+    return;
+  }
+
+  master = registry.update(master.id, {
+    workerStatus: 'running',
+    lastUsed: nowIso(),
+  });
+  const { code, timedOut, outPath, stopped, result } = await executeHeadlessRun(master, {
+    prompt: finalPrompt,
+    force,
+    outputFormat: 'text',
+    trust,
+    timeoutSec,
+    silent: true,
+    env: { ...process.env, ...envOverlay },
+    quietCopilotHints: false,
+  });
+
+  let workerStatus;
+  if (stopped) workerStatus = 'stopped';
+  else if (!timedOut && code === 0) workerStatus = 'done';
+  else workerStatus = 'failed';
+  try {
+    master = registry.update(master.id, { workerStatus, runPid: null, runPgid: null });
+  } catch (_) {
+    /* ignore */
+  }
+  master = applyResultHandoffFallback(master, {
+    code,
+    timedOut,
+    stopped,
+    stdout: result && result.stdout,
+    resultPath: finalResult,
+  });
+
+  if (asJson) {
+    process.stdout.write(
+      JSON.stringify(
+        {
+          master: {
+            id: master.id,
+            title: master.title,
+            engine: master.engine,
+            result: finalResult,
+            plan: finalPlan,
+            workerStatus,
+            role: 'master',
+            resultSource: master.resultSource || null,
+            lastExit: timedOut ? 124 : code,
+            lastOutput: outPath,
+          },
+        },
+        null,
+        2
+      ) + '\n'
+    );
+  } else {
+    printSession(master, 'master');
+    process.stdout.write(`  result:  ${finalResult}\n`);
+    process.stdout.write(`  plan:    ${finalPlan}\n`);
+    process.stdout.write(`  role:    master\n`);
+    process.stderr.write(`log: ${outPath}\n`);
   }
   process.exitCode = code;
 }
@@ -1686,11 +2152,11 @@ function cmdChildren(argv) {
       return;
     }
     process.stdout.write(
-      `${pad('TITLE', 24)} ${pad('ID', 10)} ${pad('ENGINE', 8)} ${pad('KIDS', 5)} ${pad('RUN', 4)} ${pad('DONE', 5)} ${pad('FAIL', 5)} STATUS\n`
+      `${pad('TITLE', 24)} ${pad('ID', ID_COL)} ${pad('ENGINE', 8)} ${pad('KIDS', 5)} ${pad('RUN', 4)} ${pad('DONE', 5)} ${pad('FAIL', 5)} STATUS\n`
     );
     for (const r of rows) {
       process.stdout.write(
-        `${pad(r.title, 24)} ${pad(shortId(r.id), 10)} ${pad(r.engine, 8)} ${pad(String(r.childCount), 5)} ${pad(String(r.workerStatusCounts.running), 4)} ${pad(String(r.workerStatusCounts.done), 5)} ${pad(String(r.workerStatusCounts.failed), 5)} ${r.status}\n`
+        `${pad(r.title, 24)} ${pad(displayId(r.id, ID_COL), ID_COL)} ${pad(r.engine, 8)} ${pad(String(r.childCount), 5)} ${pad(String(r.workerStatusCounts.running), 4)} ${pad(String(r.workerStatusCounts.done), 5)} ${pad(String(r.workerStatusCounts.failed), 5)} ${r.status}\n`
       );
     }
     return;
@@ -1723,6 +2189,7 @@ function cmdChildren(argv) {
       { isAlive: orchestrate.defaultIsAlive, hostname: os.hostname() }
     );
     const resultPath = s.result || orchestrate.defaultResultPath(s.id);
+    const handoff = orchestrate.handoffDisplay(s, resultPath);
     return {
       id: s.id,
       title: s.title,
@@ -1731,7 +2198,9 @@ function cmdChildren(argv) {
       task: s.task || '',
       workerStatus: derived,
       result: resultPath,
-      resultExists: Boolean(resultPath && fs.existsSync(resultPath)),
+      resultExists: handoff !== 'no',
+      resultSource: s.resultSource || null,
+      handoff,
       lastExit: s.lastExit != null ? s.lastExit : null,
       lastOutput: s.lastOutput || null,
       herdr: {
@@ -1753,12 +2222,12 @@ function cmdChildren(argv) {
     return;
   }
   process.stdout.write(
-    `${pad('TITLE', 24)} ${pad('ID', 10)} ${pad('ENGINE', 8)} ${pad('WORKER', 8)} ${pad('HANDOFF', 7)} ${pad('FOLDER', 20)} TASK\n`
+    `${pad('TITLE', 24)} ${pad('ID', ID_COL)} ${pad('ENGINE', 8)} ${pad('WORKER', 8)} ${pad('HANDOFF', 7)} ${pad('FOLDER', 20)} TASK\n`
   );
   for (const r of rows) {
     const folder = r.cwd ? path.basename(r.cwd) : '';
     process.stdout.write(
-      `${pad(r.title, 24)} ${pad(shortId(r.id), 10)} ${pad(r.engine, 8)} ${pad(r.workerStatus || '-', 8)} ${pad(r.resultExists ? 'yes' : 'no', 7)} ${pad(folder, 20)} ${r.task || ''}\n`
+      `${pad(r.title, 24)} ${pad(displayId(r.id, ID_COL), ID_COL)} ${pad(r.engine, 8)} ${pad(r.workerStatus || '-', 8)} ${pad(r.handoff, 7)} ${pad(folder, 20)} ${r.task || ''}\n`
     );
   }
 }
@@ -1838,33 +2307,93 @@ function snapshotWorkerRow(session, { herdrInfo = null, waitingHint = null } = {
     { isAlive: orchestrate.defaultIsAlive, hostname: os.hostname() }
   );
   const resultPath = session.result || orchestrate.defaultResultPath(session.id);
+  const handoff = orchestrate.handoffDisplay(session, resultPath);
   return {
     id: session.id,
     title: session.title,
     engine: session.engine || 'cursor',
     workerStatus: derived,
-    resultExists: Boolean(resultPath && fs.existsSync(resultPath)),
+    resultExists: handoff !== 'no',
+    resultSource: session.resultSource || null,
+    handoff,
     result: resultPath,
     lastExit: session.lastExit != null ? session.lastExit : null,
     lastOutput: session.lastOutput || null,
   };
 }
 
-function resolveWaitTargets(args) {
+function waitNothingError() {
+  let msg =
+    'af wait: nothing to wait on. Pass worker ids/titles, or --parent <master>, or run inside a master (AGENTFLEET_ID) / worker (AGENTFLEET_PARENT).';
+  try {
+    const sessions = registry.list({ includeDone: true });
+    const childParentIds = new Set(sessions.filter((s) => s.parent).map((s) => s.parent));
+    const masters = sessions.filter(
+      (s) => s.role === 'master' || childParentIds.has(s.id)
+    );
+    const active = [];
+    for (const m of masters) {
+      const kids = listChildrenOf(m.id);
+      if (
+        kids.some((k) => {
+          const st = k.workerStatus || '';
+          return st === 'queued' || st === 'running' || st === 'waiting';
+        })
+      ) {
+        active.push(m);
+      }
+    }
+    if (active.length === 1) {
+      msg += `\ne.g. af wait --parent ${active[0].title}`;
+    }
+  } catch (_) {
+    /* ignore */
+  }
+  fail(msg);
+}
+
+function resolveWaitTargets(args, flags = {}) {
+  // Explicit worker ids/titles win over --parent.
   if (args.length > 0) {
     return args.map((q) => requireSession(q));
   }
+  if (flags.parent && flags.parent !== true) {
+    const master = requireSession(String(flags.parent));
+    const kids = listChildrenOf(master.id);
+    if (kids.length === 0) {
+      fail(`af wait: master "${master.title}" has no workers`);
+    }
+    return kids;
+  }
   const master = resolveChildrenMaster([], {});
   if (!master) {
-    fail(
-      'af wait: no workers specified and no master from AGENTFLEET_ID / AGENTFLEET_PARENT'
-    );
+    waitNothingError();
   }
   const kids = listChildrenOf(master.id);
   if (kids.length === 0) {
     fail(`af wait: master "${master.title}" has no workers`);
   }
   return kids;
+}
+
+/**
+ * After a successful headless worker/master run, ensure a result handoff exists
+ * (af writes a fallback from stdout when the agent did not).
+ */
+function applyResultHandoffFallback(session, { code, timedOut, stopped, stdout, resultPath }) {
+  if (stopped || timedOut || code !== 0) return session;
+  const source = orchestrate.ensureResultHandoff(session, {
+    code,
+    timedOut,
+    stdout,
+    resultPath: resultPath || session.result,
+  });
+  if (!source) return session;
+  try {
+    return registry.update(session.id, { resultSource: source });
+  } catch (_) {
+    return session;
+  }
 }
 
 async function cmdWait(argv) {
@@ -1881,8 +2410,21 @@ async function cmdWait(argv) {
   if (Number.isNaN(intervalSec) || intervalSec <= 0) {
     fail('--interval must be a positive number of seconds');
   }
+  let sendGraceMs;
+  try {
+    sendGraceMs = orchestrate.resolveSendGraceMs({
+      flag: flags['send-grace'],
+      env: process.env,
+    });
+  } catch (_) {
+    sendGraceMs = orchestrate.DEFAULT_SEND_GRACE_SEC * 1000;
+  }
+  if (flags['send-grace'] != null && flags['send-grace'] !== true) {
+    const n = Number(flags['send-grace']);
+    if (Number.isNaN(n) || n < 0) fail('--send-grace must be a non-negative number of seconds');
+  }
 
-  const targets = resolveWaitTargets(args);
+  const targets = resolveWaitTargets(args, flags);
   const waitState = new Map(); // id -> { seenWorking, idleTicks }
   const lastPrinted = new Map();
   const started = Date.now();
@@ -1905,13 +2447,17 @@ async function cmdWait(argv) {
       let st = waitState.get(s.id) || { seenWorking: false, idleTicks: 0 };
       let waitingHint = null;
       if (e.runtime === 'running') {
-        // Prefer a fresh hc get for agent status when ls omitted it.
+        // Prefer a fresh hc get for agent status (ls may omit status or be stale
+        // right after af send). Fall back to enrich/ls status when get fails.
         let statusObj = e.status;
-        if (statusObj == null && (e.address || e.name) && fetchResult.ok) {
+        if ((e.address || e.name) && fetchResult.ok) {
           const got = runHcCli(['get', '--json', e.address || e.name], { timeoutMs: 3000 });
           if (got.status === 0 && got.stdout) {
             try {
-              statusObj = JSON.parse(got.stdout).status;
+              const parsed = JSON.parse(got.stdout);
+              if (parsed && Object.prototype.hasOwnProperty.call(parsed, 'status')) {
+                statusObj = parsed.status;
+              }
             } catch (_) {
               /* ignore */
             }
@@ -1922,6 +2468,9 @@ async function cmdWait(argv) {
           agentState,
           seenWorking: st.seenWorking,
           idleTicks: st.idleTicks,
+          lastSendAt: s.lastSendAt || null,
+          sendGraceMs,
+          now: Date.now(),
         });
         st = { seenWorking: next.seenWorking, idleTicks: next.idleTicks };
         waitingHint = next.hint === 'waiting' ? 'waiting' : null;
@@ -1959,11 +2508,11 @@ async function cmdWait(argv) {
         process.stdout.write(JSON.stringify(rows, null, 2) + '\n');
       } else {
         process.stdout.write(
-          `${pad('TITLE', 24)} ${pad('ID', 10)} ${pad('ENGINE', 8)} ${pad('WORKER', 8)} ${pad('HANDOFF', 7)} EXIT\n`
+          `${pad('TITLE', 24)} ${pad('ID', ID_COL)} ${pad('ENGINE', 8)} ${pad('WORKER', 8)} ${pad('HANDOFF', 7)} EXIT\n`
         );
         for (const r of rows) {
           process.stdout.write(
-            `${pad(r.title, 24)} ${pad(shortId(r.id), 10)} ${pad(r.engine, 8)} ${pad(r.workerStatus || '-', 8)} ${pad(r.resultExists ? 'yes' : 'no', 7)} ${r.lastExit != null ? r.lastExit : '-'}\n`
+            `${pad(r.title, 24)} ${pad(displayId(r.id, ID_COL), ID_COL)} ${pad(r.engine, 8)} ${pad(r.workerStatus || '-', 8)} ${pad(r.handoff || (r.resultExists ? 'yes' : 'no'), 7)} ${r.lastExit != null ? r.lastExit : '-'}\n`
           );
         }
       }
@@ -1980,11 +2529,11 @@ async function cmdWait(argv) {
       } else {
         process.stderr.write(`wait: timed out after ${timeoutSec}s\n`);
         process.stdout.write(
-          `${pad('TITLE', 24)} ${pad('ID', 10)} ${pad('ENGINE', 8)} ${pad('WORKER', 8)} ${pad('HANDOFF', 7)} EXIT\n`
+          `${pad('TITLE', 24)} ${pad('ID', ID_COL)} ${pad('ENGINE', 8)} ${pad('WORKER', 8)} ${pad('HANDOFF', 7)} EXIT\n`
         );
         for (const r of rows) {
           process.stdout.write(
-            `${pad(r.title, 24)} ${pad(shortId(r.id), 10)} ${pad(r.engine, 8)} ${pad(r.workerStatus || '-', 8)} ${pad(r.resultExists ? 'yes' : 'no', 7)} ${r.lastExit != null ? r.lastExit : '-'}\n`
+            `${pad(r.title, 24)} ${pad(displayId(r.id, ID_COL), ID_COL)} ${pad(r.engine, 8)} ${pad(r.workerStatus || '-', 8)} ${pad(r.handoff || (r.resultExists ? 'yes' : 'no'), 7)} ${r.lastExit != null ? r.lastExit : '-'}\n`
           );
         }
       }
@@ -2164,7 +2713,11 @@ async function cmdSend(argv) {
       fail(`hc send failed: ${(r.stderr || r.stdout || '').trim() || r.status}`);
     }
     try {
-      registry.update(session.id, { workerStatus: 'running', lastUsed: nowIso() });
+      registry.update(session.id, {
+        workerStatus: 'running',
+        lastSendAt: nowIso(),
+        lastUsed: nowIso(),
+      });
     } catch (_) {
       /* ignore */
     }
@@ -2206,7 +2759,7 @@ async function cmdSend(argv) {
     force,
   });
 
-  const { code, timedOut, outPath, stopped } = await executeHeadlessRun(session, {
+  const { code, timedOut, outPath, stopped, result } = await executeHeadlessRun(session, {
     prompt,
     force,
     outputFormat: 'text',
@@ -2217,7 +2770,7 @@ async function cmdSend(argv) {
     quietCopilotHints: session.engine === 'copilot',
   });
 
-  if (session.role === 'worker') {
+  if (session.role === 'worker' || session.role === 'master') {
     let workerStatus;
     if (stopped) workerStatus = 'stopped';
     else if (!timedOut && code === 0) workerStatus = 'done';
@@ -2227,7 +2780,16 @@ async function cmdSend(argv) {
     } catch (_) {
       /* ignore */
     }
-    process.stderr.write(`send: ${session.title} → ${workerStatus} (log ${outPath})\n`);
+    applyResultHandoffFallback(session, {
+      code,
+      timedOut,
+      stopped,
+      stdout: result && result.stdout,
+      resultPath,
+    });
+    if (session.role === 'worker') {
+      process.stderr.write(`send: ${session.title} → ${workerStatus} (log ${outPath})\n`);
+    }
   }
   process.exitCode = code;
 }

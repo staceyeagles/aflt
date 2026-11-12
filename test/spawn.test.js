@@ -231,6 +231,13 @@ exit 0
     assert.equal(pathOnly.status, 0);
     assert.equal(pathOnly.stdout.trim(), w.result);
 
+    // Headless spawn now writes an af-fallback handoff when the worker omits the file.
+    assert.ok(fs.existsSync(w.result));
+    const afterSpawn = af(['result', w.title]);
+    assert.equal(afterSpawn.status, 0, afterSpawn.stderr);
+    assert.ok(afterSpawn.stdout.includes('## Summary'));
+
+    fs.unlinkSync(w.result);
     const missing = af(['result', w.title]);
     assert.equal(missing.status, 1);
     assert.ok(missing.stderr.includes('no handoff yet'), missing.stderr);

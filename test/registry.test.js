@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { spawn } = require('child_process');
 
 let tmp;
 let registry;
@@ -159,7 +160,7 @@ describe('registry', () => {
     assert.equal(registry.list({ tag: 'fleet' })[0].title, 'Tagged');
   });
 
-  it('normalizes orchestrator fields and defaults worker result path', () => {
+  it('normalizes orchestrator fields and defaults worker/master result path', () => {
     const master = registry.add({
       title: 'Master',
       chatId: 'aaaaaaaa-1111-1111-1111-111111111111',
@@ -169,7 +170,8 @@ describe('registry', () => {
     assert.equal(master.role, 'master');
     assert.equal(master.parent, null);
     assert.equal(master.task, '');
-    assert.equal(master.result, null);
+    assert.equal(master.result, path.join(tmp, 'results', `${master.id}.md`));
+    assert.equal(master.plan, path.join(tmp, 'plans', `${master.id}.md`));
     assert.equal(master.workerStatus, null);
 
     const worker = registry.add({
@@ -236,5 +238,106 @@ describe('registry', () => {
       cwd: tmp,
     });
     assert.throws(() => registry.update(s.id, { workerStatus: 'nope' }), /invalid workerStatus/);
+  });
+
+  it('breaks a stale lock (old mtime + dead pid) and add succeeds', () => {
+    registry.ensureDir();
+    const lp = registry.lockPath();
+    fs.writeFileSync(lp, `999999999\n${os.hostname()}\n${new Date().toISOString()}\n`, 'utf8');
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(lp, old, old);
+    const s = registry.add({
+      title: 'After-stale',
+      chatId: 'ffffffff-6666-4666-8666-666666666666',
+      cwd: tmp,
+    });
+    assert.equal(s.title, 'After-stale');
+    assert.ok(!fs.existsSync(lp), 'lock should be released after add');
+  });
+
+  it('breaks a recent lock held by a dead pid on this host', () => {
+    registry.ensureDir();
+    const lp = registry.lockPath();
+    fs.writeFileSync(lp, `999999999\n${os.hostname()}\n${new Date().toISOString()}\n`, 'utf8');
+    const s = registry.add({
+      title: 'After-dead-pid',
+      chatId: 'ffffffff-7777-4777-8777-777777777777',
+      cwd: tmp,
+    });
+    assert.equal(s.title, 'After-dead-pid');
+    assert.ok(!fs.existsSync(lp));
+  });
+
+  it('concurrent child processes add with autoTitle without losing rows', async () => {
+    const parent = registry.add({
+      title: 'RaceMaster',
+      chatId: 'aaaaaaaa-8888-4888-8888-888888888888',
+      cwd: tmp,
+      role: 'master',
+    });
+    const n = 8;
+    const registryPath = path.join(__dirname, '..', 'lib', 'registry.js');
+    const children = [];
+    for (let i = 0; i < n; i++) {
+      const chatId = `bbbbbbbb-9999-4999-8999-${String(i).padStart(12, '0')}`;
+      const code = `
+        process.env.AGENTFLEET_HOME = ${JSON.stringify(tmp)};
+        const registry = require(${JSON.stringify(registryPath)});
+        const entry = registry.add(
+          {
+            title: 'placeholder',
+            chatId: ${JSON.stringify(chatId)},
+            cwd: ${JSON.stringify(tmp)},
+            parent: ${JSON.stringify(parent.id)},
+            role: 'worker',
+            task: 't${i}',
+            workerStatus: 'queued',
+          },
+          { autoTitle: { parentTitle: ${JSON.stringify(parent.title)}, parentId: ${JSON.stringify(parent.id)} } }
+        );
+        process.stdout.write(JSON.stringify({ id: entry.id, title: entry.title }) + '\\n');
+      `;
+      children.push(
+        new Promise((resolve, reject) => {
+          const child = spawn(process.execPath, ['-e', code], {
+            encoding: 'utf8',
+            env: { ...process.env, AGENTFLEET_HOME: tmp },
+          });
+          let stdout = '';
+          let stderr = '';
+          child.stdout.on('data', (b) => {
+            stdout += b;
+          });
+          child.stderr.on('data', (b) => {
+            stderr += b;
+          });
+          child.on('error', reject);
+          child.on('close', (status) => {
+            resolve({ status, stdout, stderr, chatId });
+          });
+        })
+      );
+    }
+    const results = await Promise.all(children);
+    for (const r of results) {
+      assert.equal(r.status, 0, r.stderr || r.stdout);
+    }
+    // Reload module against same home
+    delete require.cache[require.resolve('../lib/util')];
+    delete require.cache[require.resolve('../lib/orchestrate')];
+    delete require.cache[require.resolve('../lib/registry')];
+    process.env.AGENTFLEET_HOME = tmp;
+    const fresh = require('../lib/registry');
+    const workers = fresh
+      .list({ includeDone: true })
+      .filter((s) => s.parent === parent.id);
+    assert.equal(workers.length, n, JSON.stringify(workers.map((w) => w.title)));
+    const ids = new Set(workers.map((w) => w.id));
+    const titles = new Set(workers.map((w) => w.title));
+    assert.equal(ids.size, n);
+    assert.equal(titles.size, n);
+    for (const w of workers) {
+      assert.ok(/^RaceMaster-w\d+$/.test(w.title), w.title);
+    }
   });
 });

@@ -341,6 +341,8 @@ esac
     assert.equal(sendCalls[0].argv[2], 'hello worker');
     const after = loadRegistry().find('HcSend-w1');
     assert.equal(after.workerStatus, 'running');
+    assert.ok(after.lastSendAt, 'interactive send should record lastSendAt');
+    assert.ok(!Number.isNaN(Date.parse(after.lastSendAt)));
   });
 
   it('stop headless kills sleeping stub; registry stopped; in-flight spawn records stopped', async () => {

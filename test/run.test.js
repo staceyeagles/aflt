@@ -139,12 +139,18 @@ describe('af run CLI dry-run', () => {
     assert.ok(r.stdout.includes('af run'));
     assert.ok(r.stdout.includes('af log'));
     assert.ok(r.stdout.includes('af spawn'));
+    assert.ok(r.stdout.includes('af master'));
     assert.ok(r.stdout.includes('af children'));
     assert.ok(r.stdout.includes('af result'));
     assert.ok(r.stdout.includes('af wait'));
+    assert.ok(r.stdout.includes('--parent'));
+    assert.ok(r.stdout.includes('--send-grace'));
     assert.ok(r.stdout.includes('af tail'));
     assert.ok(r.stdout.includes('af send'));
     assert.ok(r.stdout.includes('af stop'));
+    assert.ok(r.stdout.includes('af rm'));
+    assert.ok(r.stdout.includes('--keep-files'));
+    assert.ok(r.stdout.includes('--children'));
     assert.ok(r.stdout.includes('af adopt'));
     assert.ok(r.stdout.includes('af engine'));
     assert.ok(r.stdout.includes('af cursor'));
@@ -152,6 +158,9 @@ describe('af run CLI dry-run', () => {
     assert.ok(r.stdout.includes('AGENTFLEET_ENGINE'));
     assert.ok(r.stdout.includes('AGENTFLEET_PARENT'));
     assert.ok(r.stdout.includes('AGENTFLEET_RESULT'));
+    assert.ok(r.stdout.includes('AGENTFLEET_PLAN'));
+    assert.ok(r.stdout.includes('AGENTFLEET_ROLE'));
+    assert.ok(r.stdout.includes('AGENTFLEET_SEND_GRACE'));
     assert.ok(r.stdout.includes('--no-herdr-app'));
     assert.ok(r.stdout.includes('AGENTFLEET_HERDR_APP'));
     assert.ok(r.stdout.includes('AGENTFLEET_HERDR_APP_BIN'));
