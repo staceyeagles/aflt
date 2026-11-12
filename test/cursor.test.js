@@ -67,6 +67,25 @@ describe('cursor wrapper with stub', () => {
     assert.ok(cmd.includes('--resume'));
     assert.ok(cmd.includes('deadbeef-0000-4000-8000-ffffffffffff'));
   });
+
+  it('buildResumeArgs omits saved session.prompt unless opts.prompt is set', () => {
+    const cursor = require('../lib/cursor');
+    const session = {
+      chatId: 'deadbeef-0000-4000-8000-ffffffffffff',
+      cwd: '/tmp/x',
+      model: null,
+      prompt: 'DO_NOT_RESEND unique task prompt',
+    };
+    const args = cursor.buildResumeArgs(session);
+    assert.ok(!args.includes('DO_NOT_RESEND unique task prompt'));
+    const empty = cursor.buildResumeArgs(session, { prompt: '' });
+    assert.ok(!empty.includes('DO_NOT_RESEND unique task prompt'));
+    const firstLaunch = cursor.buildResumeCommand(session, {
+      prompt: 'Refactor auth to JWT',
+    });
+    assert.ok(!firstLaunch.includes('DO_NOT_RESEND unique task prompt'));
+    assert.equal(firstLaunch[firstLaunch.length - 1], 'Refactor auth to JWT');
+  });
 });
 
 describe('live cursor-agent (optional)', () => {

@@ -5,6 +5,8 @@ const assert = require('node:assert/strict');
 const backends = require('../lib/backends');
 const cursor = require('../lib/cursor');
 
+const SAVED_PROMPT = 'DO_NOT_RESEND unique task prompt';
+
 const sample = [
   {
     id: 'auth-aaa',
@@ -26,6 +28,32 @@ const sample = [
   },
 ];
 
+const sampleWithPrompt = [
+  {
+    id: 'img-ccc',
+    title: 'Img2img upscale',
+    chatId: 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee',
+    cwd: '/tmp/wt-img',
+    model: 'gpt-5',
+    prompt: SAVED_PROMPT,
+    status: 'active',
+  },
+  {
+    id: 'vid-ddd',
+    title: 'Video production',
+    chatId: 'dddddddd-bbbb-cccc-dddd-eeeeeeeeeeee',
+    cwd: '/tmp/wt-vid',
+    model: null,
+    prompt: SAVED_PROMPT,
+    status: 'active',
+  },
+];
+
+function assertNoSavedPrompt(textOrArgs) {
+  const s = Array.isArray(textOrArgs) ? textOrArgs.join(' ') : String(textOrArgs);
+  assert.ok(!s.includes(SAVED_PROMPT), `saved prompt must not appear: ${s}`);
+}
+
 describe('command building', () => {
   it('buildResumeArgs includes --resume and optional model/workspace', () => {
     const args = cursor.buildResumeArgs(sample[0], { prompt: '' });
@@ -41,6 +69,28 @@ describe('command building', () => {
   it('buildResumeArgs appends prompt when provided', () => {
     const args = cursor.buildResumeArgs(sample[1], { prompt: 'continue' });
     assert.equal(args[args.length - 1], 'continue');
+  });
+
+  it('buildResumeArgs does not fall back to session.prompt', () => {
+    const withSaved = {
+      chatId: 'eeeeeeee-bbbb-cccc-dddd-eeeeeeeeeeee',
+      cwd: '/tmp/wt',
+      model: null,
+      prompt: SAVED_PROMPT,
+    };
+    const omitted = cursor.buildResumeArgs(withSaved);
+    assert.ok(!omitted.includes(SAVED_PROMPT));
+    assert.equal(omitted[omitted.length - 1], '--trust');
+
+    const empty = cursor.buildResumeArgs(withSaved, { prompt: '' });
+    assert.ok(!empty.includes(SAVED_PROMPT));
+
+    const explicit = cursor.buildResumeArgs(withSaved, { prompt: 'explicit follow-up' });
+    assert.ok(!explicit.includes(SAVED_PROMPT));
+    assert.equal(explicit[explicit.length - 1], 'explicit follow-up');
+
+    const cmd = cursor.buildResumeCommand(withSaved);
+    assert.ok(!cmd.includes(SAVED_PROMPT));
   });
 
   it('tmux plan creates new-window argv with cursor-agent --resume', () => {
@@ -90,13 +140,29 @@ describe('command building', () => {
     assert.ok(plan.commands[0].shell.includes('--resume'));
   });
 
+  it('resume plans never resend a non-empty saved session.prompt', () => {
+    for (const via of ['herdr', 'tmux', 'wezterm', 'iterm2', 'plain']) {
+      const plan = backends.buildResumeAllPlan(sampleWithPrompt, { via, tmuxSession: 'fleet-test' });
+      if (via === 'iterm2') {
+        assertNoSavedPrompt(plan.applescript);
+      }
+      for (const c of plan.commands) {
+        if (c.argv) assertNoSavedPrompt(c.argv);
+        if (c.spawnArgv) assertNoSavedPrompt(c.spawnArgv);
+        if (c.shell) assertNoSavedPrompt(c.shell);
+        if (c.command) assertNoSavedPrompt(c.command);
+        if (c.sendKeysArgv) assertNoSavedPrompt(c.sendKeysArgv);
+      }
+    }
+  });
+
   it('sanitizeTmuxName strips odd characters', () => {
     assert.equal(backends.sanitizeTmuxName('Auth / refactor!'), 'Auth-refactor');
   });
 });
 
 describe('herdr backend', () => {
-  it('herdr plan uses hc run --bg with name, cwd, labels and no -- separator', () => {
+  it('herdr plan uses hc run --bg with name, cwd, labels, env color clear, and no -- separator', () => {
     const plan = backends.buildResumeAllPlan(sample, { via: 'herdr' });
     assert.equal(plan.backend, 'herdr');
     assert.equal(plan.commands.length, 2);
@@ -109,9 +175,33 @@ describe('herdr backend', () => {
     // program name and fails with spawn_failed ("cannot start \"--\"").
     assert.ok(!c0.argv.includes('--'));
     const resume = cursor.buildResumeCommand(sample[0]);
-    assert.deepEqual(c0.argv.slice(-resume.length), resume);
+    const wrapped = ['env', '-u', 'NO_COLOR', '-u', 'FORCE_COLOR', ...resume];
+    assert.deepEqual(c0.argv.slice(-wrapped.length), wrapped);
+    const envIdx = c0.argv.indexOf('env');
+    assert.deepEqual(c0.argv.slice(envIdx, envIdx + 5), ['env', '-u', 'NO_COLOR', '-u', 'FORCE_COLOR']);
+    assert.equal(c0.argv[envIdx + 5], resume[0]);
     assert.ok(c0.shell.startsWith('hc run --bg'));
+    assert.ok(c0.shell.includes('env -u NO_COLOR -u FORCE_COLOR'));
     assert.ok(!c0.shell.includes(' -- -- '));
+  });
+
+  it('herdr plan does not include saved session.prompt', () => {
+    const plan = backends.buildResumeAllPlan(sampleWithPrompt, { via: 'herdr' });
+    const c0 = plan.commands[0];
+    assertNoSavedPrompt(c0.argv);
+    assertNoSavedPrompt(c0.shell);
+    assert.ok(c0.argv.includes('--resume'));
+    assert.ok(c0.argv.includes(sampleWithPrompt[0].chatId));
+  });
+
+  it('herdr plan can pass an explicit resumeOpts.prompt', () => {
+    const plan = backends.buildResumeAllPlan(sampleWithPrompt.slice(0, 1), {
+      via: 'herdr',
+      resumeOpts: { prompt: 'explicit follow-up' },
+    });
+    const c0 = plan.commands[0];
+    assertNoSavedPrompt(c0.argv);
+    assert.equal(c0.argv[c0.argv.length - 1], 'explicit follow-up');
   });
 
   it('sanitizeHerdrName lowercases, strips, truncates to 32', () => {

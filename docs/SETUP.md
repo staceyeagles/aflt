@@ -426,10 +426,11 @@ hc run --bg --no-parent --outlive-parent \
   --cwd <workdir> \
   --label af_id=<session-id> \
   --label title=<title> \
-  cursor-agent --resume <chatId> [--model …] --workspace <cwd>
+  env -u NO_COLOR -u FORCE_COLOR \
+  cursor-agent --resume <chatId> [--model …] --workspace <cwd> --trust
 ```
 
-Names are lowercased, sanitized to `[a-z0-9_-]`, truncated to 32 chars, and de-duplicated. Sessions already present in `hc ls --json` with matching `af_id` are skipped.
+Names are lowercased, sanitized to `[a-z0-9_-]`, truncated to 32 chars, and de-duplicated. Sessions already present in `hc ls --json` with matching `af_id` are skipped. Resume restores chat context via `--resume <chatId>` and does **not** resend the saved original task prompt (a prompt is sent only on `af new --prompt` or an explicit `--prompt` on that resume).
 
 List / attach:
 
@@ -494,7 +495,7 @@ af resume --all                 # auto-detect
 af resume --all --via tmux
 ```
 
-**Important (from README):** resume restores **chat context**, not in-flight shells, servers, or watchers. Restart those yourself (or keep them in `af note`).
+**Important (from README):** resume restores **chat context** via `--resume <chatId>` and does **not** resend the saved original task prompt. It also does not restart in-flight shells, servers, or watchers — restart those yourself (or keep them in `af note`).
 
 Backup / migrate registry between machines:
 
@@ -525,8 +526,10 @@ af import-file ~/af-sessions.json
 | `cursor-agent: command not found` | `ls ~/.local/bin/agent`; add `~/.local/bin` to PATH; re-run Cursor install. |
 | `hc: command not found` | Re-run core or app installer; check `~/.local/bin/hc`. |
 | `af resume --via herdr` / `cannot start "--"` | Confirmed on hc 0.1.16: do **not** put `--` before the program. Current `af` already omits it. If an older copy still emits `--`, update `lib/backends.js`. |
+| Cursor TUI is plain white / uncolored in Herdr | Herdr/parent may set `NO_COLOR=1` and `FORCE_COLOR=0`. `af` clears them with `env -u NO_COLOR -u FORCE_COLOR` before `cursor-agent` on interactive Herdr launches. |
 | Herdr skips a session | `hc ls --json` already has `af_id=<id>`. Attach that terminal or kill it before re-launching. |
 | Resume lost context / wrong files | Always use the **same cwd/worktree** the chat was created with. `af` passes `--workspace`. |
+| Resume re-triggers the original task | Older `af` fell back to `session.prompt` on resume. Current `af` does not; only `af new --prompt` or an explicit resume `--prompt` sends a prompt. |
 | `af import` empty | `cursor-agent ls` is interactive-only; import scans `~/.cursor/chats/`. Empty chats from `create-chat` may not appear until a prompt is sent — use `af new` or `af add --chat`. |
 | iTerm2 backend fails | Needs macOS + iTerm2 + `osascript`. Use `--via tmux` or `--via wezterm` instead. |
 | OpenCode cannot reach ai-lb | Expected off-LAN. Reconfigure provider or skip OpenCode. |

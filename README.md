@@ -86,7 +86,7 @@ af resume --all --dry-run           # show plan without executing
 3. `af resume --all` — auto-detects backend (`tmux` if `$TMUX` is set, else `TERM_PROGRAM`, else availability).
 4. Attach / focus tabs and continue chatting. Context comes back via `--resume <chatId>`.
 
-**Important:** resuming restores the **chat context**, not in-flight shell processes, servers, or watchers. `af resume --all` relaunches `cursor-agent --resume …` only. Restart any long-running processes yourself (or encode them in the session notes: `af note <id> "…"`).
+**Important:** resuming restores the **chat context** via `--resume <chatId>` and does **not** resend the saved original task prompt. A prompt is sent only on first launch (`af new --prompt`) or if you pass an explicit `--prompt` on that resume command. `af resume --all` relaunches `cursor-agent --resume …` only — it does not restart in-flight shell processes, servers, or watchers. Restart those yourself (or encode them in the session notes: `af note <id> "…"`).
 
 ## Commands
 
@@ -126,7 +126,7 @@ Each entry stores: `id`, `title`, `chatId`, `cwd`, `branch`, `model`, `created`,
 - **tmux** — windows in a named session (`agentfleet` by default; `AGENTFLEET_TMUX_SESSION` / `--tmux-session`).
 - **iterm2** — `osascript` creates a titled tab per session (macOS).
 - **wezterm** — `wezterm cli spawn --cwd … -- cursor-agent --resume …` then `set-tab-title`.
-- **herdr** — `hc run --bg --no-parent --outlive-parent --name <slug> --cwd <cwd> --label af_id=<id> --label title=<title> cursor-agent --resume …`. **Do not insert a `--` separator:** on herdr-core 0.1.16 (`hc run`, verified 2026-11-10 on the Mini) a `--` token is treated as the program name and fails with `spawn_failed` / `cannot start "--"`. Names are lowercased, sanitized to `[a-z0-9_-]`, truncated to 32 chars and de-duplicated. Sessions whose `af_id` label already appears in `hc ls --json` are skipped. Works for `resume --all` and `resume <id>`. Bundled interactive templates (`af herdr-templates`) are `cursor` and `opencode` (`ready: quiet`, because those CLIs do not speak Herdr's OSC 7501 status protocol).
+- **herdr** — `hc run --bg --no-parent --outlive-parent --name <slug> --cwd <cwd> --label af_id=<id> --label title=<title> env -u NO_COLOR -u FORCE_COLOR cursor-agent --resume …`. **Do not insert a `--` separator:** on herdr-core 0.1.16 (`hc run`, verified 2026-11-10 on the Mini) a `--` token is treated as the program name and fails with `spawn_failed` / `cannot start "--"`. The `env -u …` prefix clears Herdr/parent `NO_COLOR` / `FORCE_COLOR` so the Cursor TUI can use color. Names are lowercased, sanitized to `[a-z0-9_-]`, truncated to 32 chars and de-duplicated. Sessions whose `af_id` label already appears in `hc ls --json` are skipped. Works for `resume --all` and `resume <id>`. Bundled interactive templates (`af herdr-templates`) are `cursor` and `opencode` (`ready: quiet`, because those CLIs do not speak Herdr's OSC 7501 status protocol).
 - **plain** — print shell commands (use this under Zellij or anything else).
 
 Auto-detect order: `$AGENTFLEET_VIA` → inside Herdr (`$HERDR`/`$HC_TERMINAL` set and `hc` on PATH) → inside tmux → `TERM_PROGRAM` (WezTerm / iTerm) → `tmux` on PATH → `wezterm` → plain.

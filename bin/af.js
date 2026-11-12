@@ -159,7 +159,7 @@ async function cmdNew(argv) {
 
   if (dryRun) {
     process.stderr.write(`[dry-run] would register: ${JSON.stringify(entry, null, 2)}\n`);
-    const cmd = cursor.buildResumeCommandString({ ...entry, chatId });
+    const cmd = cursor.buildResumeCommandString({ ...entry, chatId }, { prompt });
     process.stdout.write(`cd ${JSON.stringify(cwd)} && ${cmd}\n`);
     return;
   }
@@ -390,8 +390,18 @@ async function cmdResume(argv) {
   const session = registry.find(query);
   if (!session) fail(`session not found: ${query}`);
 
+  // Resume restores chat context via --resume; do not resend session.prompt.
+  // An explicit --prompt on this invocation may still be passed.
+  const trust = !flags['no-trust'];
+  const resumeOpts = { trust };
+  if (typeof flags.prompt === 'string' && flags.prompt) resumeOpts.prompt = flags.prompt;
+
   if (flags.via === 'herdr') {
-    const plan = backends.executeResumeAll([session], { via: 'herdr', dryRun: Boolean(flags['dry-run']) });
+    const plan = backends.executeResumeAll([session], {
+      via: 'herdr',
+      dryRun: Boolean(flags['dry-run']),
+      resumeOpts,
+    });
     reportHerdr(plan, Boolean(flags['dry-run']));
     return;
   }
@@ -406,13 +416,10 @@ async function cmdResume(argv) {
     `Resuming "${session.title}" (${shortId(session.chatId)}) in ${session.cwd}\n`
   );
   registry.touch(session.id);
-  // Resume without re-sending the original prompt (context is in the chat)
-  const trust = !flags['no-trust'];
-  const resumeArgs = cursor.buildResumeArgs(session, { prompt: '', trust });
-  // Strip empty prompt: buildResumeArgs only pushes if truthy — good
+  const resumeArgs = cursor.buildResumeArgs(session, resumeOpts);
   if (flags['dry-run']) {
     process.stdout.write(
-      `cd ${JSON.stringify(session.cwd)} && ${cursor.buildResumeCommandString(session, { prompt: '', trust })}\n`
+      `cd ${JSON.stringify(session.cwd)} && ${cursor.buildResumeCommandString(session, resumeOpts)}\n`
     );
     return;
   }
