@@ -158,4 +158,83 @@ describe('registry', () => {
     assert.equal(registry.list({ tag: 'fleet' }).length, 1);
     assert.equal(registry.list({ tag: 'fleet' })[0].title, 'Tagged');
   });
+
+  it('normalizes orchestrator fields and defaults worker result path', () => {
+    const master = registry.add({
+      title: 'Master',
+      chatId: 'aaaaaaaa-1111-1111-1111-111111111111',
+      cwd: tmp,
+      role: 'master',
+    });
+    assert.equal(master.role, 'master');
+    assert.equal(master.parent, null);
+    assert.equal(master.task, '');
+    assert.equal(master.result, null);
+    assert.equal(master.workerStatus, null);
+
+    const worker = registry.add({
+      title: 'Master-w1',
+      chatId: 'bbbbbbbb-2222-2222-2222-222222222222',
+      cwd: tmp,
+      parent: master.id,
+      role: 'worker',
+      task: 'do thing',
+      workerStatus: 'queued',
+    });
+    assert.equal(worker.parent, master.id);
+    assert.equal(worker.role, 'worker');
+    assert.equal(worker.task, 'do thing');
+    assert.equal(worker.workerStatus, 'queued');
+    assert.equal(worker.result, path.join(tmp, 'results', `${worker.id}.md`));
+  });
+
+  it('loads old rows without orchestrator fields unchanged', () => {
+    const p = path.join(tmp, 'sessions.json');
+    fs.writeFileSync(
+      p,
+      JSON.stringify({
+        version: 1,
+        sessions: [
+          {
+            id: 'legacy-1',
+            title: 'Legacy',
+            chatId: 'cccccccc-3333-3333-3333-333333333333',
+            cwd: tmp,
+            engine: 'cursor',
+            status: 'active',
+            created: '2026-01-01T00:00:00.000Z',
+            lastUsed: '2026-01-01T00:00:00.000Z',
+            tags: [],
+            notes: '',
+            prompt: '',
+          },
+        ],
+      }) + '\n',
+      'utf8'
+    );
+    const s = registry.find('Legacy');
+    assert.equal(s.id, 'legacy-1');
+    assert.equal(s.parent, undefined);
+    assert.equal(s.role, undefined);
+    assert.equal(s.workerStatus, undefined);
+  });
+
+  it('rejects invalid role and workerStatus', () => {
+    assert.throws(
+      () =>
+        registry.add({
+          title: 'Bad role',
+          chatId: 'dddddddd-4444-4444-4444-444444444444',
+          cwd: tmp,
+          role: 'boss',
+        }),
+      /invalid role/
+    );
+    const s = registry.add({
+      title: 'Ok',
+      chatId: 'eeeeeeee-5555-5555-5555-555555555555',
+      cwd: tmp,
+    });
+    assert.throws(() => registry.update(s.id, { workerStatus: 'nope' }), /invalid workerStatus/);
+  });
 });

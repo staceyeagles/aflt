@@ -309,6 +309,15 @@ export default class AfSessions extends View {
               .items_center()
               .min_w(0)
               .child(div().min_w(0).flex_1().truncate().text_color(t.foreground).child(truncate(row.title, 28)))
+              .when((row.engine || "cursor") === "copilot", (el) =>
+                el.child(
+                  div()
+                    .flex_none()
+                    .text_size(10)
+                    .text_color(t.dim)
+                    .child("copilot"),
+                ),
+              )
               .when(starting, (el) =>
                 el.child(
                   h_flex()

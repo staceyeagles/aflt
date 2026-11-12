@@ -1,6 +1,6 @@
 # agentfleet (`af`)
 
-Track Cursor CLI (`cursor-agent` / `agent`) chat sessions so you can resume a whole fleet after a restart or reboot, and run headless prompts from a controller (Grok Bot, scripts) that collects the output without babysitting a TUI.
+Track Cursor CLI (`cursor-agent` / `agent`) and optional GitHub Copilot CLI chat sessions so you can resume a whole fleet after a restart or reboot, and run headless prompts from a controller (Grok Bot, scripts) that collects the output without babysitting a TUI.
 
 Built for a macOS workflow (Herdr / iTerm2 / tmux / WezTerm / Zellij-as-plain) with **one git worktree per agent**. Sessions launched in Herdr also show up in the native Herdr desktop app (one space per repo, one tab per session).
 
@@ -52,8 +52,13 @@ source /path/to/agentfleet/completions/af.bash
 # New tracked session (creates chat id, registers, launches interactively)
 af new "auth-refactor" --cwd ~/src/app-wt-auth --prompt "Refactor auth to JWT" --model gpt-5
 
+# Copilot interactive (mints a UUID, uses --session-id=; no Cursor create-chat)
+af new "copilot-probe" --engine copilot --cwd ~/src/app --prompt "Reply pong"
+af copilot   # set default engine so --engine is optional for new sessions
+
 # Register an existing chat id
 af add "payments" --chat aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --cwd ~/src/app-wt-pay
+af add "copilot-existing" --engine copilot --chat <uuid> --cwd ~/src/app
 
 # List (STATUS = lifecycle; HERDR = live process: running|exited|missing|unknown|-)
 af ls
@@ -92,31 +97,47 @@ af adopt --all                      # label already-live af terminals for the He
 3. `af resume --all` — auto-detects backend (`tmux` if `$TMUX` is set, else `TERM_PROGRAM`, else availability).
 4. Attach / focus tabs and continue chatting. Context comes back via `--resume <chatId>`.
 
-**Important:** resuming restores the **chat context** via `--resume <chatId>` and does **not** resend the saved original task prompt. A prompt is sent only on first launch (`af new --prompt`) or if you pass an explicit `--prompt` on that resume command. `af resume --all` relaunches `cursor-agent --resume …` only — it does not restart in-flight shell processes, servers, or watchers. Restart those yourself (or encode them in the session notes: `af note <id> "…"`).
+**Important:** resuming restores the **chat context** (Cursor `--resume <chatId>`, Copilot `--session-id=<uuid>`) and does **not** resend the saved original task prompt. A prompt is sent only on first launch (`af new --prompt`) or if you pass an explicit `--prompt` on that resume command. `af resume --all` relaunches each session with its recorded engine only — it does not restart in-flight shell processes, servers, or watchers. Restart those yourself (or encode them in the session notes: `af note <id> "…"`).
 
 ## Commands
 
 | Command | Purpose |
 |---------|---------|
-| `af new "<title>"` | `create-chat` → register → interactive `--resume` |
-| `af add "<title>" --chat <id>` | Register an existing chat |
+| `af new "<title>" [--engine …]` | Create chat / mint Copilot UUID → register → interactive launch |
+| `af add "<title>" --chat <id> [--engine …]` | Register an existing chat (Copilot: `--chat` is the session UUID) |
 | `af import` | List `~/.cursor/chats` entries to pick from |
-| `af ls [--json]` | Table: title, short id, folder, branch, STATUS, HERDR, last used |
+| `af ls [--json]` | Table: title, short id, ENGINE, folder, branch, STATUS, HERDR, last used (`--json` always includes `engine`, default `cursor`) |
 | `af sync [--dry-run] [--json]` | Query `hc ls --all --json`; persist last-known Herdr runtime (not status) |
 | `af run "<title>" --prompt "…"` | Headless create-or-resume; capture stdout to `~/.agentfleet/runs/` |
 | `af log <title\|id>` | Print last captured run (or `--path`) |
-| `af resume <title\|id>` | Resume one (default: Herdr when `hc` is on PATH; prints `Attach: hc attach <name>`). `--here` / `--via plain` = this terminal. `--open` = new iTerm2 attach tab (default in an iTerm TTY). |
-| `af resume` / `af pick` | Interactive multi-select (TTY only); resume via Herdr |
-| `af resume --all [--tag X] [--via …]` | Fleet reopen (`--all` still auto-detects backend; not default-Herdr) |
+| `af spawn --parent … --prompt …` | Create a worker under a master (headless by default; `--interactive` → Herdr) |
+| `af children [<id\|title>]` | List workers for a master, or summarize masters |
+| `af result <id\|title>` | Print a worker handoff file (or `--path`) |
+| `af resume <title\|id>` | Resume one (argv from `session.engine`). Default: Herdr when `hc` is on PATH; prints `Attach: hc attach <name>`. `--here` / `--via plain` = this terminal. `--open` = new iTerm2 attach tab (default in an iTerm TTY). `--force` → Copilot `--allow-all-tools` only. |
+| `af resume` / `af pick` | Interactive multi-select (TTY only; shows ENGINE); resume via Herdr |
+| `af resume --all [--tag X] [--via …]` | Fleet reopen (mixed engines OK; `--all` still auto-detects backend; not default-Herdr) |
 | `af adopt <title\|id …>` / `af adopt --all` | Label live af Herdr terminals with `herdr.space` / `herdr.tab` + `hc keep` so they appear in the desktop app |
-| `af herdr-templates` | Install Cursor/OpenCode templates into `~/.config/herdr-core/templates` |
+| `af cursor` / `af copilot` | Set default engine for **new** sessions (`~/.agentfleet/config.json`) |
+| `af engine [cursor\|copilot]` | Print default engine + source (flag/env/config/builtin), or set it |
+| `af herdr-templates` | Install Cursor/OpenCode/Copilot templates into `~/.config/herdr-core/templates` |
 | `af herdr-app install` / `status` | Install the af-sessions Herdr panel + `af` layout (symlink by default) |
 | `af rename` / `af done` / `af rm` / `af note` | Metadata |
 | `af export [file]` / `af import-file <file>` | Backup / restore registry |
 
-Registry file: `~/.agentfleet/sessions.json` (atomic write: temp + rename). Override with `AGENTFLEET_HOME` or `AGENTFLEET_REGISTRY`.
+Registry file: `~/.agentfleet/sessions.json` (atomic write: temp + rename). Override with `AGENTFLEET_HOME` or `AGENTFLEET_REGISTRY`. Default engine config: `~/.agentfleet/config.json` (separate file).
 
-Each entry stores: `id`, `title`, `chatId`, `cwd`, `branch`, `model`, `created`, `lastUsed`, `status` (`active`\|`paused`\|`done`), `tags`, `notes`, `prompt`, and optionally `herdr` (last-known runtime evidence from `af sync`).
+Each entry stores: `id`, `title`, `chatId`, `cwd`, `branch`, `model`, `engine` (`cursor`\|`copilot`, default `cursor`), `created`, `lastUsed`, `status` (`active`\|`paused`\|`done`), `tags`, `notes`, `prompt`, and optionally `herdr` (last-known runtime evidence from `af sync`). Orchestrator fields (stage 1): `parent`, `role`, `task`, `result`, `workerStatus` (see below).
+
+### Default engine
+
+For **new** sessions (`af new`, `af add`, `af run` when the title is not already registered), engine resolution is:
+
+1. Explicit `--engine cursor|copilot`
+2. `AGENTFLEET_ENGINE` env
+3. `defaultEngine` in `$AGENTFLEET_HOME/config.json`
+4. Builtin `cursor`
+
+Existing sessions always keep their recorded `engine`. `af run` on an existing session without `--engine` is never blocked by a differing default; only an explicit `--engine` that mismatches the session errors.
 
 ### STATUS vs HERDR
 
@@ -134,8 +155,8 @@ Each entry stores: `id`, `title`, `chatId`, `cwd`, `branch`, `model`, `created`,
 
 - **tmux** — windows in a named session (`agentfleet` by default; `AGENTFLEET_TMUX_SESSION` / `--tmux-session`).
 - **iterm2** — `osascript` creates a titled tab per session (macOS).
-- **wezterm** — `wezterm cli spawn --cwd … -- cursor-agent --resume …` then `set-tab-title`.
-- **herdr** — `hc run --bg --no-parent --outlive-parent --name <slug> --cwd <cwd> --label af_id=<id> --label title=<title> [--keep --label herdr.space=… --label herdr.tab=…] env -u NO_COLOR -u FORCE_COLOR cursor-agent --resume …`. **Do not insert a `--` separator:** on herdr-core 0.1.16 (`hc run`, verified 2026-11-10 on the Mini) a `--` token is treated as the program name and fails with `spawn_failed` / `cannot start "--"`. The `env -u …` prefix clears Herdr/parent `NO_COLOR` / `FORCE_COLOR` so the Cursor TUI can use color; if the caller's `TERM` is unset, empty, or `dumb` (common for non-TTY af callers), it also sets `TERM=xterm-256color` and `COLORTERM=truecolor`. Names are lowercased, sanitized to `[a-z0-9_-]`, truncated to 32 chars and de-duplicated. Sessions whose `af_id` label already appears in `hc ls --json` are skipped. After launch or skip, `af resume` (default Herdr when `hc` is on PATH) and `af resume --via herdr` print a copy-pasteable `Attach: hc attach <name>`. In an iTerm2 TTY, `--open` is the default and opens a new tab running `hc attach` with an absolute `hc` path (pass `--no-open` to only print the line). Works for `resume --all --via herdr` and `resume <id>`. Bundled interactive templates (`af herdr-templates`) are `cursor` and `opencode` (`ready: quiet`, because those CLIs do not speak Herdr's OSC 7501 status protocol).
+- **wezterm** — `wezterm cli spawn --cwd … -- <engine argv>` then `set-tab-title`.
+- **herdr** — `hc run --bg --no-parent --outlive-parent --name <slug> --cwd <cwd> --label af_id=<id> --label title=<title> [--keep --label herdr.space=… --label herdr.tab=…] env -u NO_COLOR -u FORCE_COLOR <engine argv>`. Cursor sessions use `cursor-agent --resume … --workspace … --trust`; Copilot sessions use `copilot --session-id=<uuid> -C <cwd>` (no `--trust`/`--workspace`). **Do not insert a `--` separator:** on herdr-core 0.1.16 (`hc run`, verified 2026-11-10 on the Mini) a `--` token is treated as the program name and fails with `spawn_failed` / `cannot start "--"`. The `env -u …` prefix clears Herdr/parent `NO_COLOR` / `FORCE_COLOR` so the TUI can use color; if the caller's `TERM` is unset, empty, or `dumb` (common for non-TTY af callers), it also sets `TERM=xterm-256color` and `COLORTERM=truecolor`. Names are lowercased, sanitized to `[a-z0-9_-]`, truncated to 32 chars and de-duplicated. Sessions whose `af_id` label already appears in `hc ls --json` are skipped. After launch or skip, `af resume` (default Herdr when `hc` is on PATH) and `af resume --via herdr` print a copy-pasteable `Attach: hc attach <name>`. In an iTerm2 TTY, `--open` is the default and opens a new tab running `hc attach` with an absolute `hc` path (pass `--no-open` to only print the line). Works for `resume --all --via herdr` and `resume <id>`. Bundled interactive templates (`af herdr-templates`) are `cursor`, `opencode`, and `copilot` (`ready: quiet`, because those CLIs do not speak Herdr's OSC 7501 status protocol).
 - **plain** — print shell commands (use this under Zellij or anything else).
 
 ### Herdr app
@@ -171,11 +192,103 @@ herdr-app do layout.switch --name main
 
 Symlinked edits are not hot-reloaded (the app watches `~/.config/herdr-app`, not the link targets): after editing the repo copy, switch layouts away and back (`ctrl-shift-l`) or restart the app. Verified on herdr-app 0.1.15.
 
-Escape hatch (always works): `ctrl-alt-shift-escape` restores the default `main` layout. The panel lists sessions from `af ls --json` (title, folder, branch, lifecycle, Herdr runtime dot, last used); click a running row to focus its space/tab, or a stopped one to `af resume … --no-open`.
+Escape hatch (always works): `ctrl-alt-shift-escape` restores the default `main` layout. The panel lists sessions from `af ls --json` (title, folder, branch, engine, lifecycle, Herdr runtime dot, last used; Copilot rows show a small `copilot` marker); click a running row to focus its space/tab, or a stopped one to `af resume … --no-open` (`af` picks the session engine).
+
+## Master and worker agents (stage 1)
+
+A session can act as a **master** that spawns **worker** agents. Lifecycle `status` (`active`|`paused`|`done`) is unchanged. Workers add a separate run-state field.
+
+**Registry fields** (backward compatible; absent on older rows):
+
+| Field | Values | Notes |
+|-------|--------|-------|
+| `parent` | af id \| `null` | Master session id for workers |
+| `role` | `master` \| `worker` \| `null` | Set to `master` automatically on first `af spawn` |
+| `task` | string | Short goal; defaults to first ~80 chars of `--prompt` |
+| `result` | absolute path \| `null` | Worker handoff file; default `$AGENTFLEET_HOME/results/<id>.md` |
+| `workerStatus` | `queued`\|`running`\|`waiting`\|`done`\|`failed`\|`stopped` \| `null` | Headless: queued → running → done/failed. Interactive: stored `running` at launch; `af children` derives from Herdr when possible |
+
+**Commands:**
+
+```bash
+# Headless worker (same print-mode machinery as af run)
+af spawn --parent auth-refactor --prompt "Extract JWT helpers into lib/auth.js" --task "JWT helpers"
+
+# Interactive worker in Herdr (wrapped prompt as initial message)
+af spawn --parent auth-refactor --prompt "…" --interactive
+
+# List workers / masters
+af children auth-refactor
+af children auth-refactor --json
+af children                 # masters summary, or AGENTFLEET_ID / AGENTFLEET_PARENT
+af children --all           # include lifecycle-done masters in the summary
+
+# Read handoff (exit 1 if missing; falls back to last ~40 lines of run log)
+af result auth-refactor-w1
+af result auth-refactor-w1 --path
+```
+
+**Env vars set on spawned workers** (headless child and Herdr `env …` prefix): `AGENTFLEET_ID` (worker id), `AGENTFLEET_PARENT` (master id), `AGENTFLEET_RESULT` (handoff path). Ordinary `af run` / `af new` also set `AGENTFLEET_ID` when launching.
+
+The worker prompt is wrapped with instructions to write a markdown handoff (`Summary`, `Files changed`, `Open questions`) to `result` and not to commit/push.
+
+Because the handoff lives outside the worker's folder, af passes `--add-dir <results dir>` to Copilot and Cursor for any session with a `result` path (Copilot otherwise refuses to write there). `workerStatus` reflects the exit code only; the `HANDOFF` column in `af children` (and `resultExists` in `--json`) shows whether the worker actually wrote its handoff.
+
+## Master and worker agents (stage 2)
+
+Stage 2 adds wait / tail / send / stop so a master (or script) can drive workers without babysitting TUIs.
+
+**Extra registry fields** (set on headless runs): `runPid`, `runPgid`, `runHost`, `runStartedAt`, `stopRequested`, `force` (spawn's `--force`, reused by `af send`). Headless engines spawn detached in their own process group (still awaited) so `af stop` can SIGTERM/SIGKILL the group. Run logs stream stdout while the engine runs (`lastOutput` is set at start) so `af tail -f` works mid-flight. A stored `workerStatus: running` whose `runPid` is dead on the same host is derived as `failed` (or `stopped` if `stopRequested`).
+
+**Commands:**
+
+```bash
+# Block until workers finish (default: all listed; --any: first terminal status)
+af wait auth-refactor-w1 auth-refactor-w2
+af wait --any --timeout 600 --interval 2
+af wait --json                 # children of AGENTFLEET_ID / AGENTFLEET_PARENT
+
+# Follow output
+af tail auth-refactor-w1 -n 80
+af tail auth-refactor-w1 -f    # until worker leaves running (or Ctrl-C)
+
+# Continue / nudge
+af send auth-refactor-w1 "Also cover the error path"   # headless: resume chat
+af send auth-refactor-w1 "looks good, ship notes"      # interactive: hc send
+
+# Stop
+af stop auth-refactor-w1
+af stop --all-children auth-refactor
+```
+
+**`af wait` exit codes** (precedence: timeout → failed/stopped → waiting → ok):
+
+| Code | Meaning |
+|------|---------|
+| 0 | All watched workers `done` (none failed/stopped/waiting) |
+| 1 | At least one `failed` or `stopped` |
+| 2 | `--timeout` elapsed |
+| 3 | At least one `waiting` (needs input) and none failed/stopped |
+
+Interactive `waiting` is best-effort from Herdr agent state (`hc get --json` → `status.state`: `idle`\|`working`\|`done`\|`blocked`\|`error`, via OSC 7501). Cursor does **not** emit OSC 7501 (`status` stays null). When status is present: `blocked` → `waiting`; after a `working` sighting, `idle` for ≥ one `--interval` → `waiting`.
+
+**Master loop example:**
+
+```bash
+af spawn --parent auth-refactor --prompt "Extract JWT helpers" --task "JWT"
+af spawn --parent auth-refactor --prompt "Add unit tests for auth" --task "tests"
+af wait --any --timeout 900
+af result auth-refactor-w1          # or whichever finished
+af send auth-refactor-w1 "Tighten the Open questions section"
+af wait auth-refactor-w1
+af stop --all-children auth-refactor   # cancel stragglers
+```
+
+`af send` on a non-worker session is allowed (headless continue / `hc send` when live). Headless send refuses with exit 1 while `runPid` is alive.
 
 ## Headless / controller usage
 
-`af new` / `af resume` start the **interactive** Cursor TUI (or hand a TUI to Herdr/tmux). That is the right path when a person will attach and chat.
+`af new` / `af resume` start the **interactive** Cursor or Copilot TUI (or hand a TUI to Herdr/tmux). That is the right path when a person will attach and chat.
 
 `af run` is the path for a controller that must launch a prompt, wait, and collect the result:
 
@@ -206,13 +319,15 @@ Headless Cursor flags actually used (verified against `cursor-agent --help` on t
 
 **Do not** send `af run` through Herdr. Herdr's own skill tells agents to keep TUIs interactive and watchable (`hc --skill`). Use `af resume --via herdr` or `hc run cursor "task"` for a long-lived terminal; use `af run` for a one-shot that returns output.
 
-### Copilot CLI vs `gh`
+### Copilot CLI (interactive + headless)
 
-These are different tools. `af --engine copilot` wraps the **GitHub Copilot CLI** (`copilot` / `gh copilot` preview wrapper), which has `-p/--prompt` and `--session-id=` (create or resume; `af` uses this, not `--resume=`, because a new UUID fails `--resume=`). It is **not** `gh` repository tooling (`gh pr`, `gh issue`, `gh repo`) and **not** `gh agent-task` (cloud agent tasks that can open PRs). `af` does not wrap `gh` and will not commit, push, or create agent tasks.
+These are different tools. `af --engine copilot` wraps the **GitHub Copilot CLI** (`copilot` / `gh copilot` preview wrapper). It is **not** `gh` repository tooling (`gh pr`, `gh issue`, `gh repo`) and **not** `gh agent-task` (cloud agent tasks that can open PRs). `af` does not wrap `gh` and will not commit, push, or create agent tasks.
 
-Copilot `--help` says **`--allow-all-tools` is required for non-interactive mode**, but a no-tool text prompt (`-p` "reply pong") **succeeded without it** on Copilot CLI 1.0.83 (Mini, 2026-11-10). `af run --engine copilot` therefore runs **without** `--allow-all-tools` unless you pass `--force`. `--force` adds only `--allow-all-tools` (not `--allow-all` / `--yolo`, which also disable path and URL checks). That `--force` grant is real: tools may edit files and run shell commands in the session cwd. Do not pass `--force` for a read-only/no-tool prompt. There is no Copilot equivalent of Cursor `--mode ask|plan` in the flags `af` uses. `--available-tools` / `--deny-tool` exist on `copilot` but are not wrapped by `af`.
+**Interactive** (verified Copilot CLI 1.0.109): `af new --engine copilot` mints a UUID locally, records `engine: 'copilot'`, and launches `copilot --session-id=<uuid> -C <cwd> [-i <prompt>]`. Resume uses the same `--session-id=` flag (create-or-resume). Do **not** use Copilot `--resume=` for a freshly minted id — it fails. Cursor flags `--trust` / `--workspace` do not apply. `--force` on resume/new adds only `--allow-all-tools`.
 
-`af` does not change account login state. Cursor must already be signed in (`cursor-agent status`). Copilot uses `copilot login` (or `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN`); there is no `copilot status`/`whoami` command. Auth for Copilot was confirmed by a successful live `-p` run, not by reading credential files.
+**Headless:** `-p/--prompt` and `--session-id=` (same create-or-resume). Copilot `--help` says **`--allow-all-tools` is required for non-interactive mode**, but a no-tool text prompt (`-p` "reply pong") **succeeded without it** on Copilot CLI 1.0.83 (Mini, 2026-11-10). `af run --engine copilot` therefore runs **without** `--allow-all-tools` unless you pass `--force`. `--force` adds only `--allow-all-tools` (not `--allow-all` / `--yolo`). There is no Copilot equivalent of Cursor `--mode ask|plan` in the flags `af` uses.
+
+`af` does not change account login state. Cursor must already be signed in (`cursor-agent status`). Copilot: run `copilot` once to sign in (or `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN`); there is no `copilot status`/`whoami` command.
 
 Optional: Cursor also has `cursor-agent persist` (sessions that survive disconnects). `af` does not wrap it.
 
@@ -223,6 +338,7 @@ Optional: Cursor also has `cursor-agent persist` (sessions that survive disconne
 | Cursor `af run` (headless `-p`, including `--mode ask`) and output/`af log` | **Verified** live |
 | Cursor `af resume --via herdr` (no `--` separator; default `--trust`) | **Verified** live |
 | Copilot `af run --engine copilot` without `--force` (no-tool text prompt) | **Verified** live (see engine notes above) |
+| Copilot interactive `af new` / `af resume` (`--session-id=`, CLI 1.0.109) | Supported (argv builders + dry-run tests); live interactive not required for CI |
 | Copilot `--force` / `--allow-all-tools` | Supported, **not** live-tested here (broad tool grant) |
 | OpenCode | Herdr **template only**; not wrapped by `af run`; first-message send not live-tested |
 | Herdr desktop app (0.1.15, herdr-core 0.1.16): af sessions appear as space/tab via `herdr.space`/`herdr.tab` labels, tab renamed to af title | **Verified** live (2026-11-11) |

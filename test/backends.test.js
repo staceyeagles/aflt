@@ -208,6 +208,10 @@ describe('herdr backend', () => {
     assert.deepEqual(backends.herdrEnvArgs({ TERM: 'dumb' }), expected);
     assert.deepEqual(backends.herdrEnvArgs({ TERM: '' }), expected);
     assert.deepEqual(backends.herdrEnvArgs({}), expected);
+    assert.deepEqual(
+      backends.herdrEnvArgs({ TERM: 'xterm-256color' }, { AGENTFLEET_ID: 'w1', AGENTFLEET_PARENT: 'm1' }),
+      ['env', '-u', 'NO_COLOR', '-u', 'FORCE_COLOR', 'AGENTFLEET_ID=w1', 'AGENTFLEET_PARENT=m1']
+    );
     assert.deepEqual(backends.herdrEnvArgs({ TERM: 'xterm-256color' }), [
       'env',
       '-u',

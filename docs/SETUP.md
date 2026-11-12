@@ -11,10 +11,10 @@ Source of truth for `af`: the code and README in this repo (`bin/af.js`, `lib/ba
 | Piece | Role |
 |-------|------|
 | **Cursor CLI** (`agent` / `cursor-agent`) | Primary coding agent. Interactive TUI or headless `-p`. Sessions resume with `--resume <chatId>`. |
-| **`af` (agentfleet)** | Tracks those chat sessions (title, chatId, cwd/worktree, tags, engine) in `~/.agentfleet/sessions.json`. Reopens a fleet after reboot via tmux / iTerm2 / WezTerm / Herdr / plain. Also has **`af run`** for headless one-shot prompts a controller can launch and collect. |
+| **`af` (agentfleet)** | Tracks those chat sessions (title, chatId, cwd/worktree, tags, engine) in `~/.agentfleet/sessions.json`. Reopens a fleet after reboot via tmux / iTerm2 / WezTerm / Herdr / plain. Also has **`af run`** for headless one-shot prompts a controller can launch and collect, plus stage-1 **`af spawn` / `af children` / `af result`** for master/worker orchestration. |
 | **Herdr** (`hc` = herdr-core; optional desktop app) | Long-lived *interactive* agent terminals. Preferred front end when available: `af resume … --via herdr` launches `hc run --bg …`. Not used for `af run` print-mode. |
 | **OpenCode** (optional) | Cheap / local-friendly coding agent. At home it pointed at the LAN **ai-lb** OpenAI-compatible proxy. On a work machine, point it at any OpenAI-compatible endpoint you are allowed to use — or skip it. `af` does not wrap OpenCode headless; a Herdr template is provided for interactive use. |
-| **GitHub Copilot CLI** (optional) | Separate coding agent (`copilot`, also reachable as `gh copilot`). `af run --engine copilot` can drive its documented `-p` mode. This is **not** `gh` repo tooling and **not** `gh agent-task`. |
+| **GitHub Copilot CLI** (optional) | Separate coding agent (`copilot`, also reachable as `gh copilot`). Interactive via `af new --engine copilot` / resume (`--session-id=`), and headless via `af run --engine copilot` (`-p`). This is **not** `gh` repo tooling and **not** `gh agent-task`. See §3.8 for a Copilot-only work Mac. |
 | **tmux / WezTerm / iTerm2** | Terminal backends for `af resume --all` when Herdr is not the front end. tmux is best for headless/SSH; WezTerm or iTerm2 for a GUI Mac. |
 | **Git worktree per task** | One cwd (worktree) per agent session so agents do not stomp each other's files. `af` records that cwd and always resumes with `--workspace`. |
 
@@ -266,7 +266,33 @@ Put the API key in the environment (`export WORK_GATEWAY_API_KEY=…`), not in a
 
 (Exact 1.x vs 2.x field names may differ; verify against `opencode` docs for your installed version.)
 
-### 3.8 Install `af` from this archive
+### 3.8 Work Mac with Copilot CLI (no Cursor)
+
+When the machine has Herdr + Copilot CLI but not Cursor CLI, drive the fleet with Copilot as the default engine:
+
+```bash
+# Herdr app + hc (see §3.6); keep hc updated
+hc update   # or follow herdr-core install docs
+
+# Copilot CLI
+npm install -g @github/copilot
+copilot     # first run: sign in
+
+# af
+git clone <this-repo> ~/src/af   # or copy the tree
+cd ~/src/af && npm install
+mkdir -p "$HOME/.local/bin"
+ln -sfn "$PWD/bin/af.js" "$HOME/.local/bin/af"
+export PATH="$HOME/.local/bin:$PATH"
+
+af copilot                 # persist defaultEngine=copilot in ~/.agentfleet/config.json
+af herdr-app install       # af-sessions panel + af layout
+af new "first-task"        # mints UUID, launches interactive copilot (or --dry-run first)
+```
+
+Override without changing config: `af new "…" --engine cursor` / `AGENTFLEET_ENGINE=cursor`. Resume always uses the session's recorded engine.
+
+### 3.9 Install `af` from this archive
 
 Copy `agentfleet/` (or extract `agentfleet.tar.gz`) onto the work machine, then:
 
@@ -307,10 +333,11 @@ export AGENTFLEET_CURSOR_BIN="$HOME/.local/bin/cursor-agent"
 | Variable / path | Purpose |
 |-----------------|---------|
 | `~/.agentfleet/sessions.json` | Session registry (atomic write). Mode `0600`. |
+| `~/.agentfleet/config.json` | Default engine (`defaultEngine`: `cursor`\|`copilot`). Separate from sessions. |
 | `AGENTFLEET_HOME` | Override registry directory. |
 | `AGENTFLEET_REGISTRY` | Override full path to `sessions.json`. |
+| `AGENTFLEET_ENGINE` | Default engine for **new** sessions (`cursor`\|`copilot`); after `--engine`, before config. |
 | `AGENTFLEET_CURSOR_BIN` | Force path to `cursor-agent` / `agent`. |
-| `AGENTFLEET_VIA` | Default `--via` backend. |
 | `AGENTFLEET_TMUX_SESSION` | tmux session name (default `agentfleet`). |
 | `AGENTFLEET_HERDR_APP` | Set `0` / `false` / `off` / `no` to skip Herdr-app space/tab labels. |
 | `AGENTFLEET_HERDR_APP_BIN` | Override `herdr-app` binary path. |
@@ -322,6 +349,9 @@ export AGENTFLEET_CURSOR_BIN="$HOME/.local/bin/cursor-agent"
 | `PATH` | Must include `~/.local/bin` (and Homebrew). |
 | `~/.config/herdr-core/templates/*.md` | `hc` agent templates (`af herdr-templates`). |
 | `~/.agentfleet/runs/<id>/` | Captured `af run` output (mode `0600`). |
+| `~/.agentfleet/results/<id>.md` | Worker handoff files from `af spawn` (see README “Master and worker agents”). |
+| `AGENTFLEET_ID` / `PARENT` / `RESULT` | Set on launched sessions / spawned workers for orchestration. |
+| `af wait` / `af tail` / `af send` / `af stop` | Stage 2 master/worker controls (see README “Master and worker agents (stage 2)”). |
 
 Backend auto-detect order in `af` (`lib/backends.js`):  
 `$AGENTFLEET_VIA` → inside Herdr (`HERDR` / `HC_TERMINAL` / … and `hc` on PATH) → inside tmux → `TERM_PROGRAM` WezTerm / iTerm → `tmux` on PATH → `wezterm` → `plain`.

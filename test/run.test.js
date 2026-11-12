@@ -133,17 +133,104 @@ describe('af run CLI dry-run', () => {
     assert.ok(!forced.stdout.includes('--allow-all ') && !forced.stdout.includes('--yolo'));
   });
 
-  it('help mentions run, log, adopt, herdr-templates, and herdr-app env', () => {
+  it('help mentions run, log, spawn, children, result, wait, tail, send, stop, adopt, herdr-templates, engine, and herdr-app env', () => {
     const r = spawnSync(process.execPath, [afJs, 'help'], { encoding: 'utf8' });
     assert.equal(r.status, 0);
     assert.ok(r.stdout.includes('af run'));
     assert.ok(r.stdout.includes('af log'));
+    assert.ok(r.stdout.includes('af spawn'));
+    assert.ok(r.stdout.includes('af children'));
+    assert.ok(r.stdout.includes('af result'));
+    assert.ok(r.stdout.includes('af wait'));
+    assert.ok(r.stdout.includes('af tail'));
+    assert.ok(r.stdout.includes('af send'));
+    assert.ok(r.stdout.includes('af stop'));
     assert.ok(r.stdout.includes('af adopt'));
+    assert.ok(r.stdout.includes('af engine'));
+    assert.ok(r.stdout.includes('af cursor'));
+    assert.ok(r.stdout.includes('af copilot'));
+    assert.ok(r.stdout.includes('AGENTFLEET_ENGINE'));
+    assert.ok(r.stdout.includes('AGENTFLEET_PARENT'));
+    assert.ok(r.stdout.includes('AGENTFLEET_RESULT'));
     assert.ok(r.stdout.includes('--no-herdr-app'));
     assert.ok(r.stdout.includes('AGENTFLEET_HERDR_APP'));
     assert.ok(r.stdout.includes('AGENTFLEET_HERDR_APP_BIN'));
     assert.ok(r.stdout.includes('herdr-templates'));
     assert.ok(r.stdout.includes('af herdr-app install'));
     assert.ok(r.stdout.includes('HERDR_APP_HOME'));
+  });
+});
+
+describe('spawnCaptured env overlay', () => {
+  it('passes a custom env to the child', async () => {
+    const r = await runlib.spawnCaptured(
+      process.execPath,
+      ['-e', 'process.stdout.write(process.env.AF_TEST_ENV || "")'],
+      { env: { ...process.env, AF_TEST_ENV: 'overlay-ok' } }
+    );
+    assert.equal(r.code, 0);
+    assert.equal(r.stdout, 'overlay-ok');
+  });
+});
+
+describe('streaming run log', () => {
+  it('writeRunLog header/footer layout keeps stdout between markers', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'af-runlog-'));
+    const file = path.join(tmp, 'out.txt');
+    try {
+      runlib.writeRunLog(file, {
+        argv: ['bin', '-p', 'hi'],
+        cwd: '/tmp',
+        stdout: 'hello\n',
+        stderr: 'warn\n',
+        code: 0,
+        signal: null,
+        timedOut: false,
+      });
+      const text = fs.readFileSync(file, 'utf8');
+      assert.ok(text.includes('# --- stdout ---'));
+      assert.ok(text.includes('hello'));
+      assert.ok(text.includes('# --- stderr ---'));
+      assert.ok(text.includes('warn'));
+      assert.ok(text.includes('# exit: 0'));
+      const stream = path.join(tmp, 'stream.txt');
+      runlib.writeRunLogHeader(stream, { argv: ['bin'], cwd: '/tmp' });
+      runlib.appendRunLog(stream, 'chunk1');
+      runlib.appendRunLog(stream, 'chunk2\n');
+      runlib.writeRunLogFooter(stream, { stderr: '', code: 7, signal: null, timedOut: false });
+      const live = fs.readFileSync(stream, 'utf8');
+      assert.ok(live.includes('chunk1chunk2'));
+      assert.ok(live.includes('# exit: 7'));
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('spawnCaptured detached reports pid/pgid and streams to logPath', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'af-runlog-'));
+    const file = path.join(tmp, 'live.txt');
+    try {
+      let seen = null;
+      runlib.writeRunLogHeader(file, { argv: [process.execPath, '-e', 'x'], cwd: tmp });
+      const r = await runlib.spawnCaptured(
+        process.execPath,
+        ['-e', 'process.stdout.write("streamed\\n")'],
+        {
+          detached: true,
+          logPath: file,
+          onSpawn: (info) => {
+            seen = info;
+          },
+        }
+      );
+      assert.equal(r.code, 0);
+      assert.ok(seen && seen.pid);
+      assert.equal(seen.pgid, seen.pid);
+      const text = fs.readFileSync(file, 'utf8');
+      assert.ok(text.includes('streamed'));
+      assert.ok(text.includes('# exit: 0'));
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
