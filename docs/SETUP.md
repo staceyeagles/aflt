@@ -314,6 +314,7 @@ export AGENTFLEET_CURSOR_BIN="$HOME/.local/bin/cursor-agent"
 | `AGENTFLEET_TMUX_SESSION` | tmux session name (default `agentfleet`). |
 | `AGENTFLEET_HERDR_APP` | Set `0` / `false` / `off` / `no` to skip Herdr-app space/tab labels. |
 | `AGENTFLEET_HERDR_APP_BIN` | Override `herdr-app` binary path. |
+| `HERDR_APP_HOME` | Herdr app config dir for `af herdr-app install` (default `~/.config/herdr-app`). |
 | `~/.config/herdr-core/config.toml` | herdr-core settings. |
 | `~/.config/opencode/opencode.json` | OpenCode global config (v2). |
 | `CURSOR_API_KEY` | Headless Cursor auth alternative to `agent login`. |
@@ -460,6 +461,14 @@ af adopt --all --dry-run
 ```
 
 That runs `hc label <addr> herdr.space=… herdr.tab=…` and `hc keep <addr>`, then tries tab rename. Cursor does not report OSC 7501, so the app's Agents panel stays empty for these sessions.
+
+Optional sidebar panel (lists af sessions; click to focus/resume):
+
+```bash
+af herdr-app install              # symlink panel + af layout into ~/.config/herdr-app
+herdr-app do layout.switch --name af
+# back: herdr-app do layout.switch --name main   (or ctrl-shift-l / escape hatch)
+```
 
 List / attach:
 

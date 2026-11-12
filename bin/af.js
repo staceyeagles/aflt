@@ -64,6 +64,10 @@ Usage:
   af which-backend          Show auto-detected resume --all backend
   af herdr-templates [--force]
                             Install Cursor/OpenCode templates into ~/.config/herdr-core/templates
+  af herdr-app install [--copy] [--force] [--dry-run]
+                            Symlink (default) or copy the af-sessions Herdr panel
+                            + af layout into ~/.config/herdr-app (or $HERDR_APP_HOME)
+  af herdr-app status       Report linked/copied/missing for the panel + layout
   af help
 
 Environment:
@@ -75,6 +79,7 @@ Environment:
   AGENTFLEET_TMUX_SESSION tmux session name (default: agentfleet)
   AGENTFLEET_HERDR_APP    Set to 0/false/off/no to skip herdr.space/tab labels
   AGENTFLEET_HERDR_APP_BIN Override herdr-app binary (default: herdr-app on PATH)
+  HERDR_APP_HOME          Herdr app config dir (default: ~/.config/herdr-app)
 `;
 
 async function main() {
@@ -99,6 +104,9 @@ async function main() {
       break;
     case 'herdr-templates':
       cmdHerdrTemplates(rest);
+      break;
+    case 'herdr-app':
+      cmdHerdrApp(rest);
       break;
     case 'add':
       cmdAdd(rest);
@@ -264,7 +272,7 @@ function cmdLs(argv) {
   if (!flags.all && !flags.status) opts.includeDone = false;
 
   const sessions = registry.list(opts);
-  if (sessions.length === 0) {
+  if (sessions.length === 0 && !flags.json) {
     process.stdout.write('(no sessions)\n');
     return;
   }
@@ -292,6 +300,10 @@ function cmdLs(argv) {
         exitCode: e.exitCode,
         reason: e.reason,
         checkedAt: e.checkedAt,
+      },
+      herdrApp: {
+        space: herdrapp.herdrSpaceId(e.session.cwd),
+        tab: herdrapp.herdrTabId(e.session),
       },
     }));
     process.stdout.write(JSON.stringify({ sessions: rows, queryOk: Boolean(fetchResult.ok) }, null, 2) + '\n');
@@ -1048,6 +1060,46 @@ function cmdHerdrTemplates(argv) {
     copied++;
   }
   process.stderr.write(`herdr templates: installed ${copied}, skipped ${skipped}. Then: hc templates\n`);
+}
+
+function cmdHerdrApp(argv) {
+  const herdrappinstall = require('../lib/herdrappinstall');
+  const { args, flags } = parseArgs(argv);
+  const sub = args[0];
+  if (!sub || sub === 'help' || sub === '-h' || sub === '--help') {
+    process.stdout.write(
+      'usage: af herdr-app install [--copy] [--force] [--dry-run]\n' +
+        '       af herdr-app status\n'
+    );
+    return;
+  }
+  if (sub === 'status') {
+    const st = herdrappinstall.status();
+    for (const item of st.items) {
+      process.stdout.write(`${item.kind.padEnd(8)} ${item.state.padEnd(10)} ${item.dest}\n`);
+      if (item.detail) process.stdout.write(`         ${item.detail}\n`);
+    }
+    process.stdout.write(`home: ${st.home}\n`);
+    return;
+  }
+  if (sub === 'install') {
+    const result = herdrappinstall.install({
+      copy: Boolean(flags.copy),
+      force: Boolean(flags.force),
+      dryRun: Boolean(flags['dry-run']),
+    });
+    for (const a of result.actions) {
+      const prefix = result.dryRun ? '[dry-run] ' : '';
+      process.stdout.write(`${prefix}${a.action}  ${a.kind}  ${a.dest}\n`);
+      if (a.detail) process.stdout.write(`  ${a.detail}\n`);
+    }
+    if (!result.ok) {
+      process.exitCode = 1;
+      if (result.error) process.stderr.write(`${result.error}\n`);
+    }
+    return;
+  }
+  fail(`unknown herdr-app subcommand: ${sub}\nusage: af herdr-app install|status`);
 }
 
 function fail(msg) {

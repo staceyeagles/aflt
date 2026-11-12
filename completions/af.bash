@@ -4,7 +4,7 @@ _af() {
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  cmds="new add import ls list sync run log resume pick adopt rename done rm remove note export import-file which-backend herdr-templates help"
+  cmds="new add import ls list sync run log resume pick adopt rename done rm remove note export import-file which-backend herdr-templates herdr-app help"
 
   if [[ ${COMP_CWORD} -eq 1 ]]; then
     COMPREPLY=( $(compgen -W "${cmds}" -- "${cur}") )
@@ -29,6 +29,13 @@ _af() {
       ;;
     herdr-templates)
       COMPREPLY=( $(compgen -W "--force" -- "${cur}") )
+      ;;
+    herdr-app)
+      if [[ ${COMP_CWORD} -eq 2 ]]; then
+        COMPREPLY=( $(compgen -W "install status" -- "${cur}") )
+      else
+        COMPREPLY=( $(compgen -W "--copy --force --dry-run" -- "${cur}") )
+      fi
       ;;
     ls|list)
       COMPREPLY=( $(compgen -W "--status --tag --all --json" -- "${cur}") )

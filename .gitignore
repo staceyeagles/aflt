@@ -12,3 +12,8 @@ sessions.json.bak*
 logs/
 IMPLEMENT.md
 .agentfleet/
+
+# Written by the Herdr app into mod folders (regenerated on every start)
+herdr/mods/*/gpui-kit.d.ts
+herdr/mods/*/jsconfig.json
+herdr/mods/*/*.error

@@ -17,6 +17,7 @@
   "files": [
     "bin",
     "lib",
+    "herdr",
     "completions",
     "templates",
     "docs",

@@ -132,7 +132,7 @@ describe('classifySession / enrichSessions', () => {
     assert.equal(c.runtime, '-');
   });
 
-  it('ambiguous same af_id → unknown', () => {
+  it('several live same af_id → unknown', () => {
     const dup = [
       ...terminals,
       { ...terminals[1], address: 't8', name: 'dup' },
@@ -141,6 +141,84 @@ describe('classifySession / enrichSessions', () => {
     assert.equal(c.runtime, 'unknown');
   });
 
+  it('one live + finished history same af_id → running (the live one)', () => {
+    const withHistory = [
+      {
+        address: 't3',
+        name: 'video-production-live',
+        state: 'finished',
+        reason: 'exited',
+        exitCode: 0,
+        afId: LIVE_ID,
+        labels: { af_id: LIVE_ID },
+      },
+      {
+        address: 't5',
+        name: 'video-production-live',
+        state: 'finished',
+        reason: 'exited',
+        exitCode: 0,
+        afId: LIVE_ID,
+        labels: { af_id: LIVE_ID },
+      },
+      terminals[1],
+    ];
+    const c = herdr.classifySession(liveSession, withHistory);
+    assert.equal(c.runtime, 'running');
+    assert.equal(c.address, 't7');
+  });
+
+  it('only finished history same af_id → exited (most recent / highest address)', () => {
+    const finishedOnly = [
+      {
+        address: 't3',
+        name: 'video-production-live',
+        state: 'finished',
+        reason: 'exited',
+        exitCode: 1,
+        afId: LIVE_ID,
+        labels: { af_id: LIVE_ID },
+      },
+      {
+        address: 't12',
+        name: 'video-production-live',
+        state: 'finished',
+        reason: 'exited',
+        exitCode: 0,
+        afId: LIVE_ID,
+        labels: { af_id: LIVE_ID },
+      },
+      {
+        address: 't8',
+        name: 'video-production-live',
+        state: 'finished',
+        reason: 'killed',
+        exitCode: null,
+        afId: LIVE_ID,
+        labels: { af_id: LIVE_ID },
+      },
+    ];
+    const c = herdr.classifySession(liveSession, finishedOnly);
+    assert.equal(c.runtime, 'exited');
+    assert.equal(c.address, 't12');
+    assert.equal(c.exitCode, 0);
+  });
+
+
+  it('hex addresses: t1b is newer than t19 (hc addresses are t + hex)', () => {
+    const mk = (address) => ({
+      address,
+      name: 'img2img',
+      state: 'finished',
+      reason: 'exited',
+      exitCode: 0,
+      afId: LIVE_ID,
+      labels: { af_id: LIVE_ID },
+    });
+    const c = herdr.classifySession(liveSession, [mk('t1b'), mk('t19'), mk('t8')]);
+    assert.equal(c.runtime, 'exited');
+    assert.equal(c.address, 't1b');
+  });
   it('query failure → unknown for involved, - for others; not persistable', () => {
     const involved = {
       ...readySession,
@@ -351,7 +429,7 @@ describe('af sync / af ls CLI', () => {
     assert.equal(JSON.stringify(registry.find(READY_ID).herdr), herdrBefore);
   });
 
-  it('af ls --json includes HERDR runtimes', () => {
+  it('af ls --json includes HERDR runtimes and herdrApp ids', () => {
     stubHc(`
       if (process.argv[2] === 'ls') {
         process.stdout.write(${JSON.stringify(ALL_JSON)});
@@ -371,6 +449,7 @@ describe('af sync / af ls CLI', () => {
       cwd: tmp,
       id: plainSession.id,
     });
+    const herdrapp = require('../lib/herdrapp');
     const r = runAf(['ls', '--json', '--all']);
     assert.equal(r.status, 0, r.stderr);
     const out = JSON.parse(r.stdout);
@@ -378,6 +457,26 @@ describe('af sync / af ls CLI', () => {
     assert.equal(byId[LIVE_ID].herdr.runtime, 'running');
     assert.equal(byId[plainSession.id].herdr.runtime, '-');
     assert.equal(byId[LIVE_ID].status, 'active');
+    assert.equal(byId[LIVE_ID].herdrApp.space, herdrapp.herdrSpaceId(tmp));
+    assert.equal(byId[LIVE_ID].herdrApp.tab, herdrapp.herdrTabId({ id: LIVE_ID }));
+    assert.equal(byId[plainSession.id].herdrApp.space, herdrapp.herdrSpaceId(tmp));
+    assert.equal(byId[plainSession.id].herdrApp.tab, herdrapp.herdrTabId({ id: plainSession.id }));
+  });
+
+  it('af ls --json with no sessions prints empty sessions array', () => {
+    stubHc(`
+      if (process.argv[2] === 'ls') {
+        process.stdout.write(JSON.stringify({ terminals: [] }));
+        process.exit(0);
+      }
+      process.exit(1);
+    `);
+    const r = runAf(['ls', '--json']);
+    assert.equal(r.status, 0, r.stderr);
+    const out = JSON.parse(r.stdout);
+    assert.deepEqual(out.sessions, []);
+    assert.equal(typeof out.queryOk, 'boolean');
+    assert.equal(out.queryOk, true);
   });
 
   it('af resume --via herdr --dry-run prints Attach line and does not spawn hc run', () => {

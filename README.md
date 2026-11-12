@@ -110,6 +110,7 @@ af adopt --all                      # label already-live af terminals for the He
 | `af resume --all [--tag X] [--via …]` | Fleet reopen (`--all` still auto-detects backend; not default-Herdr) |
 | `af adopt <title\|id …>` / `af adopt --all` | Label live af Herdr terminals with `herdr.space` / `herdr.tab` + `hc keep` so they appear in the desktop app |
 | `af herdr-templates` | Install Cursor/OpenCode templates into `~/.config/herdr-core/templates` |
+| `af herdr-app install` / `status` | Install the af-sessions Herdr panel + `af` layout (symlink by default) |
 | `af rename` / `af done` / `af rm` / `af note` | Metadata |
 | `af export [file]` / `af import-file <file>` | Backup / restore registry |
 
@@ -121,10 +122,10 @@ Each entry stores: `id`, `title`, `chatId`, `cwd`, `branch`, `model`, `created`,
 
 - **STATUS** is the saved task lifecycle: `active` / `paused` / `done`. A process exit does **not** mark the task done — use `af done` when the work is finished.
 - **HERDR** is read-only runtime enrichment on `af ls` (refetched each call from official `hc ls --all --json`):
-  - `running` — exactly one live Herdr terminal labeled `af_id=<session.id>`
-  - `exited` — exactly one finished terminal for that `af_id` (shows exit/reason when present)
+  - `running` — exactly one live Herdr terminal labeled `af_id=<session.id>` (finished history with the same id is ignored)
+  - `exited` — no live match, but one or more finished terminals for that `af_id` (uses the most recent / highest address)
   - `missing` — session was Herdr-involved (live match or prior `herdr` evidence) but no terminal matches now
-  - `unknown` — ambiguous matches, or `hc` failed/timeout/malformed for a Herdr-involved session
+  - `unknown` — several live matches, or `hc` failed/timeout/malformed for a Herdr-involved session
   - `-` — not Herdr-involved (plain/tmux/iterm/wezterm/copilot, or never launched via herdr)
 - `af ls` never writes the registry. `af sync` persists `herdr: { runtime, address, name, exitCode, reason, checkedAt }` without changing `status`, `lastUsed`, identity fields, or history. `--dry-run` prints the plan with no backup/write. On `hc` failure, sync exits nonzero and does not mutate the registry.
 - Default `hc ls` hides finished terminals; `af` uses `hc ls --all` so finished shows as `exited`, not `missing`. Attach with `~/.local/bin/hc attach <name>`.
@@ -149,6 +150,28 @@ The Herdr desktop app (herdr-app) shows any core terminal that carries labels `h
 - **Keep:** core `--keep` / `hc keep` means a lost program is replaced with a shell — Cursor is **not** re-run. Use `af resume` again to relaunch the agent.
 
 Auto-detect order: `$AGENTFLEET_VIA` → inside Herdr (`$HERDR`/`$HC_TERMINAL` set and `hc` on PATH) → inside tmux → `TERM_PROGRAM` (WezTerm / iTerm) → `tmux` on PATH → `wezterm` → plain.
+
+### Herdr app panel
+
+The repo ships an **af sessions** panel (`herdr/mods/af-sessions`) and an `af` layout (`herdr/layouts/af.json`) that adds it under Agents in a clone of `main`.
+
+```bash
+af herdr-app install              # symlink into ~/.config/herdr-app
+af herdr-app install --copy       # copy instead of symlink
+af herdr-app status               # linked / copied / missing
+# Override target: HERDR_APP_HOME=/path af herdr-app install
+```
+
+Switch layouts with `ctrl-shift-l`, or:
+
+```bash
+herdr-app do layout.switch --name af
+herdr-app do layout.switch --name main
+```
+
+Symlinked edits are not hot-reloaded (the app watches `~/.config/herdr-app`, not the link targets): after editing the repo copy, switch layouts away and back (`ctrl-shift-l`) or restart the app. Verified on herdr-app 0.1.15.
+
+Escape hatch (always works): `ctrl-alt-shift-escape` restores the default `main` layout. The panel lists sessions from `af ls --json` (title, folder, branch, lifecycle, Herdr runtime dot, last used); click a running row to focus its space/tab, or a stopped one to `af resume … --no-open`.
 
 ## Headless / controller usage
 
