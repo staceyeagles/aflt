@@ -288,9 +288,15 @@ export PATH="$HOME/.local/bin:$PATH"
 af copilot                 # persist defaultEngine=copilot in ~/.agentfleet/config.json
 af herdr-app install       # af-sessions panel + af layout
 af new "first-task"        # mints UUID, launches interactive copilot (or --dry-run first)
+
+# Import existing Copilot CLI sessions from ~/.copilot/session-state/
+af import                  # lists Copilot sessions when defaultEngine=copilot
+af import copilot          # same, explicit (works even if default is cursor)
+af import copilot <uuid>   # register by full id or unique ≥8-char prefix
+af import copilot --all --cwd ~/src/app
 ```
 
-Override without changing config: `af new "…" --engine cursor` / `AGENTFLEET_ENGINE=cursor`. Resume always uses the session's recorded engine.
+Override without changing config: `af new "…" --engine cursor` / `AGENTFLEET_ENGINE=cursor`. Resume always uses the session's recorded engine. Import follows the same default-engine rules; `af import cursor` always scans `~/.cursor/chats/`.
 
 ### 3.9 Install `af` from this archive
 
@@ -346,6 +352,8 @@ export AGENTFLEET_CURSOR_BIN="$HOME/.local/bin/cursor-agent"
 | `~/.config/opencode/opencode.json` | OpenCode global config (v2). |
 | `CURSOR_API_KEY` | Headless Cursor auth alternative to `agent login`. |
 | `AGENTFLEET_COPILOT_BIN` | Force path to `copilot`. |
+| `AGENTFLEET_COPILOT_HOME` | Override Copilot config/home dir (default `COPILOT_HOME` or `~/.copilot`); `af import` reads `session-state/` under it. |
+| `COPILOT_HOME` | Upstream Copilot home; used when `AGENTFLEET_COPILOT_HOME` is unset. |
 | `PATH` | Must include `~/.local/bin` (and Homebrew). |
 | `~/.config/herdr-core/templates/*.md` | `hc` agent templates (`af herdr-templates`). |
 | `~/.agentfleet/runs/<id>/` | Captured `af run` output (mode `0600`). |
@@ -608,7 +616,7 @@ af import-file ~/af-sessions.json
 | Herdr skips a session | `hc ls --json` already has `af_id=<id>`. Attach that terminal or kill it before re-launching. |
 | Resume lost context / wrong files | Always use the **same cwd/worktree** the chat was created with. `af` passes `--workspace`. |
 | Resume re-triggers the original task | Older `af` fell back to `session.prompt` on resume. Current `af` does not; only `af new --prompt` or an explicit resume `--prompt` sends a prompt. |
-| `af import` empty | `cursor-agent ls` is interactive-only; import scans `~/.cursor/chats/`. Empty chats from `create-chat` may not appear until a prompt is sent — use `af new` or `af add --chat`. |
+| `af import` empty | Cursor: `cursor-agent ls` is interactive-only; import scans `~/.cursor/chats/`. Empty chats from `create-chat` may not appear until a prompt is sent — use `af new` or `af add --chat`. Copilot: scans `~/.copilot/session-state/` (override with `AGENTFLEET_COPILOT_HOME`); import by UUID with `af import copilot <id>`. |
 | iTerm2 backend fails | Needs macOS + iTerm2 + `osascript`. Use `--via tmux` or `--via wezterm` instead. |
 | OpenCode cannot reach ai-lb | Expected off-LAN. Reconfigure provider or skip OpenCode. |
 | Tests fail without Cursor CLI | Unit tests still pass with a stub; the optional live `create-chat` test needs a real binary + auth. |
@@ -661,5 +669,6 @@ Other notes: bundled Herdr templates use official frontmatter and `ready: quiet`
 - [ ] `af resume smoke --via herdr --dry-run` has **no** `--` before `cursor-agent`; then without `--dry-run` if you want a live TUI
 - [ ] `af herdr-templates` && `hc templates` lists `cursor` and `opencode`
 - [ ] `af export` backup stored outside the repo
+- [ ] (Copilot work Mac) `af import copilot` lists sessions; import an existing UUID by id
 
 When in doubt, lean on Cursor CLI + `af` + tmux; treat Herdr as the nicer front end and OpenCode as optional.

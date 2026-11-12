@@ -105,7 +105,7 @@ af adopt --all                      # label already-live af terminals for the He
 |---------|---------|
 | `af new "<title>" [--engine …]` | Create chat / mint Copilot UUID → register → interactive launch |
 | `af add "<title>" --chat <id> [--engine …]` | Register an existing chat (Copilot: `--chat` is the session UUID) |
-| `af import` | List `~/.cursor/chats` entries to pick from |
+| `af import` | List local chats/sessions to register. Default engine follows `AGENTFLEET_ENGINE` / config (builtin: Cursor → `~/.cursor/chats`). Copilot: `af import --engine copilot` / `af import copilot` lists `~/.copilot/session-state` or imports by UUID/prefix (`--all`, `--cwd`, `--json`, `-i`, `--allow-missing`, …). Explicit `af import cursor` always uses the Cursor path. |
 | `af ls [--json]` | Table: title, short id, ENGINE, folder, branch, STATUS, HERDR, last used (`--json` always includes `engine`, default `cursor`) |
 | `af sync [--dry-run] [--json]` | Query `hc ls --all --json`; persist last-known Herdr runtime (not status) |
 | `af run "<title>" --prompt "…"` | Headless create-or-resume; capture stdout to `~/.agentfleet/runs/` |
@@ -407,9 +407,32 @@ npm test
 
 Unit tests cover the registry, command builders (tmux / WezTerm / AppleScript / Herdr), headless Cursor and Copilot argv, captured-process helpers, and `af run --dry-run`. A stub `cursor-agent` records arguments; if a real binary is present, `create-chat` is smoke-tested.
 
+## Import
+
+`af import` registers chats that already exist on disk.
+
+**Default engine:** with no `--engine` / positional engine name, import uses the same resolution as new sessions (`AGENTFLEET_ENGINE` → `$AGENTFLEET_HOME/config.json` → builtin `cursor`). An explicit `af import cursor` or `--engine cursor` always uses the Cursor path.
+
+**Cursor** (builtin default): scans `~/.cursor/chats/` and prints chat ids (same as before). Register with `af add "<title>" --chat <id> --cwd <dir>`.
+
+**Copilot:** `af import --engine copilot` or `af import copilot`
+
+```bash
+af import copilot                         # list newest sessions (ID / UPDATED / FOLDER / TRACKED / TITLE)
+af import copilot --json --limit 50
+af import copilot --cwd /path/to/repo     # filter by session cwd/git_root (realpath-aware)
+af import copilot <uuid|prefix> [...]     # register (chatId = full UUID, engine=copilot)
+af import copilot --all --cwd ~/src/app   # import all untracked matching the filter
+af import copilot <uuid> --title my-name --tag work
+af import copilot <uuid> --allow-missing --cwd ~/src/app   # id not on this machine
+af import copilot -i                      # TTY multi-select (same picker style as af pick)
+```
+
+Session metadata is read from `~/.copilot/session-state/<uuid>/` (`workspace.yaml` + capped `events.jsonl`). Override the Copilot home with `AGENTFLEET_COPILOT_HOME` or `COPILOT_HOME`.
+
 ## Caveats
 
-- `cursor-agent ls` cannot be scraped; import is best-effort from the local chat store.
+- `cursor-agent ls` cannot be scraped; Cursor import is best-effort from the local chat store.
 - Empty chats from `create-chat` may not appear under `~/.cursor/chats/` until the first prompt.
 - Always resume with the **same cwd/workspace** the chat was created in.
 - iTerm2 / WezTerm backends need those apps installed; on Linux CI only tmux/plain are exercised.

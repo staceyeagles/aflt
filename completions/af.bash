@@ -17,6 +17,26 @@ _af_session_titles() {
   ' "$reg" 2>/dev/null
 }
 
+_af_copilot_session_ids() {
+  local root
+  if [[ -n "${AGENTFLEET_COPILOT_HOME:-}" ]]; then
+    root="${AGENTFLEET_COPILOT_HOME}/session-state"
+  elif [[ -n "${COPILOT_HOME:-}" ]]; then
+    root="${COPILOT_HOME}/session-state"
+  else
+    root="${HOME}/.copilot/session-state"
+  fi
+  if [[ ! -d "$root" ]]; then
+    return 0
+  fi
+  # Cheap: directory names are session UUIDs (no file reads)
+  local d
+  for d in "$root"/*; do
+    [[ -d "$d" ]] || continue
+    basename "$d"
+  done 2>/dev/null
+}
+
 _af() {
   local cur prev cmds titles
   COMPREPLY=()
@@ -141,6 +161,17 @@ _af() {
       ;;
     sync)
       COMPREPLY=( $(compgen -W "--dry-run --json" -- "${cur}") )
+      ;;
+    import)
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "--engine --cwd --limit --json --title --tag --all --dry-run --allow-missing --pick -i cursor copilot" -- "${cur}") )
+      elif [[ "$prev" == "--engine" ]]; then
+        COMPREPLY=( $(compgen -W "cursor copilot" -- "${cur}") )
+      else
+        local ids
+        ids="$(_af_copilot_session_ids)"
+        COMPREPLY=( $(compgen -W "cursor copilot --engine --cwd --limit --json --title --tag --all --dry-run --allow-missing --pick -i ${ids}" -- "${cur}") )
+      fi
       ;;
   esac
 }

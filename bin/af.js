@@ -26,6 +26,7 @@ const {
   fleetDir,
   registryPath,
   sleep,
+  slugify,
 } = require('../lib/util');
 
 const ID_COL = 16;
@@ -38,7 +39,16 @@ Usage:
   af add "<title>" --chat <id> [--cwd DIR] [--model X] [--engine cursor|copilot]
                             [--tag T]... [--prompt "..."]
                             For --engine copilot, --chat is the Copilot session UUID
-  af import                 List recent chats from ~/.cursor/chats for registration
+  af import [--engine cursor|copilot] [cursor|copilot]
+                            List local chats/sessions to register. Default engine
+                            follows AGENTFLEET_ENGINE/config (builtin: cursor).
+                            Cursor: scan ~/.cursor/chats (unchanged). Copilot:
+                            list ~/.copilot/session-state (or import by id).
+  af import --engine copilot [<id|prefix>...] [--title T] [--tag T]...
+                            [--cwd DIR] [--limit N] [--json] [--all] [--dry-run]
+                            [--allow-missing] [-i|--pick]
+                            Copilot: list (newest first) or register by UUID/prefix.
+                            --title only with a single id. -i requires a TTY.
   af ls [--status S] [--tag T] [--all] [--json]
                             STATUS is lifecycle; HERDR is live runtime (running|exited|missing|unknown|-)
   af sync [--dry-run] [--json]
@@ -203,7 +213,7 @@ async function main() {
       cmdAdd(rest);
       break;
     case 'import':
-      cmdImport(rest);
+      await cmdImport(rest);
       break;
     case 'ls':
     case 'list':
@@ -374,7 +384,11 @@ function cmdAdd(argv) {
   printSession(saved, 'added');
 }
 
-function cmdImport() {
+/**
+ * Cursor import — kept byte-for-byte in behavior from the pre-Copilot path.
+ * Explicit `af import cursor` / `--engine cursor` always lands here.
+ */
+function cmdImportCursor() {
   process.stdout.write(
     'Note: `cursor-agent ls` is interactive-only (no --print/--output-format).\n' +
       'Scanning local store ~/.cursor/chats/ instead.\n\n'
@@ -404,6 +418,314 @@ function cmdImport() {
   process.stdout.write(
     `\nRegister one with:\n  af add "<title>" --chat <chatId> --cwd <dir>\n`
   );
+}
+
+function uniqueImportTitle(base, taken, { slug = true } = {}) {
+  let candidate = slug
+    ? slugify(base).slice(0, 40) || 'copilot'
+    : String(base || '').trim() || 'copilot';
+  if (!taken.has(candidate)) return candidate;
+  let n = 2;
+  let title = `${candidate}-${n}`;
+  while (taken.has(title)) {
+    n++;
+    title = `${candidate}-${n}`;
+  }
+  return title;
+}
+
+function formatUpdatedShort(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso).slice(0, 19);
+  return d.toISOString().replace(/\.\d+Z$/, 'Z');
+}
+
+function printCopilotSessionTable(sessions, tracked) {
+  process.stdout.write(
+    `${pad('ID', 8)} ${pad('UPDATED', 20)} ${pad('FOLDER', 20)} ${pad('TRACKED', 7)} TITLE\n`
+  );
+  for (const s of sessions) {
+    const mark = tracked.has(s.id) ? '✓' : '';
+    const folder = s.cwd ? path.basename(s.cwd) : '';
+    process.stdout.write(
+      `${pad(shortId(s.id), 8)} ${pad(formatUpdatedShort(s.updated), 20)} ${pad(folder, 20)} ${pad(mark, 7)} ${s.title || ''}\n`
+    );
+  }
+}
+
+async function cmdImportCopilot(argv, flags) {
+  const pick = Boolean(flags.pick || flags.i || flags.interactive);
+  const asJson = Boolean(flags.json);
+  const dryRun = Boolean(flags['dry-run']);
+  const allowMissing = Boolean(flags['allow-missing']);
+  const importAll = Boolean(flags.all);
+  const limitRaw = flags.limit != null && flags.limit !== true ? Number(flags.limit) : 20;
+  const limit = Number.isFinite(limitRaw) && limitRaw >= 0 ? limitRaw : 20;
+  const cwdFilter = flags.cwd || flags.C || null;
+  const titleFlag = flags.title != null && flags.title !== true ? String(flags.title) : null;
+  const tags = collectTags(flags);
+
+  let ids = Array.isArray(argv) ? [...argv] : [];
+
+  if (pick) {
+    if (!process.stdin.isTTY || !process.stdout.isTTY) {
+      fail('interactive import requires a TTY (or pass session id(s) / --all)');
+    }
+    const sessions = copilot.listLocalSessions({
+      limit: Math.max(limit, 50),
+      cwd: cwdFilter || undefined,
+    });
+    if (sessions.length === 0) {
+      process.stdout.write('No Copilot sessions found under session-state.\n');
+      return;
+    }
+    const tracked = new Set(registry.list({ includeDone: true }).map((s) => s.chatId));
+    process.stdout.write(
+      `    ${pad('#', 3)} ${pad('ID', 8)} ${pad('UPDATED', 20)} ${pad('FOLDER', 20)} ${pad('TRACKED', 7)} TITLE\n`
+    );
+    sessions.forEach((s, i) => {
+      const mark = tracked.has(s.id) ? '✓' : '';
+      const folder = s.cwd ? path.basename(s.cwd) : '';
+      process.stdout.write(
+        `    ${pad(String(i + 1), 3)} ${pad(shortId(s.id), 8)} ${pad(formatUpdatedShort(s.updated), 20)} ${pad(folder, 20)} ${pad(mark, 7)} ${s.title || ''}\n`
+      );
+    });
+    const readline = require('readline/promises');
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    let answer;
+    try {
+      answer = await rl.question('Select sessions to import (e.g. 1,3 or 1-3; a = all): ');
+    } finally {
+      rl.close();
+    }
+    let indexes;
+    try {
+      indexes = backends.parseResumeSelection(answer, sessions.length);
+    } catch (err) {
+      fail(err.message);
+    }
+    ids = indexes.map((i) => sessions[i].id);
+    if (ids.length === 0) {
+      process.stdout.write('No sessions selected.\n');
+      return;
+    }
+  }
+
+  // List mode: no ids and not --all / not post-pick
+  if (ids.length === 0 && !importAll) {
+    const sessions = copilot.listLocalSessions({
+      limit,
+      cwd: cwdFilter || undefined,
+    });
+    const tracked = new Set(registry.list({ includeDone: true }).map((s) => s.chatId));
+    if (asJson) {
+      process.stdout.write(
+        JSON.stringify(
+          {
+            engine: 'copilot',
+            sessions: sessions.map((s) => ({
+              id: s.id,
+              updated: s.updated,
+              cwd: s.cwd,
+              folder: s.cwd ? path.basename(s.cwd) : null,
+              tracked: tracked.has(s.id),
+              title: s.title,
+              branch: s.branch,
+              repository: s.repository,
+              model: s.model,
+              created: s.created,
+            })),
+          },
+          null,
+          2
+        ) + '\n'
+      );
+      return;
+    }
+    if (sessions.length === 0) {
+      process.stdout.write(
+        'No Copilot sessions found under ~/.copilot/session-state/.\n' +
+          'Tips:\n' +
+          '  • set AGENTFLEET_COPILOT_HOME if sessions live elsewhere\n' +
+          '  • import by id: af import --engine copilot <uuid>\n' +
+          '  • or: af add "<title>" --chat <uuid> --engine copilot --cwd <dir>\n'
+      );
+      return;
+    }
+    printCopilotSessionTable(sessions, tracked);
+    process.stdout.write(
+      `\nImport with:\n  af import --engine copilot <id|prefix> [...]\n  af import --engine copilot --all\n`
+    );
+    return;
+  }
+
+  if (importAll) {
+    if (titleFlag) {
+      fail('--title is only valid when importing a single session id');
+    }
+    const sessions = copilot.listLocalSessions({
+      limit: limit || 10000,
+      cwd: cwdFilter || undefined,
+    });
+    const tracked = new Set(registry.list({ includeDone: true }).map((s) => s.chatId));
+    ids = sessions.filter((s) => !tracked.has(s.id)).map((s) => s.id);
+    if (ids.length === 0) {
+      process.stdout.write('No untracked Copilot sessions to import.\n');
+      return;
+    }
+  }
+
+  if (titleFlag && ids.length !== 1) {
+    fail('--title is only valid when importing a single session id');
+  }
+
+  const tracked = new Set(registry.list({ includeDone: true }).map((s) => s.chatId));
+  const takenTitles = new Set(registry.list({ includeDone: true }).map((s) => s.title));
+  const unknown = [];
+  let imported = 0;
+  let skipped = 0;
+  // --cwd overrides registered cwd for explicit id imports / --allow-missing.
+  // For --all it only filters the candidate list (metadata cwd wins).
+  const cwdOverrides = Boolean(cwdFilter) && !importAll;
+
+  for (const rawId of ids) {
+    let local = null;
+    try {
+      local = copilot.getLocalSession(rawId);
+    } catch (err) {
+      if (err.code === 'PREFIX_TOO_SHORT' || err.code === 'AMBIGUOUS_PREFIX') {
+        fail(err.message);
+      }
+      throw err;
+    }
+
+    if (!local) {
+      if (!allowMissing) {
+        unknown.push(rawId);
+        continue;
+      }
+      const fullId = String(rawId).trim();
+      if (tracked.has(fullId)) {
+        process.stdout.write(`already tracked: ${fullId} (skip)\n`);
+        skipped++;
+        continue;
+      }
+      const cwd = resolveCwd(cwdFilter);
+      const title = titleFlag
+        ? uniqueImportTitle(titleFlag, takenTitles, { slug: false })
+        : uniqueImportTitle(`copilot-${shortId(fullId)}`, takenTitles, { slug: false });
+      takenTitles.add(title);
+      const entry = {
+        title,
+        chatId: fullId,
+        cwd,
+        branch: gitBranch(cwd),
+        model: null,
+        prompt: '',
+        tags,
+        status: 'active',
+        engine: 'copilot',
+      };
+      if (dryRun) {
+        process.stdout.write(`[dry-run] would import ${fullId} as ${title} cwd=${cwd}\n`);
+        imported++;
+        continue;
+      }
+      const saved = registry.add(entry);
+      tracked.add(saved.chatId);
+      printSession(saved, 'imported');
+      imported++;
+      continue;
+    }
+
+    if (tracked.has(local.id)) {
+      process.stdout.write(`already tracked: ${local.id} (skip)\n`);
+      skipped++;
+      continue;
+    }
+
+    const cwd = cwdOverrides
+      ? resolveCwd(cwdFilter)
+      : local.cwd
+        ? copilot.realpathSafe(local.cwd)
+        : resolveCwd();
+    const model = typeof local.model === 'string' ? local.model : null;
+    let title;
+    if (titleFlag) {
+      title = uniqueImportTitle(titleFlag, takenTitles, { slug: false });
+    } else {
+      const base =
+        (local.title && String(local.title).trim()) || `copilot-${shortId(local.id)}`;
+      title = uniqueImportTitle(base, takenTitles, { slug: true });
+    }
+    takenTitles.add(title);
+
+    const entry = {
+      title,
+      chatId: local.id,
+      cwd,
+      branch: local.branch || gitBranch(cwd),
+      model,
+      prompt: local.firstPrompt || '',
+      tags,
+      status: 'active',
+      engine: 'copilot',
+    };
+
+    if (dryRun) {
+      process.stdout.write(
+        `[dry-run] would import ${local.id} as ${title} cwd=${cwd}` +
+          (model ? ` model=${model}` : '') +
+          `\n`
+      );
+      imported++;
+      continue;
+    }
+
+    const saved = registry.add(entry);
+    tracked.add(saved.chatId);
+    printSession(saved, 'imported');
+    imported++;
+  }
+
+  if (unknown.length) {
+    process.stderr.write(
+      `unknown Copilot session id(s): ${unknown.join(', ')}\n` +
+        `(use --allow-missing to register anyway)\n`
+    );
+    process.exitCode = 1;
+  }
+}
+
+async function cmdImport(argv) {
+  const { args, flags } = parseArgs(argv || []);
+  const positional = [...args];
+
+  let engineFlag = flags.engine;
+  if (
+    (engineFlag == null || engineFlag === true || engineFlag === '') &&
+    positional[0] &&
+    (positional[0] === 'cursor' || positional[0] === 'copilot')
+  ) {
+    engineFlag = positional.shift();
+  }
+
+  let resolved;
+  try {
+    resolved = engine.resolveEngine({ flag: engineFlag });
+  } catch (err) {
+    fail(err.message);
+  }
+
+  if (resolved.engine === 'cursor') {
+    // Preserve exact Cursor behavior (ignore copilot-only flags/ids).
+    return cmdImportCursor();
+  }
+  if (resolved.engine !== 'copilot') {
+    fail(`unsupported engine for import: ${resolved.engine}`);
+  }
+  return cmdImportCopilot(positional, flags);
 }
 
 function cmdLs(argv) {
