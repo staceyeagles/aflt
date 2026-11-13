@@ -2,17 +2,26 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const backends = require('../lib/backends');
 const cursor = require('../lib/cursor');
+const herdrapp = require('../lib/herdrapp');
 
 const SAVED_PROMPT = 'DO_NOT_RESEND unique task prompt';
+
+const cwdAuth = fs.mkdtempSync(path.join(os.tmpdir(), 'af-be-auth-'));
+const cwdPay = fs.mkdtempSync(path.join(os.tmpdir(), 'af-be-pay-'));
+const cwdImg = fs.mkdtempSync(path.join(os.tmpdir(), 'af-be-img-'));
+const cwdVid = fs.mkdtempSync(path.join(os.tmpdir(), 'af-be-vid-'));
 
 const sample = [
   {
     id: 'auth-aaa',
     title: 'Auth refactor',
     chatId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-    cwd: '/tmp/wt-auth',
+    cwd: cwdAuth,
     model: 'gpt-5',
     prompt: '',
     status: 'active',
@@ -21,7 +30,7 @@ const sample = [
     id: 'pay-bbb',
     title: 'Payments',
     chatId: 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee',
-    cwd: '/tmp/wt-pay',
+    cwd: cwdPay,
     model: null,
     prompt: '',
     status: 'active',
@@ -33,7 +42,7 @@ const sampleWithPrompt = [
     id: 'img-ccc',
     title: 'Img2img upscale',
     chatId: 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee',
-    cwd: '/tmp/wt-img',
+    cwd: cwdImg,
     model: 'gpt-5',
     prompt: SAVED_PROMPT,
     status: 'active',
@@ -42,7 +51,7 @@ const sampleWithPrompt = [
     id: 'vid-ddd',
     title: 'Video production',
     chatId: 'dddddddd-bbbb-cccc-dddd-eeeeeeeeeeee',
-    cwd: '/tmp/wt-vid',
+    cwd: cwdVid,
     model: null,
     prompt: SAVED_PROMPT,
     status: 'active',
@@ -61,7 +70,7 @@ describe('command building', () => {
     assert.ok(args.includes('--model'));
     assert.ok(args.includes('gpt-5'));
     assert.ok(args.includes('--workspace'));
-    assert.ok(args.includes('/tmp/wt-auth'));
+    assert.ok(args.includes(cwdAuth));
     assert.ok(args.includes('--trust'));
     assert.ok(!args.includes(''));
   });
@@ -114,7 +123,7 @@ describe('command building', () => {
     assert.equal(plan.commands.length, 2);
     const c0 = plan.commands[0];
     assert.deepEqual(c0.spawnArgv.slice(0, 4), ['wezterm', 'cli', 'spawn', '--cwd']);
-    assert.equal(c0.spawnArgv[4], '/tmp/wt-auth');
+    assert.equal(c0.spawnArgv[4], cwdAuth);
     assert.ok(c0.spawnArgv.includes('--resume'));
     assert.ok(c0.shell.includes('wezterm cli spawn'));
     assert.ok(c0.shell.includes('set-tab-title'));
@@ -171,7 +180,12 @@ describe('herdr backend', () => {
     assert.equal(plan.commands.length, 2);
     const c0 = plan.commands[0];
     assert.deepEqual(c0.argv.slice(0, 5), ['hc', 'run', '--bg', '--no-parent', '--outlive-parent']);
-    assert.deepEqual(c0.argv.slice(5, 9), ['--name', 'auth-refactor', '--cwd', '/tmp/wt-auth']);
+    assert.deepEqual(c0.argv.slice(5, 9), [
+      '--name',
+      'auth-refactor',
+      '--cwd',
+      herdrapp.normalizeCwd(cwdAuth),
+    ]);
     assert.ok(c0.argv.includes('af_id=auth-aaa'));
     assert.ok(c0.argv.includes('title=Auth refactor'));
     assert.ok(c0.argv.includes('--keep'));
@@ -183,7 +197,7 @@ describe('herdr backend', () => {
     // Verified 2026-11-10 on Mini hc 0.1.16: a `--` token is treated as the
     // program name and fails with spawn_failed ("cannot start \"--\"").
     assert.ok(!c0.argv.includes('--'));
-    const resume = cursor.buildResumeCommand(sample[0]);
+    const resume = cursor.buildResumeCommand({ ...sample[0], cwd: herdrapp.normalizeCwd(cwdAuth) });
     const wrapped = ['env', '-u', 'NO_COLOR', '-u', 'FORCE_COLOR', ...resume];
     assert.deepEqual(c0.argv.slice(-wrapped.length), wrapped);
     assert.deepEqual(c0.argv.slice(envIdx, envIdx + 5), ['env', '-u', 'NO_COLOR', '-u', 'FORCE_COLOR']);
@@ -293,9 +307,15 @@ describe('herdr backend', () => {
 
   it('skips sessions already live by af_id label', () => {
     // Use a de-duplicated live name so skip.name comes from live, not a regenerated slug.
-    const live = backends.parseHerdrList(
-      JSON.stringify([{ name: 'auth-refactor-2', labels: { af_id: 'pay-bbb' } }])
-    );
+    // agent "env" = af-launched engine still running (not shell-only).
+    const live = [
+      {
+        name: 'auth-refactor-2',
+        labels: { af_id: 'pay-bbb' },
+        agent: 'env',
+        state: 'live',
+      },
+    ];
     const plan = backends.buildResumeAllPlan(sample, { via: 'herdr', herdrLive: live });
     assert.ok(!plan.commands[0].skip);
     assert.equal(plan.commands[0].name, 'auth-refactor');

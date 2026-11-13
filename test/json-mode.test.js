@@ -108,6 +108,9 @@ process.exit(0);
       AGENTFLEET_CURSOR_BIN: stubCursor,
       AGENTFLEET_HERDR_APP_BIN: herdrAppBin,
       AF_HC_LOG: hcLog,
+      AF_HERDR_APP_RENAME_WAIT_MS: '0',
+      AF_HERDR_APP_ADOPT_WAIT_MS: '0',
+      AGENTFLEET_HC_BIN: stubHc,
       PATH: `${stubDir}${path.delimiter}${process.env.PATH || ''}`,
       ...extra,
     };
@@ -298,6 +301,8 @@ process.exit(0);
       AGENTFLEET_CURSOR_BIN: stubCursor,
       AGENTFLEET_HERDR_APP_BIN: herdrAppBin,
       AF_HERDR_APP_RENAME_WAIT_MS: '0',
+      AF_HERDR_APP_ADOPT_WAIT_MS: '0',
+      AGENTFLEET_HC_BIN: stubHc,
       PATH: `${stubDir}${path.delimiter}${process.env.PATH || ''}`,
       ...extra,
     };

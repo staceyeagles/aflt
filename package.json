@@ -11,7 +11,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node --test test/*.test.js",
+    "test": "node --import ./test/_setup.js --test test/*.test.js",
     "af": "node bin/af.js"
   },
   "files": [

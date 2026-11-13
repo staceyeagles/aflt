@@ -28,7 +28,7 @@ const ALL_JSON = JSON.stringify({
     },
     {
       address: 't7',
-      agent: 'cursor-agent',
+      agent: 'env',
       cwd: '/Users/andrewrapo/github/video-production',
       name: 'video-production-live',
       state: 'live',
@@ -324,10 +324,13 @@ describe('af sync / af ls CLI', () => {
   let savedPath;
   const afJs = path.join(__dirname, '..', 'bin', 'af.js');
 
+  let savedHcBin;
+
   beforeEach(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'af-herdr-'));
     process.env.AGENTFLEET_HOME = tmp;
     savedPath = process.env.PATH;
+    savedHcBin = process.env.AGENTFLEET_HC_BIN;
     delete require.cache[require.resolve('../lib/util')];
     delete require.cache[require.resolve('../lib/registry')];
     registry = require('../lib/registry');
@@ -338,6 +341,8 @@ describe('af sync / af ls CLI', () => {
     delete process.env.AGENTFLEET_HOME;
     if (savedPath == null) delete process.env.PATH;
     else process.env.PATH = savedPath;
+    if (savedHcBin == null) delete process.env.AGENTFLEET_HC_BIN;
+    else process.env.AGENTFLEET_HC_BIN = savedHcBin;
   });
 
   function stubHc(scriptBody) {
@@ -346,13 +351,18 @@ describe('af sync / af ls CLI', () => {
     const hc = path.join(bin, 'hc');
     fs.writeFileSync(hc, `#!/usr/bin/env node\n${scriptBody}\n`, { mode: 0o755 });
     process.env.PATH = `${bin}${path.delimiter}${savedPath || ''}`;
+    process.env.AGENTFLEET_HC_BIN = hc;
     return hc;
   }
 
   function runAf(args) {
     return spawnSync(process.execPath, [afJs, ...args], {
       encoding: 'utf8',
-      env: { ...process.env, AGENTFLEET_HOME: tmp },
+      env: {
+        ...process.env,
+        AGENTFLEET_HOME: tmp,
+        AGENTFLEET_HC_BIN: process.env.AGENTFLEET_HC_BIN,
+      },
     });
   }
 
@@ -457,9 +467,12 @@ describe('af sync / af ls CLI', () => {
     assert.equal(byId[LIVE_ID].herdr.runtime, 'running');
     assert.equal(byId[plainSession.id].herdr.runtime, '-');
     assert.equal(byId[LIVE_ID].status, 'active');
-    assert.equal(byId[LIVE_ID].herdrApp.space, herdrapp.herdrSpaceId(tmp));
+    assert.equal(byId[LIVE_ID].herdrApp.space, herdrapp.herdrSpaceId({ id: LIVE_ID }));
     assert.equal(byId[LIVE_ID].herdrApp.tab, herdrapp.herdrTabId({ id: LIVE_ID }));
-    assert.equal(byId[plainSession.id].herdrApp.space, herdrapp.herdrSpaceId(tmp));
+    assert.equal(
+      byId[plainSession.id].herdrApp.space,
+      herdrapp.herdrSpaceId({ id: plainSession.id })
+    );
     assert.equal(byId[plainSession.id].herdrApp.tab, herdrapp.herdrTabId({ id: plainSession.id }));
   });
 
@@ -635,6 +648,7 @@ describe('af sync / af ls CLI', () => {
           address: 't12',
           name: 'img2img-upscale-workflow',
           state: 'live',
+          agent: 'env',
           cwd: tmp,
         },
       ],
@@ -643,6 +657,7 @@ describe('af sync / af ls CLI', () => {
       address: 't12',
       name: 'img2img-upscale-workflow',
       state: 'live',
+      agent: 'env',
       cwd: tmp,
       labels: { af_id: LIVE, title: 'img2img-upscale-workflow' },
     });

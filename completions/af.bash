@@ -42,7 +42,7 @@ _af() {
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  cmds="new add import ls list sync run log spawn master children result wait tail send stop resume pick adopt cursor copilot engine rename done rm remove note export import-file which-backend herdr-templates herdr-app doctor help"
+  cmds="new add import ls list sync run log spawn master children result wait tail send stop resume pick adopt cursor copilot engine rename cwd set-cwd done rm remove note export import-file which-backend herdr-templates herdr-app doctor help"
 
   if [[ ${COMP_CWORD} -eq 1 ]]; then
     COMPREPLY=( $(compgen -W "${cmds}" -- "${cur}") )
@@ -151,6 +151,24 @@ _af() {
       ;;
     doctor)
       COMPREPLY=( $(compgen -W "--json" -- "${cur}") )
+      ;;
+    cwd|set-cwd)
+      if [[ ${COMP_CWORD} -eq 2 ]]; then
+        if [[ "$cur" == -* ]]; then
+          COMPREPLY=( $(compgen -W "--dry-run --json" -- "${cur}") )
+        else
+          titles="$(_af_session_titles)"
+          COMPREPLY=( $(compgen -W "--dry-run --json ${titles}" -- "${cur}") )
+        fi
+      elif [[ ${COMP_CWORD} -eq 3 ]]; then
+        if [[ "$cur" == -* ]]; then
+          COMPREPLY=( $(compgen -W "--dry-run --json" -- "${cur}") )
+        else
+          COMPREPLY=( $(compgen -d -- "${cur}") )
+        fi
+      else
+        COMPREPLY=( $(compgen -W "--dry-run --json" -- "${cur}") )
+      fi
       ;;
     herdr-app)
       if [[ ${COMP_CWORD} -eq 2 ]]; then

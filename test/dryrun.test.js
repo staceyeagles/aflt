@@ -135,6 +135,7 @@ process.exit(1);
       HERDR_APP_HOME: herdrAppHome,
       AGENTFLEET_COPILOT_HOME: copilotHome,
       AF_HC_LOG: hcLog,
+      AGENTFLEET_HC_BIN: stubHc,
       PATH: `${stubDir}${path.delimiter}${process.env.PATH || ''}`,
       ...extra,
     };

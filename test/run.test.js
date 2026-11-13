@@ -165,6 +165,7 @@ describe('af run CLI dry-run', () => {
     assert.ok(r.stdout.includes('--no-herdr-app'));
     assert.ok(r.stdout.includes('AGENTFLEET_HERDR_APP'));
     assert.ok(r.stdout.includes('AGENTFLEET_HERDR_APP_BIN'));
+    assert.ok(r.stdout.includes('AGENTFLEET_HERDR_NAMES'));
     assert.ok(r.stdout.includes('herdr-templates'));
     assert.ok(r.stdout.includes('af herdr-app install'));
     assert.ok(r.stdout.includes('HERDR_APP_HOME'));

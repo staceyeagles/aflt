@@ -131,6 +131,7 @@ esac
       ...process.env,
       AGENTFLEET_HOME: home,
       AGENTFLEET_CURSOR_BIN: stubCursor,
+      AGENTFLEET_HC_BIN: stubHc,
       PATH: `${stubDir}${path.delimiter}${process.env.PATH || ''}`,
       ...extra,
     };
@@ -183,6 +184,7 @@ esac
           address: 't99',
           name: 'Grace-w1',
           state: 'live',
+          agent: 'env',
           status: { state: 'done' },
           labels: { af_id: w.id },
         },

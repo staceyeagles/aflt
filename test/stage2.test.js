@@ -134,6 +134,7 @@ esac
       ...process.env,
       AGENTFLEET_HOME: home,
       AGENTFLEET_CURSOR_BIN: stubCursor,
+      AGENTFLEET_HC_BIN: stubHc,
       PATH: `${stubDir}${path.delimiter}${process.env.PATH || ''}`,
       ...extra,
     };
@@ -325,6 +326,7 @@ esac
           address: 't42',
           name: 'HcSend-w1',
           state: 'live',
+          agent: 'env',
           status: { state: 'idle' },
           labels: { af_id: w.id },
         },
@@ -418,6 +420,7 @@ esac
           address: 't77',
           name: 'StopHc-w1',
           state: 'live',
+          agent: 'env',
           labels: { af_id: w.id },
         },
       ],

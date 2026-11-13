@@ -95,7 +95,7 @@ const id = ${JSON.stringify(w.id)};
 const status = ${JSON.stringify(statusJson.status)};
 if (cmd === 'ls' || cmd === 'get') {
   const term = {
-    address: 't1', name: 'waitcap-w1', state: 'live',
+    address: 't1', name: 'waitcap-w1', state: 'live', agent: 'env',
     labels: { af_id: id },
     status,
   };
@@ -116,6 +116,7 @@ process.exit(0);
         ...process.env,
         AGENTFLEET_HOME: home,
         AGENTFLEET_CURSOR_BIN: path.join(stubDir, 'cursor-agent'),
+        AGENTFLEET_HC_BIN: path.join(stubDir, 'hc'),
         PATH: `${stubDir}${path.delimiter}${process.env.PATH || ''}`,
       },
     });

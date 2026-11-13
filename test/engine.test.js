@@ -251,6 +251,7 @@ process.exit(1);
       AGENTFLEET_HOME: tmp,
       AGENTFLEET_COPILOT_BIN: path.join(stubDir, 'copilot'),
       AGENTFLEET_CURSOR_BIN: path.join(stubDir, 'cursor-agent'),
+      AGENTFLEET_HC_BIN: path.join(stubDir, 'hc'),
       PATH: fakePath,
       ...extra,
     };
@@ -413,34 +414,44 @@ process.exit(1);
 
 describe('backends mixed engines', () => {
   it('herdr plan uses copilot argv for copilot sessions', () => {
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+    const cwdA = fs.mkdtempSync(path.join(os.tmpdir(), 'af-eng-a-'));
+    const cwdB = fs.mkdtempSync(path.join(os.tmpdir(), 'af-eng-b-'));
     const sessions = [
       {
         id: 'c1',
         title: 'Cursor one',
         chatId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-        cwd: '/tmp/a',
+        cwd: cwdA,
         engine: 'cursor',
       },
       {
         id: 'p1',
         title: 'Copilot one',
         chatId: 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee',
-        cwd: '/tmp/b',
+        cwd: cwdB,
         engine: 'copilot',
       },
     ];
-    const plan = backends.buildResumeAllPlan(sessions, {
-      via: 'herdr',
-      resumeOpts: { herdrApp: true, env: { TERM: 'xterm-256color' }, force: true },
-    });
-    assert.equal(plan.commands.length, 2);
-    const cursorArgv = plan.commands[0].argv.join(' ');
-    const copilotArgv = plan.commands[1].argv.join(' ');
-    assert.ok(cursorArgv.includes('--resume'));
-    assert.ok(cursorArgv.includes('--trust'));
-    assert.ok(copilotArgv.includes('--session-id=bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee'));
-    assert.ok(copilotArgv.includes('--allow-all-tools'));
-    assert.ok(!copilotArgv.includes('--trust'));
-    assert.ok(!copilotArgv.includes('--workspace'));
+    try {
+      const plan = backends.buildResumeAllPlan(sessions, {
+        via: 'herdr',
+        resumeOpts: { herdrApp: true, env: { TERM: 'xterm-256color' }, force: true },
+      });
+      assert.equal(plan.commands.length, 2);
+      const cursorArgv = plan.commands[0].argv.join(' ');
+      const copilotArgv = plan.commands[1].argv.join(' ');
+      assert.ok(cursorArgv.includes('--resume'));
+      assert.ok(cursorArgv.includes('--trust'));
+      assert.ok(copilotArgv.includes('--session-id=bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee'));
+      assert.ok(copilotArgv.includes('--allow-all-tools'));
+      assert.ok(!copilotArgv.includes('--trust'));
+      assert.ok(!copilotArgv.includes('--workspace'));
+    } finally {
+      fs.rmSync(cwdA, { recursive: true, force: true });
+      fs.rmSync(cwdB, { recursive: true, force: true });
+    }
   });
 });

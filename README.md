@@ -102,12 +102,35 @@ af adopt --all                      # label already-live af terminals for the He
 
 ## Reboot-recovery workflow
 
-1. Boot, open your terminal multiplexer (tmux / iTerm2 / WezTerm).
-2. `af ls` — confirm active sessions and worktree paths still exist.
-3. `af resume --all` — auto-detects backend (`tmux` if `$TMUX` is set, else `TERM_PROGRAM`, else availability).
+1. Boot, open your terminal multiplexer (tmux / iTerm2 / WezTerm) or Herdr.
+2. `af ls` — confirm active sessions and worktree paths still exist. Herdr `--keep` tabs often show `HERDR=shell` (agent stopped).
+3. `af resume --all` (or `af resume --all --via herdr`) — shell-only tabs get the engine relaunched in-place; missing tabs get a fresh `hc run`.
 4. Attach / focus tabs and continue chatting. Context comes back via `--resume <chatId>`.
 
 **Important:** resuming restores the **chat context** (Cursor `--resume <chatId>`, Copilot `--session-id=<uuid>`) and does **not** resend the saved original task prompt. A prompt is sent only on first launch (`af new --prompt`) or if you pass an explicit `--prompt` on that resume command. `af resume --all` relaunches each session with its recorded engine only — it does not restart in-flight shell processes, servers, or watchers. Restart those yourself (or encode them in the session notes: `af note <id> "…"`).
+
+### Fix a session's folder
+
+If a session was registered with the wrong worktree/folder:
+
+```bash
+af cwd my-session                        # print current folder
+af cwd my-session ~/github/wwlib/af      # update cwd + branch (~ expanded)
+af set-cwd my-session ~/github/wwlib/af  # alias
+af cwd my-session ~/github/wwlib/af --dry-run
+```
+
+Chat history stays on the same session id. Copilot's on-disk `workspace.yaml` is not edited; resume uses `-C <new folder>` (may ask to trust once). A live Herdr tab is left alone — `af stop` (if the agent is running) then `af resume`, or just `af resume` for shell-only (relaunches with `cd <new folder>` inside the existing tab). Herdr **space** is session-group based (not folder-based), so adopt is not required after a cwd change.
+
+### Troubleshooting: After a reboot
+
+**Symptom:** Herdr restored af’s labeled tabs, but each is a plain login shell (often at `~`). `af ls` may have shown `HERDR=running` before shell-detection; clicking the af-sessions panel only focused the empty tab.
+
+**Root cause:** af already starts terminals with `--cwd <session folder>` (and matching engine `-C` / `--workspace`). After a reboot, Herdr restores `--keep` terminals as a **shell in the last folder** and **never re-runs the original command**. On **herdr-core < 0.1.20** that restored shell can land in `~` (and older cores could drop terminals when Herdr quit). Space names may also follow the shell’s current folder.
+
+**Fix:**
+1. Update: `hc update` (want herdr-core ≥ 0.1.20). `af doctor` warns when older.
+2. `af resume` / `af resume --all --via herdr` — relaunches the engine into each shell-only tab (or creates a new terminal if the tab is gone).
 
 ## Commands
 
@@ -133,6 +156,7 @@ af adopt --all                      # label already-live af terminals for the He
 | `af herdr-app install` / `status` | Install the af-sessions Herdr panel + `af` layout (symlink by default) |
 | `af doctor [--json]` | Read-only environment checks |
 | `af rename` / `af done` / `af note` | Metadata |
+| `af cwd <title\|id> [path]` / `af set-cwd` | Show or change a session's folder (refreshes `branch`; does not move a live Herdr tab — resume/adopt after) |
 | `af rm <title\|id>` | Remove session + af-owned files under `$AGENTFLEET_HOME` by default. Prefer `--dry-run` first; `--keep-files` keeps handoffs/logs (`--children`, `--with-master`, `--force`) |
 | `af export [file]` / `af import-file <file>` | Backup / restore registry |
 
@@ -148,7 +172,7 @@ Single source of truth for how launches behave (also see [docs/CAPABILITIES.md](
 2. **Herdr vs plain:** single `af resume <title>` defaults to Herdr when `hc` is on PATH; `--here` / `--via plain` stays in this terminal. `af resume --all` still auto-detects (`AGENTFLEET_VIA` → inside Herdr → tmux → TERM_PROGRAM → … → plain).
 3. **`--trust` / `--force`:** Cursor gets `--trust` unless `--no-trust`. `--force` is Copilot `--allow-all-tools` only (Cursor unchanged here).
 4. **TERM/color:** Herdr launches prefix `env -u NO_COLOR -u FORCE_COLOR` and, if caller `TERM` is empty/dumb, set `TERM=xterm-256color` `COLORTERM=truecolor`.
-5. **Herdr app labels:** on by default (`--keep` + `herdr.space` / `herdr.tab`); opt out with `--no-herdr-app` or `AGENTFLEET_HERDR_APP=0`.
+5. **Herdr app labels:** on by default (`--keep` + `herdr.space` / `herdr.tab`); opt out with `--no-herdr-app` or `AGENTFLEET_HERDR_APP=0`. Space/tab **renames** (Agents list titles) opt out with `AGENTFLEET_HERDR_NAMES=0`.
 6. **Env on launch:** `AGENTFLEET_ID` always; workers also `AGENTFLEET_PARENT` / `AGENTFLEET_RESULT`; masters `AGENTFLEET_ROLE` / `AGENTFLEET_PLAN` as applicable.
 
 Exit **75**: critical registry write failed after a run finished (result still printed; `--json` includes `registryWriteError`).
@@ -157,7 +181,8 @@ Exit **75**: critical registry write failed after a run finished (result still p
 
 - **STATUS** is the saved task lifecycle: `active` / `paused` / `done`. A process exit does **not** mark the task done — use `af done` when the work is finished.
 - **HERDR** is read-only runtime enrichment on `af ls` (refetched each call from official `hc ls --all --json`):
-  - `running` — exactly one live Herdr terminal labeled `af_id=<session.id>` (finished history with the same id is ignored)
+  - `running` — exactly one live Herdr terminal labeled `af_id=<session.id>` whose foreground is the engine (or af’s `env …` wrapper), not a bare shell
+  - `shell` — live tab still labeled `af_id=…`, and a known shell name is positively observed (`zsh`/`bash`/… from `agent` or `foreground`) with no non-shell evidence (`env` / engine / `node`, …). Null/missing agent everywhere stays `running` (alive, agent unknown) — never `shell`
   - `exited` — no live match, but one or more finished terminals for that `af_id` (uses the most recent / highest address)
   - `missing` — session was Herdr-involved (live match or prior `herdr` evidence) but no terminal matches now
   - `unknown` — several live matches, or `hc` failed/timeout/malformed for a Herdr-involved session
@@ -177,12 +202,13 @@ Exit **75**: critical registry write failed after a run finished (result still p
 
 The Herdr desktop app (herdr-app) shows any core terminal that carries labels `herdr.space=<id>` and `herdr.tab=<id>`. Unknown ids become a new space/tab automatically.
 
-- **Ids:** `sp` + md5hex(`agentfleet:space:` + normalized cwd) and `tb` + md5hex(`agentfleet:tab:` + session id). Same repo/cwd → same space; one tab per af session (stable across resumes).
-- **On launch:** `af resume` / `--via herdr` / interactive pick / `resume --all --via herdr` add `--keep` plus those labels (before the `env -u …` argv), then best-effort `herdr-app do tab.rename` to the af title (retries ~3s; never fails the resume if rename misses).
-- **Opt out:** `--no-herdr-app`, or `AGENTFLEET_HERDR_APP=0|false|off|no`. Override the app binary with `AGENTFLEET_HERDR_APP_BIN`.
-- **Already-running terminals:** `af adopt <title|id …>` or `af adopt --all` runs `hc label` + `hc keep` (skips label/keep when labels already match; still tries tab rename).
+- **Ids (session-group):** `sp` + md5hex(`agentfleet:space:session:` + group id) and `tb` + md5hex(`agentfleet:tab:` + session id). A top-level session gets its own space; a **worker** joins its **master’s** space. One tab per af session (stable across resumes). (Older cwd-based `agentfleet:space:` + folder labels are treated as **legacy** — `af adopt` migrates them.)
+- **Agents list naming:** Herdr’s Agents list shows `<space name> · <tab name>`. Unnamed spaces are otherwise called after the repo/folder of the first terminal — so af **names the space** with the group session title (`herdr-app do space.rename`) and the **tab** with the session’s own title (`tab.rename`). Solo session → `dxs-icm-management · dxs-icm-management`; worker → `<master title> · <worker title>`. A manual rename in Herdr is overridden on the next af launch/adopt. **Migration:** after pulling this change, run `af adopt --all` with the Herdr app open so existing panes move into per-session spaces named by session title. Empty old spaces may remain — close them in the app if unused.
+- **On launch:** `af resume` / `--via herdr` / interactive pick / `resume --all --via herdr` add `--keep` plus those labels (before the `env -u …` argv), wait briefly for the app to create the labeled space, then best-effort space + tab rename (never fails the resume if rename misses).
+- **Opt out:** `--no-herdr-app`, or `AGENTFLEET_HERDR_APP=0|false|off|no` (no labels). `AGENTFLEET_HERDR_NAMES=0|false|off|no` skips both renames but still applies labels. Override the app binary with `AGENTFLEET_HERDR_APP_BIN`.
+- **Already-running terminals:** Labels alone do **not** move an existing Herdr pane (the app only adopts a terminal that has no pane). `af adopt` inspects `herdr-app ls`; when the pane is in the wrong space/tab it runs `herdr-app do terminal.park` → `hc label` → `hc keep`, waits for the target space, then `space.rename` + `tab.rename`. Already in the right place → rename only. App not running → label + keep and a hint to re-run `af adopt --all` after starting the app. `--dry-run` lists the exact calls (including park). Only af-labeled sessions (by title/id or `--all`) are parked.
 - **Herdr Agents panel (OSC 7501):** Cursor does not emit OSC 7501, so Cursor sessions do not appear as agent-state rows there. **Copilot** can report `idle`/`working`/`done`/`blocked` via OSC 7501 when the Herdr core supports it.
-- **Keep:** core `--keep` / `hc keep` means a lost program is replaced with a shell — Cursor is **not** re-run. Use `af resume` again to relaunch the agent.
+- **Keep / shell-only:** core `--keep` / `hc keep` means a lost program is replaced with a shell — the engine is **not** re-run automatically. `af ls` shows `HERDR=shell`. `af resume` (default Herdr path) detects that and relaunches the engine **inside the existing tab** via `hc send` (`cd '<session.cwd>' && env -u … <engine argv>`), without `hc run` / a new terminal. `af resume --all` does the same per shell-only session.
 
 Auto-detect order: `$AGENTFLEET_VIA` → inside Herdr (`$HERDR`/`$HC_TERMINAL` set and `hc` on PATH) → inside tmux → `TERM_PROGRAM` (WezTerm / iTerm) → `tmux` on PATH → `wezterm` → plain.
 

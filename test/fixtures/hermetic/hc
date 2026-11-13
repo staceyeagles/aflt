@@ -1,0 +1,4 @@
+#!/usr/bin/env node
+'use strict';
+process.stderr.write('server not running\n');
+process.exit(1);

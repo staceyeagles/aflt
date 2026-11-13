@@ -45,6 +45,7 @@ exit 0
       NODE_ENV: 'test',
       AGENTFLEET_HOME: home,
       AGENTFLEET_CURSOR_BIN: stubCursor,
+      AGENTFLEET_HC_BIN: path.join(stubDir, 'hc'),
       PATH: `${stubDir}${path.delimiter}${process.env.PATH || ''}`,
       ...extra,
     };

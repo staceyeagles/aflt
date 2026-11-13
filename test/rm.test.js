@@ -46,6 +46,7 @@ esac
     return {
       ...process.env,
       AGENTFLEET_HOME: home,
+      AGENTFLEET_HC_BIN: stubHc,
       PATH: `${stubDir}${path.delimiter}${process.env.PATH || ''}`,
       ...extra,
     };

@@ -49,7 +49,7 @@ if (cmd === 'ls') {
   const liveId = process.env.AF_HC_LIVE_ID || '';
   if (liveId && fs.existsSync(process.env.AF_HC_RAN_FLAG || '')) {
     process.stdout.write(JSON.stringify({
-      terminals: [{ address: 't1', name: 'locked', state: 'live', labels: { af_id: liveId } }],
+      terminals: [{ address: 't1', name: 'locked', state: 'live', agent: 'env', labels: { af_id: liveId } }],
       hidden_finished: 0,
     }));
     process.exit(0);
@@ -92,6 +92,7 @@ process.exit(0);
       AGENTFLEET_HOME: home,
       AGENTFLEET_CURSOR_BIN: stubCursor,
       AF_HC_LOG: hcLog,
+      AGENTFLEET_HC_BIN: stubHc,
       PATH: `${stubDir}${path.delimiter}${process.env.PATH || ''}`,
       ...extra,
     };

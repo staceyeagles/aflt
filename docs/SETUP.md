@@ -347,6 +347,7 @@ export AGENTFLEET_CURSOR_BIN="$HOME/.local/bin/cursor-agent"
 | `AGENTFLEET_TMUX_SESSION` | tmux session name (default `agentfleet`). |
 | `AGENTFLEET_HERDR_APP` | Set `0` / `false` / `off` / `no` to skip Herdr-app space/tab labels. |
 | `AGENTFLEET_HERDR_APP_BIN` | Override `herdr-app` binary path. |
+| `AGENTFLEET_HERDR_NAMES` | Set `0` / `false` / `off` / `no` to skip `space.rename` + `tab.rename` (Agents list titles); labels still applied. |
 | `HERDR_APP_HOME` | Herdr app config dir for `af herdr-app install` (default `~/.config/herdr-app`). |
 | `~/.config/herdr-core/config.toml` | herdr-core settings. |
 | `~/.config/opencode/opencode.json` | OpenCode global config (v2). |
@@ -487,7 +488,7 @@ hc run --bg --no-parent --outlive-parent \
 
 (`TERM`/`COLORTERM` assignments are added only when the caller's `TERM` is unset, empty, or `dumb`, so non-TTY af launches still get a color-capable Cursor TUI.)
 
-Names are lowercased, sanitized to `[a-z0-9_-]`, truncated to 32 chars, and de-duplicated. Sessions already present in `hc ls --json` with matching `af_id` are skipped. Resume restores chat context via `--resume <chatId>` and does **not** resend the saved original task prompt (a prompt is sent only on `af new --prompt` or an explicit `--prompt` on that resume).
+Names are lowercased, sanitized to `[a-z0-9_-]`, truncated to 32 chars, and de-duplicated. `--cwd` is the realpath-normalized session folder (must exist); engine `--workspace` / `-C` and `herdr.space` use the same path. Sessions already present in `hc ls --json` with matching `af_id` and a **non-shell** agent are skipped. A live tab whose agent is only a shell (`zsh`/`bash`/…, typical after reboot/`--keep`) is **not** skipped: `af resume` runs `hc send <addr> "cd '<cwd>' && env -u … <engine>"` into that tab (no new `hc run`). Resume restores chat context via `--resume <chatId>` and does **not** resend the saved original task prompt (a prompt is sent only on `af new --prompt` or an explicit `--prompt` on that resume). Prefer herdr-core ≥ 0.1.20 (`af doctor` warns when older; update with `hc update`) so restored shells keep the launch cwd instead of landing in `~`.
 
 #### Herdr app (desktop)
 
@@ -506,16 +507,19 @@ The Herdr desktop app shows any core terminal labeled `herdr.space=<id>` and `he
 - `herdr.space` = `sp` + md5(`agentfleet:space:` + normalized cwd) — sessions in the same repo/cwd share a space
 - `herdr.tab` = `tb` + md5(`agentfleet:tab:` + session.id) — one tab per af session; stable across resumes
 
-On Herdr launch, `af` also passes `--keep` (lost program → shell; Cursor is **not** re-run — use `af resume` again) and best-effort renames the tab to the af title via `herdr-app do tab.rename` (retries ~0.5–3s; never fails the resume). Opt out with `--no-herdr-app` or `AGENTFLEET_HERDR_APP=0|false|off|no`. Override the binary with `AGENTFLEET_HERDR_APP_BIN` (default: `herdr-app` on PATH, typically `~/.local/bin/herdr-app`).
+On Herdr launch, `af` also passes `--keep` (lost program → shell; Cursor is **not** re-run — use `af resume` again), waits briefly for the app to create the labeled space, then best-effort **names the space** (group session title) and **tab** (session title) via `herdr-app do space.rename` / `tab.rename` (never fails the resume). Space ids are **session-group** based (workers join the master), not folder/repo based — so the Agents list shows `dxs-icm-management · dxs-icm-management` instead of `copilot-master-directory · dxs-icm-management`. Opt out of labels with `--no-herdr-app` or `AGENTFLEET_HERDR_APP=0|false|off|no`; skip renames only with `AGENTFLEET_HERDR_NAMES=0`. Override the binary with `AGENTFLEET_HERDR_APP_BIN` (default: `herdr-app` on PATH, typically `~/.local/bin/herdr-app`).
 
-Adopt terminals that were started before this labeling existed:
+`af adopt` moves existing panes when the app is open: if `herdr-app ls` shows the terminal in the wrong space, it parks → labels → keeps → waits → renames (labels alone do not move panes). After pulling session-group naming, run `af adopt --all` with the Herdr app open; empty old spaces may remain and can be closed in the app.
+
+Adopt / migrate terminals (including legacy cwd-based `herdr.space` labels):
 
 ```bash
 af adopt --all                 # or: af adopt <title|id …>
 af adopt --all --dry-run
+af adopt --all --json
 ```
 
-That runs `hc label <addr> herdr.space=… herdr.tab=…` and `hc keep <addr>`, then tries tab rename. Cursor does not emit OSC 7501 (Agents panel empty for Cursor); Copilot may report agent state when supported. See [CAPABILITIES.md](CAPABILITIES.md).
+That runs `hc label <addr> herdr.space=… herdr.tab=…` and `hc keep <addr>`, then space+tab rename. Cursor does not emit OSC 7501 (Agents panel empty for Cursor); Copilot may report agent state when supported. See [CAPABILITIES.md](CAPABILITIES.md).
 
 Optional sidebar panel (lists af sessions; click to focus/resume):
 
@@ -564,6 +568,17 @@ af rm --keep-files "$TASK"  # registry row only (keeps handoffs/logs; never dele
 
 # When finished with the worktree itself (your git hygiene — af does not delete trees)
 git -C "$REPO" worktree remove "$REPO-wt-${TASK}"
+```
+
+**Wrong folder (work Mac example):** a Copilot session imported or added under `…/hello-af` that should be `~/github/wwlib/af`:
+
+```bash
+af cwd hello-af                          # print current folder
+af cwd hello-af ~/github/wwlib/af        # update registry cwd + branch (~ ok)
+af cwd hello-af ~/github/wwlib/af --dry-run
+# If a Herdr tab is live: af stop hello-af (agent running) then af resume hello-af;
+# shell-only: just af resume hello-af (cd's into the new folder in-tab).
+# Space is session-based — adopt not required for the folder change.
 ```
 
 ### 5.6 Headless Cursor (without af)
@@ -681,5 +696,6 @@ Other notes: bundled Herdr templates use official frontmatter and `ready: quiet`
 - [ ] `af herdr-templates` && `hc templates` lists `cursor` and `opencode`
 - [ ] `af export` backup stored outside the repo
 - [ ] (Copilot work Mac) `af import copilot` lists sessions; import an existing UUID by id
+- [ ] (Wrong folder) `af cwd <title> ~/correct/path` updates cwd; resume/adopt if a Herdr tab was live
 
 When in doubt, lean on Cursor CLI + `af` + tmux; treat Herdr as the nicer front end and OpenCode as optional.

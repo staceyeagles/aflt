@@ -52,7 +52,8 @@ Usage:
                             Copilot: list (newest first) or register by UUID/prefix.
                             --title only with a single id. -i requires a TTY.
   af ls [--status S] [--tag T] [--all] [--json]
-                            STATUS is lifecycle; HERDR is live runtime (running|exited|missing|unknown|-)
+                            STATUS is lifecycle; HERDR is live runtime
+                            (running|shell|exited|missing|unknown|-)
   af sync [--dry-run] [--json]
                             Persist last-known Herdr runtime evidence (does not change status/lastUsed)
   af run "<title>" --prompt "..." [--cwd DIR] [--model X] [--engine cursor|copilot]
@@ -101,23 +102,31 @@ Usage:
                             [--prompt "..."] [--force] [--dry-run] [--no-herdr-app]
                             Resume one session (argv from session.engine). Default:
                             Herdr when hc is on PATH (prints Attach: hc attach <name>).
-                            --here / --via plain: this terminal. --open: new iTerm2 tab
-                            running hc attach (default in an iTerm TTY; --no-open disables).
-                            --force: Copilot --allow-all-tools only (Cursor unchanged).
-                            Herdr launches also label herdr.space / herdr.tab (and
-                            --keep) so the desktop app shows the tab; --no-herdr-app
+                            Shell-only live tab (agent stopped after reboot/--keep):
+                            relaunches the engine via hc send into that tab (no new
+                            terminal). --here / --via plain: this terminal. --open:
+                            new iTerm2 tab running hc attach (default in an iTerm TTY;
+                            --no-open disables). --force: Copilot --allow-all-tools
+                            only (Cursor unchanged). Herdr launches also label
+                            herdr.space / herdr.tab (and --keep); --no-herdr-app
                             disables that.
   af resume | af resume -i | af pick
                             Interactive multi-select (TTY only); resume via Herdr
   af resume --all [--tag T] [--via tmux|iterm2|wezterm|herdr|plain]
                             [--open|--no-open] [--force] [--dry-run] [--no-herdr-app]
   af adopt <title|id ...> | af adopt --all [--dry-run] [--json]
-                            Label live af Herdr terminals with herdr.space/tab +
-                            enable keep so they appear in the Herdr desktop app
+                            Move live af Herdr panes into session-group spaces
+                            (park→label→keep when needed), then rename space
+                            (group title) and tab (session title). Migrates
+                            legacy cwd-based spaces. App must be open to move panes.
   af cursor | af copilot    Set default engine for new sessions (config.json)
   af engine [cursor|copilot]
                             Print default engine + source, or set it
   af rename <title|id> "<new title>"
+  af cwd <title|id> [path] [--dry-run] [--json]
+                            Show or change a session's folder (alias: af set-cwd).
+                            Path must exist; refreshes branch. Live Herdr tab is
+                            not moved — resume (and optionally adopt) after.
   af done <title|id>
   af rm <title|id> [--keep-files] [--force] [--dry-run]
                             Remove a session and its af-owned files under
@@ -157,6 +166,10 @@ Environment:
   AGENTFLEET_TMUX_SESSION tmux session name (default: agentfleet)
   AGENTFLEET_HERDR_APP    Set to 0/false/off/no to skip herdr.space/tab labels
   AGENTFLEET_HERDR_APP_BIN Override herdr-app binary (default: herdr-app on PATH)
+  AGENTFLEET_HC_BIN       Override hc binary (default: hc on PATH / ~/.local/bin/hc)
+  AGENTFLEET_HERDR_APP_WAIT_MS  Max ms to wait for herdr-app space/rename (default 5000)
+  AGENTFLEET_HERDR_NAMES  Set to 0/false/off/no to skip space.rename + tab.rename
+                            (labels still applied; Herdr defaults space names to repo)
   HERDR_APP_HOME          Herdr app config dir (default: ~/.config/herdr-app)
   AGENTFLEET_ID           Set on launched sessions (af id); used by af children
   AGENTFLEET_PARENT       Set on spawned workers (master af id)
@@ -247,6 +260,10 @@ async function main() {
       break;
     case 'rename':
       cmdRename(rest);
+      break;
+    case 'cwd':
+    case 'set-cwd':
+      cmdCwd(rest);
       break;
     case 'done':
       cmdDone(rest);
@@ -769,10 +786,24 @@ function cmdLs(argv) {
         reason: e.reason,
         checkedAt: e.checkedAt,
       },
-      herdrApp: {
-        space: herdrapp.herdrSpaceId(e.session.cwd),
-        tab: herdrapp.herdrTabId(e.session),
-      },
+      herdrApp: (() => {
+        const match =
+          fetchResult.ok &&
+          (fetchResult.terminals || []).find(
+            (t) => t.afId && t.afId === e.session.id && herdr.isLiveTerminal(t)
+          );
+        const st = herdrapp.herdrAppStatus(e.session, match || null, {
+          sessions,
+        });
+        return {
+          space: st.space,
+          tab: st.tab,
+          spaceTitle: st.spaceTitle,
+          ok: st.ok,
+          legacy: st.legacy,
+          needsAdopt: st.needsAdopt,
+        };
+      })(),
     }));
     emitJson({ sessions: rows, queryOk: Boolean(fetchResult.ok) });
     return;
@@ -966,6 +997,8 @@ function buildResumeOpts(flags = {}) {
     trust: !flags['no-trust'],
     force: Boolean(flags.force),
     herdrApp: herdrapp.herdrAppEnabled(flags),
+    // Pool for worker → master space title lookup.
+    sessions: registry.list({ includeDone: true }),
   };
   if (typeof flags.prompt === 'string' && flags.prompt) resumeOpts.prompt = flags.prompt;
   return resumeOpts;
@@ -1111,6 +1144,7 @@ function reportHerdr(plan, flags = {}) {
     return;
   }
   let ok = 0;
+  let relaunched = 0;
   for (const r of plan.results || []) {
     if (r.busy) {
       process.stderr.write(`skip "${r.title}": already running/launching\n`);
@@ -1121,6 +1155,7 @@ function reportHerdr(plan, flags = {}) {
       if (!asJson && r.name) process.stdout.write(backends.herdrAttachLine(r.name) + '\n');
     } else if (r.status === 0) {
       ok++;
+      if (r.relaunch) relaunched++;
       try {
         const cmd = (plan.commands || []).find((c) => c.title === r.title);
         if (cmd && cmd.id) {
@@ -1141,15 +1176,31 @@ function reportHerdr(plan, flags = {}) {
         }
       } catch (_) { /* ignore */ }
       if (!asJson && r.name) process.stdout.write(backends.herdrAttachLine(r.name) + '\n');
-      if (r.tabRename && r.tabRename.ok === false) {
+      if (r.tabRename && r.tabRename.ok === false && !r.tabRename.skipped) {
         process.stderr.write(
           `herdr-app tab.rename failed for "${r.title}": ${r.tabRename.reason || r.tabRename.error || ''}\n`
         );
       }
-    } else process.stderr.write(`hc run failed for "${r.title}": ${r.stderr || ''}\n`);
+      if (r.spaceRename && r.spaceRename.ok === false && !r.spaceRename.skipped) {
+        process.stderr.write(
+          `herdr-app space.rename failed for "${r.title}": ${r.spaceRename.reason || r.spaceRename.error || ''}\n`
+        );
+      }
+    } else {
+      const kind = r.relaunch ? 'hc send' : 'hc run';
+      process.stderr.write(`${kind} failed for "${r.title}": ${r.stderr || ''}\n`);
+    }
   }
   if (!asJson) {
-    process.stdout.write(`Launched ${ok} Herdr terminal(s).\n`);
+    if (relaunched && relaunched === ok) {
+      process.stdout.write(`Relaunched agent in ${ok} shell-only Herdr terminal(s).\n`);
+    } else if (relaunched) {
+      process.stdout.write(
+        `Launched ${ok - relaunched} Herdr terminal(s); relaunched agent in ${relaunched} shell-only tab(s).\n`
+      );
+    } else {
+      process.stdout.write(`Launched ${ok} Herdr terminal(s).\n`);
+    }
     maybeOpenITermAttach(plan, flags, { executed: true, dryRun: false });
   }
   if ((plan.results || []).some((r) => r.busy || (!r.skipped && r.status != null && r.status !== 0))) {
@@ -1313,111 +1364,99 @@ function cmdAdopt(argv) {
     return;
   }
 
-  const { spawnSync } = require('child_process');
   const rows = [];
   for (const item of plan.items) {
-    const row = {
-      title: item.title,
-      id: item.id,
-      address: item.address,
-      name: item.name,
-      spaceId: item.spaceId,
-      tabId: item.tabId,
-      alreadyAdopted: item.alreadyAdopted,
-      labeled: false,
-      kept: false,
-      renamed: false,
-      ok: true,
-      error: null,
-      tabRename: null,
-    };
-
-    if (item.alreadyAdopted) {
-      if (!dryRun) {
-        const renamed = herdrapp.nameHerdrAppTab(item.tabId, item.title);
-        row.renamed = Boolean(renamed && renamed.ok);
-        row.tabRename = {
-          ok: Boolean(renamed && renamed.ok),
-          error: renamed && renamed.ok ? null : (renamed && renamed.reason) || 'rename failed',
-        };
-        if (!row.tabRename.ok) {
-          process.stderr.write(
-            `herdr-app tab.rename failed for ${item.title}: ${row.tabRename.error}\n`
-          );
-        }
-      }
-      row.ok = true;
-      rows.push(row);
-      if (!asJson) {
-        process.stdout.write(
-          `already adopted  ${item.address}  ${item.title}  ${item.spaceId}  ${item.tabId}\n`
-        );
-      }
-      continue;
-    }
-
-    if (dryRun) {
-      rows.push(row);
-      if (!asJson) {
-        process.stdout.write(
-          `[dry-run] adopt  ${item.address}  ${item.title}  ${item.spaceId}  ${item.tabId}\n`
-        );
-        process.stdout.write(`  hc ${item.labelArgv.join(' ')}\n`);
-        process.stdout.write(`  hc ${item.keepArgv.join(' ')}\n`);
-      }
-      continue;
-    }
-
-    const lab = spawnSync('hc', item.labelArgv, { encoding: 'utf8' });
-    const kep = spawnSync('hc', item.keepArgv, { encoding: 'utf8' });
-    row.labeled = lab.status === 0;
-    row.kept = kep.status === 0;
-    if (lab.status !== 0) {
-      process.stderr.write(
-        `hc label failed for ${item.address}: ${lab.stderr || lab.stdout || ''}\n`
-      );
-    }
-    if (kep.status !== 0) {
-      process.stderr.write(
-        `hc keep failed for ${item.address}: ${kep.stderr || kep.stdout || ''}\n`
-      );
-    }
-    if (!row.labeled || !row.kept) {
-      row.ok = false;
-      const parts = [];
-      if (!row.labeled) parts.push(`label: ${(lab.stderr || lab.stdout || '').trim() || lab.status}`);
-      if (!row.kept) parts.push(`keep: ${(kep.stderr || kep.stdout || '').trim() || kep.status}`);
-      row.error = parts.join('; ');
-    }
-    const renamed = herdrapp.nameHerdrAppTab(item.tabId, item.title);
-    row.renamed = Boolean(renamed && renamed.ok);
-    row.tabRename = {
-      ok: Boolean(renamed && renamed.ok),
-      error: renamed && renamed.ok ? null : (renamed && renamed.reason) || 'rename failed',
-    };
-    if (!row.tabRename.ok) {
-      process.stderr.write(
-        `herdr-app tab.rename failed for ${item.title}: ${row.tabRename.error}\n`
-      );
-    }
+    const row = herdrapp.executeAdoptItem(item, {
+      dryRun,
+      maxWaitMs: herdrapp.herdrAppWaitMs(process.env, 5000),
+      intervalMs: 250,
+    });
     rows.push(row);
+
+    if (!dryRun) {
+      if (row.tabRename && !row.tabRename.ok && !row.tabRename.skipped) {
+        process.stderr.write(
+          `herdr-app tab.rename failed for ${item.title}: ${row.tabRename.error}\n`
+        );
+      }
+      if (row.spaceRename && !row.spaceRename.ok && !row.spaceRename.skipped) {
+        process.stderr.write(
+          `herdr-app space.rename failed for ${item.title}: ${row.spaceRename.error}\n`
+        );
+      }
+      if (row.error && !asJson) {
+        process.stderr.write(`adopt error for ${item.title}: ${row.error}\n`);
+      }
+    }
+
     if (!asJson) {
-      process.stdout.write(
-        `adopted  ${item.address}  ${item.title}  ${item.spaceId}  ${item.tabId}\n`
-      );
+      if (dryRun) {
+        const legacyNote = item.legacy ? '  (legacy cwd space → session-group)' : '';
+        process.stdout.write(
+          `[dry-run] adopt  ${item.address}  ${item.title}  ${item.spaceId}  ${item.tabId}${legacyNote}\n`
+        );
+        for (const step of row.steps || []) {
+          process.stdout.write(`  ${step.join(' ')}\n`);
+        }
+        continue;
+      }
+
+      if (row.appMove && row.appMove.skipped) {
+        process.stdout.write(
+          `labeled  ${item.address}  ${item.title}  (Herdr app not running — re-run af adopt --all after starting the app)\n`
+        );
+      } else if (row.appMove && row.appMove.parked) {
+        const fromName =
+          (row.appMove.from && (row.appMove.from.spaceName || row.appMove.from.spaceId)) || '?';
+        const toName = item.spaceTitle || item.title;
+        process.stdout.write(
+          `moved ${item.address} ${item.title}: ${fromName} → ${toName}\n`
+        );
+      } else if (row.appMove && row.appMove.ok && !row.appMove.parked) {
+        process.stdout.write(
+          `adopted  ${item.address}  ${item.title}  ${item.spaceId}  ${item.tabId}\n`
+        );
+      } else {
+        process.stdout.write(
+          `adopt  ${item.address}  ${item.title}  ${row.ok ? 'ok' : 'FAILED'}\n`
+        );
+      }
     }
   }
 
   const anyFail = rows.some((r) => r.ok === false);
   if (asJson) {
-    emitJson({ ok: !anyFail, dryRun, adopted: rows });
+    emitJson({
+      ok: !anyFail,
+      dryRun,
+      adopted: rows.map((r) => ({
+        title: r.title,
+        id: r.id,
+        address: r.address,
+        name: r.name,
+        spaceId: r.spaceId,
+        tabId: r.tabId,
+        spaceTitle: r.spaceTitle,
+        alreadyAdopted: r.alreadyAdopted,
+        legacy: r.legacy,
+        labeled: r.labeled,
+        kept: r.kept,
+        parked: r.parked,
+        ok: r.ok,
+        error: r.error,
+        appMove: r.appMove,
+        spaceRename: r.spaceRename,
+        tabRename: r.tabRename,
+        steps: dryRun ? r.steps : undefined,
+      })),
+    });
     if (anyFail) process.exitCode = 1;
     return;
   }
 
   if (!dryRun) {
     process.stdout.write(
-      'Hint: labeled terminals now show in the Herdr desktop app (open Herdr if it is not running).\n'
+      'Hint: empty old Herdr spaces may remain — close them in the app if unused.\n'
     );
   }
   if (anyFail) {
@@ -1430,6 +1469,152 @@ function cmdRename(argv) {
   if (args.length < 2) fail('usage: af rename <title|id> "<new title>"');
   const updated = registry.update(args[0], { title: args[1] });
   printSession(updated, 'renamed');
+}
+
+function cmdCwd(argv) {
+  const { args, flags } = parseArgs(argv);
+  const asJson = Boolean(flags.json);
+  const dryRun = Boolean(flags['dry-run']);
+  if (!args[0]) {
+    fail('usage: af cwd <title|id> [path] [--dry-run] [--json]\n       af set-cwd <title|id> [path] [--dry-run] [--json]', {
+      json: asJson,
+    });
+  }
+  const session = requireSession(args[0]);
+  const pathArg = args[1];
+
+  if (!pathArg) {
+    if (asJson) {
+      emitJson({ id: session.id, title: session.title, cwd: session.cwd });
+    } else {
+      process.stdout.write(`${session.cwd}\n`);
+    }
+    return;
+  }
+
+  let newCwd;
+  try {
+    newCwd = herdrapp.requireSessionCwd(pathArg);
+  } catch (err) {
+    fail(err && err.message ? err.message : String(err), { json: asJson });
+  }
+
+  const oldCwd = session.cwd;
+  const oldNorm = (() => {
+    try {
+      return herdrapp.normalizeCwd(oldCwd);
+    } catch (_) {
+      return oldCwd;
+    }
+  })();
+  const unchanged = oldNorm === newCwd;
+  const newBranch = unchanged ? session.branch || null : gitBranch(newCwd);
+
+  const notes = [];
+  notes.push(
+    'Chat history is keyed by session id; the same chat continues in the new folder.'
+  );
+  if ((session.engine || 'cursor') === 'copilot') {
+    notes.push(
+      'Copilot session-state workspace.yaml still records the old cwd (af does not edit it); resume uses -C <new folder> (may ask to trust once — answer with: af send <id> "1").'
+    );
+  } else {
+    notes.push('Cursor resume passes --workspace <new folder>.');
+  }
+
+  let herdrInfo = null;
+  const fetchResult = herdr.fetchHerdrTerminals();
+  if (fetchResult.ok) {
+    const enriched = herdr.enrichSessions([session], fetchResult)[0];
+    if (enriched && (enriched.runtime === 'running' || enriched.runtime === 'shell')) {
+      herdrInfo = {
+        runtime: enriched.runtime,
+        address: enriched.address || null,
+        name: enriched.name || null,
+      };
+      if (enriched.runtime === 'shell') {
+        notes.push(
+          `Live Herdr terminal is shell-only (program still in the old folder). Run: af resume ${session.id} (relaunches into that tab with cd <new folder>). Herdr space is session-based (not folder-based), so adopt is not required for the space.`
+        );
+      } else {
+        notes.push(
+          `Live Herdr terminal is still running (program still in the old folder). Run: af stop ${session.id} then af resume ${session.id} (or af resume after the agent exits). Herdr space is session-based (not folder-based), so adopt is not required for the space.`
+        );
+      }
+    }
+  }
+
+  if (unchanged) {
+    const msg = `cwd unchanged: ${newCwd}`;
+    if (asJson) {
+      emitJson({
+        ok: true,
+        id: session.id,
+        title: session.title,
+        engine: session.engine || 'cursor',
+        oldCwd,
+        cwd: newCwd,
+        branch: session.branch || null,
+        herdr: herdrInfo,
+        notes,
+        unchanged: true,
+      });
+    } else {
+      process.stdout.write(`${msg}\n`);
+      for (const n of notes) process.stderr.write(`note: ${n}\n`);
+    }
+    return;
+  }
+
+  if (dryRun) {
+    if (asJson) {
+      emitJson({
+        ok: true,
+        dryRun: true,
+        id: session.id,
+        title: session.title,
+        engine: session.engine || 'cursor',
+        oldCwd,
+        cwd: newCwd,
+        branch: newBranch,
+        herdr: herdrInfo,
+        notes,
+      });
+    } else {
+      process.stdout.write(`cwd: ${oldCwd} → ${newCwd}\n`);
+      process.stdout.write(`branch: ${session.branch || '(none)'} → ${newBranch || '(none)'}\n`);
+      for (const n of notes) process.stderr.write(`note: ${n}\n`);
+    }
+    return;
+  }
+
+  const wr = registry.criticalUpdate(
+    session.id,
+    { cwd: newCwd, branch: newBranch },
+    { phase: 'cwd-change' }
+  );
+  if (!wr.ok) {
+    fail(`critical registry write failed: ${wr.error}`, { json: asJson });
+  }
+  const updated = wr.session;
+  if (asJson) {
+    emitJson({
+      ok: true,
+      id: updated.id,
+      title: updated.title,
+      engine: updated.engine || 'cursor',
+      oldCwd,
+      cwd: updated.cwd,
+      branch: updated.branch || null,
+      herdr: herdrInfo,
+      notes,
+    });
+  } else {
+    process.stdout.write(`cwd: ${oldCwd} → ${updated.cwd}\n`);
+    process.stdout.write(`branch: ${session.branch || '(none)'} → ${updated.branch || '(none)'}\n`);
+    printSession(updated, 'cwd');
+    for (const n of notes) process.stderr.write(`note: ${n}\n`);
+  }
 }
 
 function cmdDone(argv) {
@@ -2162,6 +2347,7 @@ async function cmdSpawn(argv) {
       force,
       herdrApp: herdrapp.herdrAppEnabled(flags),
       envOverlay,
+      sessions: registry.list({ includeDone: true }),
     };
     const plan = launchViaHerdr([worker], {
       dryRun: false,
@@ -2489,6 +2675,7 @@ async function cmdMaster(argv) {
       force,
       herdrApp: herdrapp.herdrAppEnabled(flags),
       envOverlay,
+      sessions: registry.list({ includeDone: true }),
     };
     const plan = launchViaHerdr([master], {
       dryRun: false,
@@ -3044,7 +3231,12 @@ async function cmdWait(argv) {
     const rows = [];
     for (const e of enrichedList) {
       const s = registry.find(e.session.id) || e.session;
-      let st = waitState.get(s.id) || { seenWorking: false, idleTicks: 0, noStateWarned: false };
+      let st = waitState.get(s.id) || {
+        seenWorking: false,
+        idleTicks: 0,
+        noStateWarned: false,
+        shellWarned: false,
+      };
       let waitingHint = null;
       let agentState = null;
       if (e.runtime === 'running') {
@@ -3091,6 +3283,13 @@ async function cmdWait(argv) {
           `no agent state from Herdr for ${s.id}; cannot detect completion — use af tail / af result\n`
         );
         st.noStateWarned = true;
+        waitState.set(s.id, st);
+      }
+      if (row.stateSource === 'shell' && !st.shellWarned) {
+        process.stderr.write(
+          `agent not running in its terminal (shell only); run af resume ${s.id}\n`
+        );
+        st.shellWarned = true;
         waitState.set(s.id, st);
       }
 
@@ -3663,6 +3862,19 @@ function cmdHerdrApp(argv) {
 }
 
 
+function parseHcSemver(text) {
+  const m = String(text || '').match(/(\d+)\.(\d+)\.(\d+)/);
+  if (!m) return null;
+  return { major: Number(m[1]), minor: Number(m[2]), patch: Number(m[3]), raw: `${m[1]}.${m[2]}.${m[3]}` };
+}
+
+function cmpSemver(a, b) {
+  if (!a || !b) return null;
+  if (a.major !== b.major) return a.major - b.major;
+  if (a.minor !== b.minor) return a.minor - b.minor;
+  return a.patch - b.patch;
+}
+
 function cmdDoctor(argv) {
   const { flags } = parseArgs(argv);
   const asJson = Boolean(flags.json);
@@ -3680,9 +3892,30 @@ function cmdDoctor(argv) {
     add('default_engine', false, err.message);
   }
   const hcPath = backends.resolveHcBin();
-  const hcWhich = require('../lib/util').which('hc');
-  add('hc_on_path', Boolean(hcWhich), hcWhich || hcPath);
-  if (hcWhich) {
+  const hcPresent = herdr.hcOnPath();
+  add('hc_on_path', hcPresent, hcPath);
+  if (hcPresent) {
+    const ver = herdr.defaultRunHc(['--version'], { timeoutMs: 3000 });
+    const verText = `${ver.stdout || ''}${ver.stderr || ''}`.trim();
+    const parsed = parseHcSemver(verText);
+    const min = { major: 0, minor: 1, patch: 20, raw: '0.1.20' };
+    if (!parsed) {
+      add(
+        'herdr_core_version',
+        false,
+        (verText || `exit ${ver.status}`).slice(0, 120) +
+          '; could not parse version (want >= 0.1.20)'
+      );
+    } else {
+      const ge = cmpSemver(parsed, min) >= 0;
+      add(
+        'herdr_core_version',
+        ge,
+        ge
+          ? parsed.raw
+          : `${parsed.raw}; terminals restored after a reboot may come back as a shell in ~; update with \`hc update\``
+      );
+    }
     const st = herdr.defaultRunHc(['server', 'status'], { timeoutMs: 3000 });
     add(
       'hc_server_status',
@@ -3692,6 +3925,7 @@ function cmdDoctor(argv) {
     const ls = herdr.fetchHerdrTerminals({ timeoutMs: 3000 });
     add('hc_ls', ls.ok, ls.ok ? `${(ls.terminals || []).length} terminals` : ls.error);
   } else {
+    add('herdr_core_version', false, 'hc not on PATH');
     add('hc_server_status', false, 'hc not on PATH');
     add('hc_ls', false, 'hc not on PATH');
   }
@@ -3711,9 +3945,14 @@ function cmdDoctor(argv) {
   } catch (err) {
     add('copilot_bin', false, err.message);
   }
-  // copilot is optional; hc optional for plain-only workflows — still report but only fail on home/node/cursor when missing
+  // copilot/hc optional for plain-only workflows — warn on old herdr-core but do not fail exit
   const ok = checks
-    .filter((c) => !['copilot_bin', 'hc_on_path', 'hc_server_status', 'hc_ls'].includes(c.name))
+    .filter(
+      (c) =>
+        !['copilot_bin', 'hc_on_path', 'hc_server_status', 'hc_ls', 'herdr_core_version'].includes(
+          c.name
+        )
+    )
     .every((c) => c.ok);
   if (asJson) {
     emitJson({ ok, checks });
@@ -3765,16 +4004,26 @@ function launchViaHerdr(sessions, { dryRun = false, resumeOpts, flags = {}, json
           },
           address: t.address || null,
           afId: t.afId || null,
+          agent: t.agent != null ? t.agent : null,
+          argv: Array.isArray(t.argv) ? t.argv : null,
+          foreground: t.foreground || null,
+          state: t.state || null,
+          reason: t.reason || null,
+          exitCode: t.exitCode != null ? t.exitCode : null,
         }))
     : [];
 
   if (dryRun) {
-    return backends.executeResumeAll(sessions, {
-      via: 'herdr',
-      dryRun: true,
-      resumeOpts,
-      herdrLive: live,
-    });
+    try {
+      return backends.executeResumeAll(sessions, {
+        via: 'herdr',
+        dryRun: true,
+        resumeOpts,
+        herdrLive: live,
+      });
+    } catch (err) {
+      fail(err && err.message ? err.message : String(err), { json });
+    }
   }
 
   const allResults = [];
@@ -3799,12 +4048,17 @@ function launchViaHerdr(sessions, { dryRun = false, resumeOpts, flags = {}, json
       if (!again.ok) {
         fail(launch.discoveryRefuseMessage(again.error), { json });
       }
-      const plan = backends.executeResumeAll([s], {
-        via: 'herdr',
-        dryRun: false,
-        resumeOpts,
-        herdrLive: again.terminals,
-      });
+      let plan;
+      try {
+        plan = backends.executeResumeAll([s], {
+          via: 'herdr',
+          dryRun: false,
+          resumeOpts,
+          herdrLive: again.terminals,
+        });
+      } catch (err) {
+        fail(err && err.message ? err.message : String(err), { json });
+      }
       if (plan.commands) allCommands.push(...plan.commands);
       if (plan.results) allResults.push(...plan.results);
     } finally {

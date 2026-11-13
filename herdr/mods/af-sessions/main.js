@@ -11,7 +11,7 @@ const POLL_MS = 1000;
 const POLL_MAX_MS = 15000;
 const NARROW_PX = 160;
 
-const RUNTIME_RANK = { running: 0, exited: 1, missing: 2, unknown: 3, "-": 4 };
+const RUNTIME_RANK = { running: 0, shell: 1, exited: 2, missing: 3, unknown: 4, "-": 5 };
 
 function shellQuote(s) {
   return `'${String(s).replace(/'/g, `'\\''`)}'`;
@@ -43,6 +43,7 @@ function truncate(s, n) {
 
 function runtimeColor(t, runtime) {
   if (runtime === "running") return t.working || t.accent;
+  if (runtime === "shell") return t.blocked || t.unknown || t.accent || t.dim;
   if (runtime === "exited") return t.muted || t.dim;
   if (runtime === "missing" || runtime === "unknown") return t.blocked || t.unknown || t.dim;
   return t.dim;
@@ -229,6 +230,8 @@ export default class AfSessions extends View {
       return;
     }
 
+    // shell / exited / missing / unknown / -: af resume (shell-only relaunches
+    // the engine into the existing tab via hc send, then we focus).
     if (this.starting[row.title]) return;
     this.starting[row.title] = true;
     cx.notify();
@@ -242,6 +245,13 @@ export default class AfSessions extends View {
             body: String(r.stderr || r.stdout || "").trim().slice(-240) || `exit ${r.code}`,
             level: "error",
           });
+          cx.notify();
+          return;
+        }
+        if (runtime === "shell" && tab && tabPresent(tab)) {
+          focusHerdr(space, tab);
+          this.starting[row.title] = false;
+          this.refresh(cx);
           cx.notify();
           return;
         }
@@ -367,7 +377,10 @@ export default class AfSessions extends View {
     const currentTab = focused()?.tab;
     const list = this.sessions || [];
     const running = list.filter((s) => s?.herdr?.runtime === "running");
-    const other = list.filter((s) => s?.herdr?.runtime !== "running");
+    const shellOnly = list.filter((s) => s?.herdr?.runtime === "shell");
+    const other = list.filter(
+      (s) => s?.herdr?.runtime !== "running" && s?.herdr?.runtime !== "shell",
+    );
 
     const rows = [];
     if (!narrow) {
@@ -377,8 +390,16 @@ export default class AfSessions extends View {
           rows.push(this.row(s, t, currentTab && s.herdrApp?.tab === currentTab, now));
         }
       }
+      if (shellOnly.length) {
+        rows.push(this.sectionHeader("Shell (agent stopped)", t));
+        for (const s of shellOnly) {
+          rows.push(this.row(s, t, currentTab && s.herdrApp?.tab === currentTab, now));
+        }
+      }
       if (other.length) {
-        rows.push(this.sectionHeader(running.length ? "Other" : "Sessions", t));
+        const label =
+          running.length || shellOnly.length ? "Other" : "Sessions";
+        rows.push(this.sectionHeader(label, t));
         for (const s of other) {
           rows.push(this.row(s, t, currentTab && s.herdrApp?.tab === currentTab, now));
         }
