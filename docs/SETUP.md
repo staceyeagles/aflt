@@ -596,12 +596,12 @@ aflt rm --keep-files "$TASK"  # registry row only (keeps handoffs/logs; never de
 git -C "$REPO" worktree remove "$REPO-wt-${TASK}"
 ```
 
-**Wrong folder (work Mac example):** a Copilot session imported or added under `…/hello-af` that should be `~/github/wwlib/af`:
+**Wrong folder (work Mac example):** a Copilot session imported or added under `…/hello-af` that should be `~/github/wwlib/aflt`:
 
 ```bash
 aflt cwd hello-af                          # print current folder
-aflt cwd hello-af ~/github/wwlib/af        # update registry cwd + branch (~ ok)
-aflt cwd hello-af ~/github/wwlib/af --dry-run
+aflt cwd hello-af ~/github/wwlib/aflt        # update registry cwd + branch (~ ok)
+aflt cwd hello-af ~/github/wwlib/aflt --dry-run
 # If a Herdr tab is live: aflt stop hello-af (agent running) then aflt resume hello-af;
 # shell-only: just aflt resume hello-af (cd's into the new folder in-tab).
 # Space is session-based — adopt not required for the folder change.

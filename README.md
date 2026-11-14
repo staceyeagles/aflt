@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/logo.png" alt="af / AgentFleet" width="112" height="112"/>
+  <img src="assets/logo.png" alt="aflt / AgentFleet" width="112" height="112"/>
 </p>
 
-<p align="center"><strong>af</strong> / AgentFleet — track, resume, and orchestrate Cursor &amp; Copilot CLI agents</p>
+<p align="center"><strong>aflt</strong> / AgentFleet — track, resume, and orchestrate Cursor &amp; Copilot CLI agents</p>
 
 <p align="center">
   <img alt="Node >=18" src="https://img.shields.io/badge/node-%3E%3D18-brightgreen?logo=node.js&logoColor=white"/>
@@ -36,13 +36,13 @@ CLI coding agents are powerful but ephemeral: chat IDs live in engine-local stor
 ## Architecture
 
 <p align="center">
-  <img src="assets/architecture.png" alt="af architecture: controller → af CLI → registry, engines, Herdr, orchestration, opt-in messaging and docs" width="900"/>
+  <img src="assets/architecture.png" alt="aflt architecture: controller → aflt CLI → registry, engines, Herdr, orchestration, opt-in messaging and docs" width="900"/>
 </p>
 
 ### Master → workers flow
 
 <p align="center">
-  <img src="assets/orchestration.png" alt="af master to workers orchestration: spawn, wait, result, optional messaging and docs" width="900"/>
+  <img src="assets/orchestration.png" alt="aflt master to workers orchestration: spawn, wait, result, optional messaging and docs" width="900"/>
 </p>
 
 ## Install

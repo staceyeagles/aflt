@@ -33,5 +33,13 @@
     "wezterm"
   ],
   "license": "MIT",
-  "author": "Andrew Rapo"
+  "author": "Andrew Rapo",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wwlib/aflt.git"
+  },
+  "homepage": "https://github.com/wwlib/aflt",
+  "bugs": {
+    "url": "https://github.com/wwlib/aflt/issues"
+  }
 }
