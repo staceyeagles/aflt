@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg"/>
-    <img src="assets/logo-light.svg" alt="af / AgentFleet" width="112" height="112"/>
-  </picture>
+  <img src="assets/logo.png" alt="af / AgentFleet" width="112" height="112"/>
 </p>
 
 <p align="center"><strong>af</strong> / AgentFleet — track, resume, and orchestrate Cursor &amp; Copilot CLI agents</p>
@@ -37,19 +34,13 @@ CLI coding agents are powerful but ephemeral: chat IDs live in engine-local stor
 ## Architecture
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/architecture-dark.svg"/>
-    <img src="assets/architecture-light.svg" alt="af architecture: controller → af CLI → registry, engines, Herdr, orchestration, opt-in messaging and docs" width="100%"/>
-  </picture>
+  <img src="assets/architecture.png" alt="af architecture: controller → af CLI → registry, engines, Herdr, orchestration, opt-in messaging and docs" width="900"/>
 </p>
 
 ### Master → workers flow
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/orchestration-dark.svg"/>
-    <img src="assets/orchestration-light.svg" alt="af master to workers orchestration: spawn, wait, result, optional messaging and docs" width="100%"/>
-  </picture>
+  <img src="assets/orchestration.png" alt="af master to workers orchestration: spawn, wait, result, optional messaging and docs" width="900"/>
 </p>
 
 ## Install

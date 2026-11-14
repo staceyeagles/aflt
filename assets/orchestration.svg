@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 1080" width="920" height="1080" role="img" aria-label="af master-worker orchestration flow">
+  <title>af master → workers orchestration</title>
+  <defs>
+    <filter id="osh-d" x="-2%" y="-2%" width="104%" height="108%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#000000" flood-opacity="0.4"/>
+    </filter>
+    <marker id="oarr-d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8B949E"/>
+    </marker>
+  </defs>
+
+  <rect width="920" height="1080" rx="16" fill="#0D1117"/>
+
+  <text x="460" y="34" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#E6EDF3">Master → workers flow</text>
+  <text x="460" y="54" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#8B949E">Headless orchestrator loop — spawn, wait, result, optional messaging &amp; docs</text>
+
+  <g filter="url(#osh-d)">
+    <rect x="70" y="74" width="780" height="96" rx="14" fill="#161B22" stroke="#30363D" stroke-width="1.5"/>
+  </g>
+  <circle cx="118" cy="122" r="22" fill="#3DD6C6"/>
+  <text x="118" y="128" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#0D1117">1</text>
+  <text x="160" y="108" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#E6EDF3">Bootstrap master</text>
+  <text x="160" y="132" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#3DD6C6">af master --goal "…" --headless</text>
+  <text x="160" y="154" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#8B949E">role=master · plan + result paths under ~/.agentfleet</text>
+
+  <line x1="460" y1="170" x2="460" y2="192" stroke="#8B949E" stroke-width="2" marker-end="url(#oarr-d)"/>
+
+  <g filter="url(#osh-d)">
+    <rect x="70" y="194" width="780" height="110" rx="14" fill="#161B22" stroke="#30363D" stroke-width="1.5"/>
+  </g>
+  <circle cx="118" cy="249" r="22" fill="#3DD6C6"/>
+  <text x="118" y="255" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#0D1117">2</text>
+  <text x="160" y="228" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#E6EDF3">Master spawns workers (detached)</text>
+  <text x="160" y="252" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#3DD6C6">af spawn --parent $AGENTFLEET_ID --prompt "…" --detach</text>
+  <rect x="160" y="266" width="92" height="26" rx="8" fill="#132A2A" stroke="#2A6B63"/>
+  <text x="206" y="284" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#3DD6C6">worker A</text>
+  <rect x="264" y="266" width="92" height="26" rx="8" fill="#1C2333" stroke="#3D4F6F"/>
+  <text x="310" y="284" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#7EB6FF">worker B</text>
+  <text x="380" y="284" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#8B949E">supervisor records exit / handoff</text>
+
+  <line x1="460" y1="304" x2="460" y2="326" stroke="#8B949E" stroke-width="2" marker-end="url(#oarr-d)"/>
+
+  <g filter="url(#osh-d)">
+    <rect x="70" y="328" width="780" height="96" rx="14" fill="#161B22" stroke="#30363D" stroke-width="1.5"/>
+  </g>
+  <circle cx="118" cy="376" r="22" fill="#7EB6FF"/>
+  <text x="118" y="382" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#0D1117">3</text>
+  <text x="160" y="362" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#E6EDF3">Workers run · write handoffs</text>
+  <text x="160" y="386" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#A8B3BF">Cursor or Copilot headless · write <tspan font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#7EB6FF">$AGENTFLEET_RESULT</tspan></text>
+  <text x="160" y="408" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#8B949E">missing/stale after exit 0 → af-fallback from stdout</text>
+
+  <line x1="460" y1="424" x2="460" y2="446" stroke="#8B949E" stroke-width="2" marker-end="url(#oarr-d)"/>
+
+  <g filter="url(#osh-d)">
+    <rect x="70" y="448" width="780" height="96" rx="14" fill="#161B22" stroke="#3DD6C6" stroke-width="1.75" stroke-dasharray="6 4"/>
+  </g>
+  <circle cx="118" cy="496" r="22" fill="#3DD6C6"/>
+  <text x="118" y="502" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#0D1117">4</text>
+  <rect x="160" y="464" width="56" height="20" rx="10" fill="#132A2A"/>
+  <text x="188" y="478" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#3DD6C6">opt-in</text>
+  <text x="228" y="479" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#E6EDF3">Workers message team</text>
+  <text x="160" y="506" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#3DD6C6">af msg</text>
+  <text x="220" y="506" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#A8B3BF">or MCP tools · workers ↔ workers / master</text>
+  <text x="160" y="528" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#8B949E">requires messaging enabled on the team</text>
+
+  <line x1="460" y1="544" x2="460" y2="566" stroke="#8B949E" stroke-width="2" marker-end="url(#oarr-d)"/>
+
+  <g filter="url(#osh-d)">
+    <rect x="70" y="568" width="780" height="96" rx="14" fill="#161B22" stroke="#30363D" stroke-width="1.5"/>
+  </g>
+  <circle cx="118" cy="616" r="22" fill="#7EB6FF"/>
+  <text x="118" y="622" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#0D1117">5</text>
+  <text x="160" y="602" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#E6EDF3">Master waits</text>
+  <text x="160" y="626" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#7EB6FF">af wait --parent $AGENTFLEET_ID</text>
+  <text x="160" y="648" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#8B949E">exit 0 done · 1 failed/stopped · 2 timeout · 3 waiting</text>
+
+  <line x1="460" y1="664" x2="460" y2="686" stroke="#8B949E" stroke-width="2" marker-end="url(#oarr-d)"/>
+
+  <g filter="url(#osh-d)">
+    <rect x="70" y="688" width="780" height="88" rx="14" fill="#161B22" stroke="#30363D" stroke-width="1.5"/>
+  </g>
+  <circle cx="118" cy="732" r="22" fill="#7EB6FF"/>
+  <text x="118" y="738" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#0D1117">6</text>
+  <text x="160" y="722" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#E6EDF3">Read worker handoffs</text>
+  <text x="160" y="746" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#7EB6FF">af result &lt;worker&gt;</text>
+  <text x="360" y="746" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#8B949E">optional --require-fresh</text>
+
+  <line x1="460" y1="776" x2="460" y2="798" stroke="#8B949E" stroke-width="2" marker-end="url(#oarr-d)"/>
+
+  <g filter="url(#osh-d)">
+    <rect x="70" y="800" width="780" height="88" rx="14" fill="#161B22" stroke="#30363D" stroke-width="1.5"/>
+  </g>
+  <circle cx="118" cy="844" r="22" fill="#3DD6C6"/>
+  <text x="118" y="850" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#0D1117">7</text>
+  <text x="160" y="834" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#E6EDF3">Master writes summary</text>
+  <text x="160" y="858" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#A8B3BF">final handoff to <tspan font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#3DD6C6">$AGENTFLEET_RESULT</tspan></text>
+
+  <line x1="460" y1="888" x2="460" y2="910" stroke="#8B949E" stroke-width="2" marker-end="url(#oarr-d)"/>
+
+  <g filter="url(#osh-d)">
+    <rect x="70" y="912" width="780" height="110" rx="14" fill="#161B22" stroke="#7EB6FF" stroke-width="1.75" stroke-dasharray="6 4"/>
+  </g>
+  <circle cx="118" cy="967" r="22" fill="#7EB6FF"/>
+  <text x="118" y="973" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#0D1117">8</text>
+  <rect x="160" y="936" width="56" height="20" rx="10" fill="#1C2333"/>
+  <text x="188" y="950" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#7EB6FF">opt-in</text>
+  <text x="228" y="951" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#E6EDF3">Auto documentarian on finish</text>
+  <text x="160" y="978" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#7EB6FF">af docs</text>
+  <text x="226" y="978" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#A8B3BF">after headless master exit 0 (or <tspan font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">af wait --docs</tspan>)</text>
+  <text x="160" y="1000" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#8B949E">when project has {"docs": true} · skip with --no-docs · once per master run</text>
+
+  <text x="460" y="1055" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#6E7681">Prefer spawn --detach over shell &amp; · interactive masters use Herdr by default</text>
+</svg>
