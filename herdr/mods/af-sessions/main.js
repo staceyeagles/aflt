@@ -64,25 +64,37 @@ function focusHerdr(spaceId, tabId) {
   if (tabId) run("tab.select", { id: String(tabId) });
 }
 
-/** Resolve and run `af` even when the app's PATH is minimal. */
+/** Resolve and run `aflt` (fallback `af`) even when the app's PATH is minimal. */
 async function execAf(args, timeout = EXEC_TIMEOUT) {
-  const afBin = `${home()}/.local/bin/af`;
+  const homeDir = home();
+  const candidates = [`${homeDir}/.local/bin/aflt`, `${homeDir}/.local/bin/af`];
+  let lastErr = null;
+  for (const afBin of candidates) {
+    try {
+      const r = await exec(afBin, args, { timeout });
+      const err = `${r.stderr || ""}${r.stdout || ""}`;
+      if (r.code !== 0 && /node[: ].*not found|ENOENT|command not found/i.test(err)) {
+        lastErr = new Error("node-not-found");
+        continue;
+      }
+      return r;
+    } catch (e) {
+      lastErr = e;
+      const msg = String(e?.message || e);
+      // Timeouts reject too; don't retry via zsh.
+      if (/timed out|timeout/i.test(msg) && !/node-not-found/i.test(msg)) {
+        return { code: 124, stdout: "", stderr: msg };
+      }
+      // Try next candidate, then login zsh.
+    }
+  }
+  // Failed to start, or node missing under a shebang: fall back to login zsh.
+  const cmdline = ["aflt", ...args].map(shellQuote).join(" ");
   try {
-    const r = await exec(afBin, args, { timeout });
-    const err = `${r.stderr || ""}${r.stdout || ""}`;
-    if (r.code !== 0 && /node[: ].*not found|ENOENT|command not found/i.test(err)) {
-      throw new Error("node-not-found");
-    }
-    return r;
+    return await exec("/bin/zsh", ["-lc", cmdline], { timeout });
   } catch (e) {
-    const msg = String(e?.message || e);
-    // Timeouts reject too; don't retry via zsh.
-    if (/timed out|timeout/i.test(msg) && !/node-not-found/i.test(msg)) {
-      return { code: 124, stdout: "", stderr: msg };
-    }
-    // Failed to start, or node missing under a shebang: fall back to login zsh.
-    const cmdline = ["af", ...args].map(shellQuote).join(" ");
-    return exec("/bin/zsh", ["-lc", cmdline], { timeout });
+    const cmdlineAf = ["af", ...args].map(shellQuote).join(" ");
+    return exec("/bin/zsh", ["-lc", cmdlineAf], { timeout });
   }
 }
 
@@ -130,7 +142,7 @@ export default class AfSessions extends View {
         const r = await execAf(["ls", "--json", "--all"], EXEC_TIMEOUT);
         if (r.code !== 0) {
           const tail = String(r.stderr || r.stdout || `exit ${r.code}`).trim().slice(-200);
-          this.error = tail || `af ls failed (${r.code})`;
+          this.error = tail || `aflt ls failed (${r.code})`;
           this.sessions = [];
           this.queryOk = false;
         } else {
@@ -161,7 +173,7 @@ export default class AfSessions extends View {
       const r = await execAf(["adopt", title], EXEC_TIMEOUT);
       if (r.code !== 0) {
         notify({
-          title: "af adopt failed",
+          title: "aflt adopt failed",
           body: String(r.stderr || r.stdout || "").trim().slice(-240),
           level: "error",
         });
@@ -172,7 +184,7 @@ export default class AfSessions extends View {
       const tab = row.herdrApp?.tab;
       if (space || tab) focusHerdr(space, tab);
     } catch (e) {
-      notify({ title: "af adopt failed", body: String(e?.message || e).slice(0, 200), level: "error" });
+      notify({ title: "aflt adopt failed", body: String(e?.message || e).slice(0, 200), level: "error" });
     }
   }
 
@@ -202,7 +214,7 @@ export default class AfSessions extends View {
           this.pollTask = null;
         }
         notify({
-          title: "af resume",
+          title: "aflt resume",
           body: `Started "${row.title}" but the Herdr tab did not appear yet.`,
           level: "warning",
         });
@@ -230,7 +242,7 @@ export default class AfSessions extends View {
       return;
     }
 
-    // shell / exited / missing / unknown / -: af resume (shell-only relaunches
+    // shell / exited / missing / unknown / -: aflt resume (shell-only relaunches
     // the engine into the existing tab via hc send, then we focus).
     if (this.starting[row.title]) return;
     this.starting[row.title] = true;
@@ -241,7 +253,7 @@ export default class AfSessions extends View {
         if (r.code !== 0) {
           this.starting[row.title] = false;
           notify({
-            title: "af resume failed",
+            title: "aflt resume failed",
             body: String(r.stderr || r.stdout || "").trim().slice(-240) || `exit ${r.code}`,
             level: "error",
           });
@@ -259,7 +271,7 @@ export default class AfSessions extends View {
         this.refresh(cx);
       } catch (e) {
         this.starting[row.title] = false;
-        notify({ title: "af resume failed", body: String(e?.message || e).slice(0, 200), level: "error" });
+        notify({ title: "aflt resume failed", body: String(e?.message || e).slice(0, 200), level: "error" });
         cx.notify();
       }
     });

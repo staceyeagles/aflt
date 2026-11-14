@@ -92,7 +92,7 @@ describe('spawnCaptured', () => {
   });
 });
 
-describe('af run CLI dry-run', () => {
+describe('aflt run CLI dry-run', () => {
   let tmp;
   before(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'af-cli-'));
@@ -136,26 +136,26 @@ describe('af run CLI dry-run', () => {
   it('help mentions run, log, spawn, children, result, wait, tail, send, stop, adopt, herdr-templates, engine, and herdr-app env', () => {
     const r = spawnSync(process.execPath, [afJs, 'help'], { encoding: 'utf8' });
     assert.equal(r.status, 0);
-    assert.ok(r.stdout.includes('af run'));
-    assert.ok(r.stdout.includes('af log'));
-    assert.ok(r.stdout.includes('af spawn'));
-    assert.ok(r.stdout.includes('af master'));
-    assert.ok(r.stdout.includes('af children'));
-    assert.ok(r.stdout.includes('af result'));
-    assert.ok(r.stdout.includes('af wait'));
+    assert.ok(r.stdout.includes('aflt run'));
+    assert.ok(r.stdout.includes('aflt log'));
+    assert.ok(r.stdout.includes('aflt spawn'));
+    assert.ok(r.stdout.includes('aflt master'));
+    assert.ok(r.stdout.includes('aflt children'));
+    assert.ok(r.stdout.includes('aflt result'));
+    assert.ok(r.stdout.includes('aflt wait'));
     assert.ok(r.stdout.includes('--parent'));
     assert.ok(r.stdout.includes('--send-grace'));
-    assert.ok(r.stdout.includes('af tail'));
-    assert.ok(r.stdout.includes('af send'));
-    assert.ok(r.stdout.includes('af stop'));
-    assert.ok(r.stdout.includes('af rm'));
-    assert.ok(r.stdout.includes('doctor') || r.stdout.includes('af doctor'));
+    assert.ok(r.stdout.includes('aflt tail'));
+    assert.ok(r.stdout.includes('aflt send'));
+    assert.ok(r.stdout.includes('aflt stop'));
+    assert.ok(r.stdout.includes('aflt rm'));
+    assert.ok(r.stdout.includes('doctor') || r.stdout.includes('aflt doctor'));
     assert.ok(r.stdout.includes('--keep-files'));
     assert.ok(r.stdout.includes('--children'));
-    assert.ok(r.stdout.includes('af adopt'));
-    assert.ok(r.stdout.includes('af engine'));
-    assert.ok(r.stdout.includes('af cursor'));
-    assert.ok(r.stdout.includes('af copilot'));
+    assert.ok(r.stdout.includes('aflt adopt'));
+    assert.ok(r.stdout.includes('aflt engine'));
+    assert.ok(r.stdout.includes('aflt cursor'));
+    assert.ok(r.stdout.includes('aflt copilot'));
     assert.ok(r.stdout.includes('AGENTFLEET_ENGINE'));
     assert.ok(r.stdout.includes('AGENTFLEET_PARENT'));
     assert.ok(r.stdout.includes('AGENTFLEET_RESULT'));
@@ -167,7 +167,7 @@ describe('af run CLI dry-run', () => {
     assert.ok(r.stdout.includes('AGENTFLEET_HERDR_APP_BIN'));
     assert.ok(r.stdout.includes('AGENTFLEET_HERDR_NAMES'));
     assert.ok(r.stdout.includes('herdr-templates'));
-    assert.ok(r.stdout.includes('af herdr-app install'));
+    assert.ok(r.stdout.includes('aflt herdr-app install'));
     assert.ok(r.stdout.includes('HERDR_APP_HOME'));
   });
 });

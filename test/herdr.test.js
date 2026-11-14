@@ -318,7 +318,7 @@ describe('fetchHerdrTerminals', () => {
   });
 });
 
-describe('af sync / af ls CLI', () => {
+describe('aflt sync / aflt ls CLI', () => {
   let tmp;
   let registry;
   let savedPath;
@@ -366,7 +366,7 @@ describe('af sync / af ls CLI', () => {
     });
   }
 
-  it('af sync --dry-run does not write or change lastUsed/status', () => {
+  it('aflt sync --dry-run does not write or change lastUsed/status', () => {
     stubHc(`
       const fs = require('fs');
       if (process.argv[2] === 'ls') {
@@ -402,7 +402,7 @@ describe('af sync / af ls CLI', () => {
     assert.deepEqual(baks, []);
   });
 
-  it('af sync persists herdr without changing lastUsed/status; failure does not write', () => {
+  it('aflt sync persists herdr without changing lastUsed/status; failure does not write', () => {
     stubHc(`
       if (process.argv[2] === 'ls') {
         process.stdout.write(${JSON.stringify(ALL_JSON)});
@@ -439,7 +439,7 @@ describe('af sync / af ls CLI', () => {
     assert.equal(JSON.stringify(registry.find(READY_ID).herdr), herdrBefore);
   });
 
-  it('af ls --json includes HERDR runtimes and herdrApp ids', () => {
+  it('aflt ls --json includes HERDR runtimes and herdrApp ids', () => {
     stubHc(`
       if (process.argv[2] === 'ls') {
         process.stdout.write(${JSON.stringify(ALL_JSON)});
@@ -476,7 +476,7 @@ describe('af sync / af ls CLI', () => {
     assert.equal(byId[plainSession.id].herdrApp.tab, herdrapp.herdrTabId({ id: plainSession.id }));
   });
 
-  it('af ls --json with no sessions prints empty sessions array', () => {
+  it('aflt ls --json with no sessions prints empty sessions array', () => {
     stubHc(`
       if (process.argv[2] === 'ls') {
         process.stdout.write(JSON.stringify({ terminals: [] }));
@@ -492,7 +492,7 @@ describe('af sync / af ls CLI', () => {
     assert.equal(out.queryOk, true);
   });
 
-  it('af resume --via herdr --dry-run prints Attach line and does not spawn hc run', () => {
+  it('aflt resume --via herdr --dry-run prints Attach line and does not spawn hc run', () => {
     const marker = path.join(tmp, 'hc-run-count');
     stubHc(`
       const fs = require('fs');
@@ -537,7 +537,7 @@ describe('af sync / af ls CLI', () => {
     assert.ok(!off.stdout.includes('herdr.space='));
   });
 
-  it('af resume defaults to herdr --dry-run and prints Attach', () => {
+  it('aflt resume defaults to herdr --dry-run and prints Attach', () => {
     const marker = path.join(tmp, 'hc-run-count-default');
     stubHc(`
       const fs = require('fs');
@@ -565,7 +565,7 @@ describe('af sync / af ls CLI', () => {
     assert.equal(fs.existsSync(marker), false);
   });
 
-  it('af resume --here / --via plain --dry-run stays in this terminal', () => {
+  it('aflt resume --here / --via plain --dry-run stays in this terminal', () => {
     stubHc(`
       if (process.argv[2] === 'ls') {
         process.stdout.write(JSON.stringify({ terminals: [] }));
@@ -591,7 +591,7 @@ describe('af sync / af ls CLI', () => {
     }
   });
 
-  it('af resume --open --dry-run prints iTerm AppleScript with absolute hc', () => {
+  it('aflt resume --open --dry-run prints iTerm AppleScript with absolute hc', () => {
     const hcPath = stubHc(`
       if (process.argv[2] === 'ls') {
         process.stdout.write(JSON.stringify({ terminals: [] }));
@@ -613,7 +613,7 @@ describe('af sync / af ls CLI', () => {
     assert.ok(r.stdout.includes('write text'));
   });
 
-  it('af resume with no title is an error on a non-TTY and does not hang', () => {
+  it('aflt resume with no title is an error on a non-TTY and does not hang', () => {
     stubHc(`
       if (process.argv[2] === 'ls') {
         process.stdout.write(JSON.stringify({ terminals: [] }));
@@ -623,10 +623,10 @@ describe('af sync / af ls CLI', () => {
     `);
     const r = runAf(['resume']);
     assert.notEqual(r.status, 0);
-    assert.match(r.stderr, /TTY|usage: af resume/);
+    assert.match(r.stderr, /TTY|usage: aflt resume/);
   });
 
-  it('af pick on a non-TTY is an error and does not hang', () => {
+  it('aflt pick on a non-TTY is an error and does not hang', () => {
     stubHc(`
       if (process.argv[2] === 'ls') {
         process.stdout.write(JSON.stringify({ terminals: [] }));
@@ -636,11 +636,11 @@ describe('af sync / af ls CLI', () => {
     `);
     const r = runAf(['pick']);
     assert.notEqual(r.status, 0);
-    assert.match(r.stderr, /TTY|usage: af resume/);
+    assert.match(r.stderr, /TTY|usage: aflt resume/);
   });
 
 
-  it('af resume --dry-run skips a live terminal whose ls JSON omitted labels', () => {
+  it('aflt resume --dry-run skips a live terminal whose ls JSON omitted labels', () => {
     const LIVE = 'img2img-upscale-workflow-3570cb';
     const lsNoLabels = JSON.stringify({
       terminals: [

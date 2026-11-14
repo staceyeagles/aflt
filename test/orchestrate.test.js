@@ -448,7 +448,7 @@ describe('detectWaitingTransition send-grace', () => {
     assert.equal(rendered, 'Hi ship it / {{MISSING}}');
     const tpl = orchestrate.loadOrchestratorTemplate();
     assert.ok(tpl.includes('{{GOAL}}'));
-    assert.ok(tpl.includes('af spawn'));
+    assert.ok(tpl.includes('aflt spawn'));
     assert.ok(tpl.includes('{{MESSAGING}}'));
     const full = orchestrate.renderTemplate(tpl, {
       GOAL: 'Do the thing',

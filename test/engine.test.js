@@ -404,9 +404,9 @@ process.exit(1);
   it('help mentions engine commands and AGENTFLEET_ENGINE', () => {
     const r = runAf(['help'], env());
     assert.equal(r.status, 0);
-    assert.ok(r.stdout.includes('af engine'));
-    assert.ok(r.stdout.includes('af cursor'));
-    assert.ok(r.stdout.includes('af copilot'));
+    assert.ok(r.stdout.includes('aflt engine'));
+    assert.ok(r.stdout.includes('aflt cursor'));
+    assert.ok(r.stdout.includes('aflt copilot'));
     assert.ok(r.stdout.includes('AGENTFLEET_ENGINE'));
     assert.ok(r.stdout.includes('AGENTFLEET_COPILOT_BIN'));
   });

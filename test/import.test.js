@@ -423,7 +423,7 @@ describe('af import CLI', () => {
   it('help mentions copilot import', () => {
     const r = runAf(['help'], env());
     assert.equal(r.status, 0);
-    assert.match(r.stdout, /af import/);
+    assert.match(r.stdout, /aflt import/);
     assert.match(r.stdout, /copilot/);
   });
 });

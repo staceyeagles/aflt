@@ -1,4 +1,4 @@
-# bash completion for agentfleet / af
+# bash completion for aflt (aliases: af, agentfleet)
 _af_session_titles() {
   local home reg
   home="${AGENTFLEET_HOME:-$HOME/.agentfleet}"
@@ -42,7 +42,7 @@ _af() {
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  cmds="new add import ls list sync run log spawn master docs children result wait tail send stop resume pick adopt cursor copilot engine rename cwd set-cwd done rm remove note export import-file which-backend herdr-templates herdr-app doctor msg inbox thread mcp help"
+  cmds="version new add import ls list sync run log spawn master docs children result wait tail send stop resume pick adopt cursor copilot engine rename cwd set-cwd done rm remove note export import-file which-backend herdr-templates herdr-app doctor msg inbox thread mcp help"
 
   if [[ ${COMP_CWORD} -eq 1 ]]; then
     COMPREPLY=( $(compgen -W "${cmds}" -- "${cur}") )
@@ -242,3 +242,4 @@ _af() {
 }
 complete -F _af af
 complete -F _af agentfleet
+complete -F _af aflt

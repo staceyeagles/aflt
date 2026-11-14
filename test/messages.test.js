@@ -383,7 +383,7 @@ exit 0
       const body = JSON.parse(r.stdout);
       const worker = registry.find(body.worker.id);
       assert.equal(worker.messaging, true);
-      assert.match(worker.prompt || '', /af msg|af inbox|Max 6/);
+      assert.match(worker.prompt || '', /aflt msg|aflt inbox|Max 6/);
       assert.match(worker.prompt || '', /post_message|read_inbox|list_team/);
 
       const masterOff = registry.add({
@@ -411,7 +411,7 @@ exit 0
       const body2 = JSON.parse(r2.stdout);
       const worker2 = registry.find(body2.worker.id);
       assert.equal(worker2.messaging, false);
-      assert.doesNotMatch(worker2.prompt || '', /af inbox/);
+      assert.doesNotMatch(worker2.prompt || '', /aflt inbox/);
     } finally {
       fs.rmSync(stubDir, { recursive: true, force: true });
     }

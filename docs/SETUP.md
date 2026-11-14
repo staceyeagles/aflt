@@ -2,7 +2,7 @@
 
 Self-contained guide to reproduce the home Mac mini agent-fleet stack on another macOS machine (for example a work laptop). Assumes macOS. Calls out **home-only** pieces (LAN ai-lb / ComfyUI) and gives work-friendly alternatives.
 
-Source of truth for `af`: the code and README in this repo (`bin/af.js`, `lib/backends.js`, `lib/cursor.js`, tests). Install commands below for Herdr, Cursor CLI, OpenCode, tmux, and WezTerm were checked against their official docs (2026-11).
+Source of truth for `aflt`: the code and README in this repo (`bin/af.js`, `lib/backends.js`, `lib/cursor.js`, tests). Install commands below for Herdr, Cursor CLI, OpenCode, tmux, and WezTerm were checked against their official docs (2026-11).
 
 ---
 
@@ -11,12 +11,12 @@ Source of truth for `af`: the code and README in this repo (`bin/af.js`, `lib/ba
 | Piece | Role |
 |-------|------|
 | **Cursor CLI** (`agent` / `cursor-agent`) | Primary coding agent. Interactive TUI or headless `-p`. Sessions resume with `--resume <chatId>`. |
-| **`af` (agentfleet)** | Tracks those chat sessions (title, chatId, cwd/worktree, tags, engine) in `~/.agentfleet/sessions.json`. Reopens a fleet after reboot via tmux / iTerm2 / WezTerm / Herdr / plain. Also has **`af run`** for headless one-shot prompts a controller can launch and collect, plus stage-1 **`af spawn` / `af children` / `af result`** for master/worker orchestration. |
-| **Herdr** (`hc` = herdr-core; optional desktop app) | Long-lived *interactive* agent terminals. Preferred front end when available: `af resume … --via herdr` launches `hc run --bg …`. Not used for `af run` print-mode. |
-| **OpenCode** (optional) | Cheap / local-friendly coding agent. At home it pointed at the LAN **ai-lb** OpenAI-compatible proxy. On a work machine, point it at any OpenAI-compatible endpoint you are allowed to use — or skip it. `af` does not wrap OpenCode headless; a Herdr template is provided for interactive use. |
-| **GitHub Copilot CLI** (optional) | Separate coding agent (`copilot`, also reachable as `gh copilot`). Interactive via `af new --engine copilot` / resume (`--session-id=`), and headless via `af run --engine copilot` (`-p`). This is **not** `gh` repo tooling and **not** `gh agent-task`. See §3.8 for a Copilot-only work Mac. |
-| **tmux / WezTerm / iTerm2** | Terminal backends for `af resume --all` when Herdr is not the front end. tmux is best for headless/SSH; WezTerm or iTerm2 for a GUI Mac. |
-| **Git worktree per task** | One cwd (worktree) per agent session so agents do not stomp each other's files. `af` records that cwd and always resumes with `--workspace`. |
+| **`aflt` (AgentFleet)** | Tracks those chat sessions (title, chatId, cwd/worktree, tags, engine) in `~/.agentfleet/sessions.json`. Reopens a fleet after reboot via tmux / iTerm2 / WezTerm / Herdr / plain. Also has **`aflt run`** for headless one-shot prompts a controller can launch and collect, plus stage-1 **`aflt spawn` / `aflt children` / `aflt result`** for master/worker orchestration. |
+| **Herdr** (`hc` = herdr-core; optional desktop app) | Long-lived *interactive* agent terminals. Preferred front end when available: `aflt resume … --via herdr` launches `hc run --bg …`. Not used for `aflt run` print-mode. |
+| **OpenCode** (optional) | Cheap / local-friendly coding agent. At home it pointed at the LAN **ai-lb** OpenAI-compatible proxy. On a work machine, point it at any OpenAI-compatible endpoint you are allowed to use — or skip it. `aflt` does not wrap OpenCode headless; a Herdr template is provided for interactive use. |
+| **GitHub Copilot CLI** (optional) | Separate coding agent (`copilot`, also reachable as `gh copilot`). Interactive via `aflt new --engine copilot` / resume (`--session-id=`), and headless via `aflt run --engine copilot` (`-p`). This is **not** `gh` repo tooling and **not** `gh agent-task`. See §3.8 for a Copilot-only work Mac. |
+| **tmux / WezTerm / iTerm2** | Terminal backends for `aflt resume --all` when Herdr is not the front end. tmux is best for headless/SSH; WezTerm or iTerm2 for a GUI Mac. |
+| **Git worktree per task** | One cwd (worktree) per agent session so agents do not stomp each other's files. `aflt` records that cwd and always resumes with `--workspace`. |
 
 Recommended division of labor (same as the home workflow):
 
@@ -56,7 +56,7 @@ flowchart LR
 |----------|--------------|------------------|
 | ai-lb OpenAI-compatible proxy | `http://192.168.10.101:11435/v1` (e.g. `gemma4:12b-16k`) | Point OpenCode at any allowed OpenAI-compatible `…/v1` endpoint, use `/connect` for a cloud provider, or **skip OpenCode** |
 | ComfyUI | `192.168.10.102:8188` | Not part of this fleet stack; omit |
-| Herdr desktop Cursor/OpenCode *app* integrations | Desktop app is installed on the home Mini (`~/Applications/Herdr.app`) but `~/.config/herdr-app` was absent as of 2026-11-10; no GUI recipes to finish from the CLI | Use `hc` templates (`af herdr-templates`) + `af resume --via herdr` + raw CLIs; see §3.6 and §8 |
+| Herdr desktop Cursor/OpenCode *app* integrations | Desktop app is installed on the home Mini (`~/Applications/Herdr.app`) but `~/.config/herdr-app` was absent as of 2026-11-10; no GUI recipes to finish from the CLI | Use `hc` templates (`aflt herdr-templates`) + `aflt resume --via herdr` + raw CLIs; see §3.6 and §8 |
 
 ---
 
@@ -191,7 +191,7 @@ hc kill af-smoke; hc rm af-smoke   # if it has already exited, just hc rm
 
 - `hc` 0.1.16 at `~/.local/bin/hc`; Herdr.app at `~/Applications/Herdr.app` (also `~/.local/bin/herdr-app`).
 - `hc templates` was empty; `~/.config/herdr-core` did not exist; `~/.config/herdr-app` did not exist. The desktop app's agent-menu integrations were not configured, and finishing those in the GUI needs the Herdr desktop (not available to a CLI-only agent).
-- CLI path that *is* finished: `af herdr-templates` installs bundled `cursor.md` and `opencode.md` into `~/.config/herdr-core/templates/` (official format from [templates.md](https://github.com/herdrdev/herdr-core/blob/master/docs/templates.md): `command`, `description`, `ready: quiet`). Then:
+- CLI path that *is* finished: `aflt herdr-templates` installs bundled `cursor.md` and `opencode.md` into `~/.config/herdr-core/templates/` (official format from [templates.md](https://github.com/herdrdev/herdr-core/blob/master/docs/templates.md): `command`, `description`, `ready: quiet`). Then:
 
 ```bash
 hc templates
@@ -201,7 +201,7 @@ hc read review --lines 100
 
 `ready: quiet` is used because Cursor CLI and OpenCode do not implement Herdr's OSC 7501 status protocol, so the default "wait for a status report" readiness would often fail to send the first message. If the first message is still delayed, `hc read` then `hc send`.
 
-`af resume --via herdr` still does **not** need templates — it shells out to `hc run` with `cursor-agent --resume …` directly.
+`aflt resume --via herdr` still does **not** need templates — it shells out to `hc run` with `cursor-agent --resume …` directly.
 
 Home Mini ran **hc 0.1.16**; current upstream may be newer — `hc update` is fine, but re-check `hc run` if you upgrade (especially the `--` behavior).
 
@@ -282,42 +282,44 @@ copilot     # first run: sign in
 git clone <this-repo> ~/src/af   # or copy the tree
 cd ~/src/af && npm install
 mkdir -p "$HOME/.local/bin"
-ln -sfn "$PWD/bin/af.js" "$HOME/.local/bin/af"
+ln -sfn "$PWD/bin/af.js" "$HOME/.local/bin/aflt"   # primary command
+ln -sfn "$PWD/bin/af.js" "$HOME/.local/bin/af"     # optional alias
+ln -sfn "$PWD/bin/af.js" "$HOME/.local/bin/agentfleet"  # optional alias
 export PATH="$HOME/.local/bin:$PATH"
 
-af copilot                 # persist defaultEngine=copilot in ~/.agentfleet/config.json
-af herdr-app install       # af-sessions panel + af layout
-af new "first-task"        # mints UUID, launches interactive copilot (or --dry-run first)
+aflt copilot                 # persist defaultEngine=copilot in ~/.agentfleet/config.json
+aflt herdr-app install       # af-sessions panel + af layout
+aflt new "first-task"        # mints UUID, launches interactive copilot (or --dry-run first)
 
 # Import existing Copilot CLI sessions from ~/.copilot/session-state/
-af import                  # lists Copilot sessions when defaultEngine=copilot
-af import copilot          # same, explicit (works even if default is cursor)
-af import copilot <uuid>   # register by full id or unique ≥8-char prefix
-af import copilot --all --cwd ~/src/app
+aflt import                  # lists Copilot sessions when defaultEngine=copilot
+aflt import copilot          # same, explicit (works even if default is cursor)
+aflt import copilot <uuid>   # register by full id or unique ≥8-char prefix
+aflt import copilot --all --cwd ~/src/app
 ```
 
-Override without changing config: `af new "…" --engine cursor` / `AGENTFLEET_ENGINE=cursor`. Resume always uses the session's recorded engine. Import follows the same default-engine rules; `af import cursor` always scans `~/.cursor/chats/`.
+Override without changing config: `aflt new "…" --engine cursor` / `AGENTFLEET_ENGINE=cursor`. Resume always uses the session's recorded engine. Import follows the same default-engine rules; `aflt import cursor` always scans `~/.cursor/chats/`.
 
-**Documentarian (optional):** docs updates are **off by default**. Add `{"docs": true}` to `.agentfleet.json` (optional `"docsPaths"`, `"docsEngine"`, `"docsForce": false`). Default paths are `README.md` + `docs/` (+ `CHANGELOG.md` only if it already exists). `af docs` grants write tools by default (`--no-force` to opt out). Auto-trigger after headless master / `af wait --docs`; docs failure warns but does not fail the master; `af wait --docs` errors if no master. State: `$AGENTFLEET_HOME/docs/<hash>.json`. See README “Documentarian”.
+**Documentarian (optional):** docs updates are **off by default**. Add `{"docs": true}` to `.agentfleet.json` (optional `"docsPaths"`, `"docsEngine"`, `"docsForce": false`). Default paths are `README.md` + `docs/` (+ `CHANGELOG.md` only if it already exists). `aflt docs` grants write tools by default (`--no-force` to opt out). Auto-trigger after headless master / `aflt wait --docs`; docs failure warns but does not fail the master; `aflt wait --docs` errors if no master. State: `$AGENTFLEET_HOME/docs/<hash>.json`. See README “Documentarian”.
 
-**Task-scoped messaging MCP (optional):** messaging is **off by default**. After `af msg enable <session>` (or project `.agentfleet.json` with `{"messaging": true}`), Copilot can use af’s MCP tools when the session was launched by af (identity via inherited `AGENTFLEET_SESSION` / `AGENTFLEET_ID` — no per-session env in the MCP config):
+**Task-scoped messaging MCP (optional):** messaging is **off by default**. After `aflt msg enable <session>` (or project `.agentfleet.json` with `{"messaging": true}`), Copilot can use af’s MCP tools when the session was launched by aflt (identity via inherited `AGENTFLEET_SESSION` / `AGENTFLEET_ID` — no per-session env in the MCP config):
 
 ```bash
 # Preview the snippet for ~/.copilot/mcp-config.json (type:local + tools:["*"])
-af mcp install --engine copilot
+aflt mcp install --engine copilot
 
 # Merge into the real config (backs up to mcp-config.json.bak-<timestamp> first)
-af mcp install --engine copilot --write
+aflt mcp install --engine copilot --write
 
-# Cursor: project mcp.json (preferred; then af passes --approve-mcps when messaging is on).
+# Cursor: project mcp.json (preferred; then aflt passes --approve-mcps when messaging is on).
 # Install writes env "${env:AGENTFLEET_SESSION}" (etc.) so cursor-agent forwards identity
 # into the MCP child (cursor does not inherit process env into MCP servers).
-af mcp install --engine cursor --project --cwd ~/src/app
+aflt mcp install --engine cursor --project --cwd ~/src/app
 # Cursor user config (optional)
-af mcp install --engine cursor --write
+aflt mcp install --engine cursor --write
 ```
 
-Until messaging is enabled for the running session, `af mcp` advertises no tools. Copilot launches get a per-run `--additional-mcp-config` automatically when messaging is enabled (no `~/.copilot` write). If an older Cursor `af` entry lacks the `${env:…}` mapping, re-run install (af warns on launch; `af doctor` flags `mcp_cursor`).
+Until messaging is enabled for the running session, `aflt mcp` advertises no tools. Copilot launches get a per-run `--additional-mcp-config` automatically when messaging is enabled (no `~/.copilot` write). If an older Cursor `af` entry lacks the `${env:…}` mapping, re-run install (`aflt` warns on launch; `aflt doctor` flags `mcp_cursor`).
 
 ### 3.9 Install `af` from this archive
 
@@ -330,13 +332,14 @@ Preferred user-local layout (used on the home Mini; avoids writing under `/usr/l
 mkdir -p "$HOME/.local/share" "$HOME/.local/bin"
 # install tree: ~/.local/share/agentfleet
 cp -R /path/to/agentfleet "$HOME/.local/share/agentfleet"
-ln -sfn "$HOME/.local/share/agentfleet/bin/af.js" "$HOME/.local/bin/af"
-ln -sfn "$HOME/.local/share/agentfleet/bin/af.js" "$HOME/.local/bin/agentfleet"
+ln -sfn "$HOME/.local/share/agentfleet/bin/af.js" "$HOME/.local/bin/aflt"
+ln -sfn "$HOME/.local/share/agentfleet/bin/af.js" "$HOME/.local/bin/af"          # optional alias
+ln -sfn "$HOME/.local/share/agentfleet/bin/af.js" "$HOME/.local/bin/agentfleet" # optional alias
 
 export PATH="$HOME/.local/bin:$PATH"
-af help
+aflt help
 cd "$HOME/.local/share/agentfleet" && npm test
-af herdr-templates    # optional; skips files that already exist
+aflt herdr-templates    # optional; skips files that already exist
 ```
 
 Alternatives: `npm install -g --prefix "$HOME/.local" .` (creates `~/.local/lib`), `npm link`, or `alias af='node /path/to/agentfleet/bin/af.js'`. Avoid `npm install -g .` into `/usr/local` unless you intend to write there.
@@ -369,28 +372,28 @@ export AGENTFLEET_CURSOR_BIN="$HOME/.local/bin/cursor-agent"
 | `AGENTFLEET_HERDR_APP` | Set `0` / `false` / `off` / `no` to skip Herdr-app space/tab labels. |
 | `AGENTFLEET_HERDR_APP_BIN` | Override `herdr-app` binary path. |
 | `AGENTFLEET_HERDR_NAMES` | Set `0` / `false` / `off` / `no` to skip `space.rename` + `tab.rename` (Agents list titles); labels still applied. |
-| `HERDR_APP_HOME` | Herdr app config dir for `af herdr-app install` (default `~/.config/herdr-app`). |
+| `HERDR_APP_HOME` | Herdr app config dir for `aflt herdr-app install` (default `~/.config/herdr-app`). |
 | `~/.config/herdr-core/config.toml` | herdr-core settings. |
 | `~/.config/opencode/opencode.json` | OpenCode global config (v2). |
 | `CURSOR_API_KEY` | Headless Cursor auth alternative to `agent login`. |
 | `AGENTFLEET_COPILOT_BIN` | Force path to `copilot`. |
-| `AGENTFLEET_COPILOT_HOME` | Override Copilot config/home dir (default `COPILOT_HOME` or `~/.copilot`); `af import` reads `session-state/` under it. |
+| `AGENTFLEET_COPILOT_HOME` | Override Copilot config/home dir (default `COPILOT_HOME` or `~/.copilot`); `aflt import` reads `session-state/` under it. |
 | `COPILOT_HOME` | Upstream Copilot home; used when `AGENTFLEET_COPILOT_HOME` is unset. |
 | `PATH` | Must include `~/.local/bin` (and Homebrew). |
-| `~/.config/herdr-core/templates/*.md` | `hc` agent templates (`af herdr-templates`). |
-| `~/.agentfleet/runs/<id>/` | Captured `af run` output (mode `0600`). |
-| `~/.agentfleet/results/<id>.md` | Worker handoff files from `af spawn` (see README “Master and worker agents”). |
+| `~/.config/herdr-core/templates/*.md` | `hc` agent templates (`aflt herdr-templates`). |
+| `~/.agentfleet/runs/<id>/` | Captured `aflt run` output (mode `0600`). |
+| `~/.agentfleet/results/<id>.md` | Worker handoff files from `aflt spawn` (see README “Master and worker agents”). |
 | `AGENTFLEET_ID` / `SESSION` / `MASTER` / `PARENT` / `RESULT` | Set on launched sessions / spawned workers for orchestration and messaging. |
-| `af msg` / `inbox` / `thread` / `af mcp` | Task-scoped messaging (off by default; see README “Messaging”). |
+| `aflt msg` / `inbox` / `thread` / `aflt mcp` | Task-scoped messaging (off by default; see README “Messaging”). |
 | `AGENTFLEET_MSG_MAX_THREAD` / `AGENTFLEET_MSG_RATE` | Thread cap (default 6) and per-sender rate (default 10/60s). |
-| `af wait` / `af tail` / `af send` / `af stop` | Stage 2 master/worker controls (see README “Master and worker agents (stage 2)”). |
-| `af master` / `--send-grace` / `AGENTFLEET_SEND_GRACE` | Stage 3: bootstrap a master with `templates/orchestrator.md`; wait grace after interactive send (see README “Master and worker agents (stage 3)”). |
-| `AGENTFLEET_ROLE` / `AGENTFLEET_PLAN` | Set on `af master` launches (`master`; plan under `~/.agentfleet/plans/<id>.md`). |
-| `af wait --parent` | Wait on all children of a master (ids on the CLI still win). |
+| `aflt wait` / `aflt tail` / `aflt send` / `aflt stop` | Stage 2 master/worker controls (see README “Master and worker agents (stage 2)”). |
+| `aflt master` / `--send-grace` / `AGENTFLEET_SEND_GRACE` | Stage 3: bootstrap a master with `templates/orchestrator.md`; wait grace after interactive send (see README “Master and worker agents (stage 3)”). |
+| `AGENTFLEET_ROLE` / `AGENTFLEET_PLAN` | Set on `aflt master` launches (`master`; plan under `~/.agentfleet/plans/<id>.md`). |
+| `aflt wait --parent` | Wait on all children of a master (ids on the CLI still win). |
 | Copilot `--allow-tool=write(<result>)` | Pre-approves the handoff/plan path without `--force`; af falls back from stdout if the file is still missing. |
 | `~/.agentfleet/plans/<id>.md` | Master plan file (not in the project cwd). |
 | Headless SIGINT/SIGTERM/SIGHUP | `af` forwards SIGTERM to the engine process group; exits 130/143 (does not orphan the CLI). |
-| `af rm` / `--keep-files` / `--children` | Removes registry row + af-owned files under `$AGENTFLEET_HOME` only (never project/`~/.cursor`/`~/.copilot`). |
+| `aflt rm` / `--keep-files` / `--children` | Removes registry row + af-owned files under `$AGENTFLEET_HOME` only (never project/`~/.cursor`/`~/.copilot`). |
 
 Backend auto-detect order in `af` (`lib/backends.js`):  
 `$AGENTFLEET_VIA` → inside Herdr (`HERDR` / `HC_TERMINAL` / … and `hc` on PATH) → inside tmux → `TERM_PROGRAM` WezTerm / iTerm → `tmux` on PATH → `wezterm` → `plain`.
@@ -398,7 +401,7 @@ Backend auto-detect order in `af` (`lib/backends.js`):
 Check what your shell would pick:
 
 ```bash
-af which-backend
+aflt which-backend
 ```
 
 ---
@@ -418,26 +421,26 @@ git -C "$REPO" worktree add -b "feat/${TASK}" "$REPO-wt-${TASK}" origin/main
 cd "$REPO-wt-${TASK}"
 
 # Create chat, register, and drop into interactive resume
-af new "$TASK" --cwd "$PWD" --prompt "Refactor auth to JWT" --model gpt-5
+aflt new "$TASK" --cwd "$PWD" --prompt "Refactor auth to JWT" --model gpt-5
 ```
 
 Register an existing chat instead:
 
 ```bash
-af add "$TASK" --chat aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --cwd "$REPO-wt-${TASK}"
+aflt add "$TASK" --chat aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --cwd "$REPO-wt-${TASK}"
 ```
 
 List / annotate:
 
 ```bash
-af ls                         # STATUS = lifecycle; HERDR = running|exited|missing|unknown|-
-af ls --json
-af sync --dry-run             # preview Herdr runtime that would be persisted
-af sync                       # persist herdr evidence only (not status / lastUsed)
-af note "$TASK" "dev server: npm run dev on :5173"
+aflt ls                         # STATUS = lifecycle; HERDR = running|exited|missing|unknown|-
+aflt ls --json
+aflt sync --dry-run             # preview Herdr runtime that would be persisted
+aflt sync                       # persist herdr evidence only (not status / lastUsed)
+aflt note "$TASK" "dev server: npm run dev on :5173"
 ```
 
-**STATUS vs HERDR:** `STATUS` is the saved task lifecycle (`active`/`paused`/`done`). A Herdr process exiting does **not** mean the task is done — mark that with `af done`. `HERDR` is live runtime from `hc ls --all --json` (matched only by label `af_id=<session.id>`). Sessions never launched via Herdr show `-`, not `missing`. Default `hc ls` hides finished terminals; `hc ls --all` is required so finished shows as `exited`. Attach with `~/.local/bin/hc attach <name>`.
+**STATUS vs HERDR:** `STATUS` is the saved task lifecycle (`active`/`paused`/`done`). A Herdr process exiting does **not** mean the task is done — mark that with `aflt done`. `HERDR` is live runtime from `hc ls --all --json` (matched only by label `af_id=<session.id>`). Sessions never launched via Herdr show `-`, not `missing`. Default `hc ls` hides finished terminals; `hc ls --all` is required so finished shows as `exited`. Attach with `~/.local/bin/hc attach <name>`.
 
 ### 5.2 Headless run (controller / Grok Bot)
 
@@ -445,53 +448,53 @@ Use this when another agent or a script should offload a task to Cursor (or Copi
 
 ```bash
 # Cheap read-only (Cursor --mode ask). --force is omitted on purpose.
-af run "smoke-ask" --prompt "Reply with the single word pong and nothing else." --mode ask --cwd /tmp
+aflt run "smoke-ask" --prompt "Reply with the single word pong and nothing else." --mode ask --cwd /tmp
 
 # Plan only (still read-only)
-af run "smoke-ask" --prompt "Outline how you would add a --json flag." --mode plan --cwd "$PWD"
+aflt run "smoke-ask" --prompt "Outline how you would add a --json flag." --mode plan --cwd "$PWD"
 
 # Editing run — only when you intend the agent to change files / run tools
-af run "fix-tests" --prompt "Fix the failing unit tests." --force --cwd "$REPO-wt-${TASK}"
+aflt run "fix-tests" --prompt "Fix the failing unit tests." --force --cwd "$REPO-wt-${TASK}"
 
 # Bound the wait
-af run "smoke-ask" --prompt "…" --mode ask --cwd "$PWD" --timeout 180
+aflt run "smoke-ask" --prompt "…" --mode ask --cwd "$PWD" --timeout 180
 
 # Collected output
-af log smoke-ask
-af log smoke-ask --path     # ~/.agentfleet/runs/<id>/<timestamp>.cursor.txt
+aflt log smoke-ask
+aflt log smoke-ask --path     # ~/.agentfleet/runs/<id>/<timestamp>.cursor.txt
 ```
 
 Stdout is the print-mode response. Stderr has progress plus `output: <path>`.
 
-**Cursor `--trust` default (caller-controlled):** `af run` and `af resume` (including `--via herdr`) pass `--trust` unless you pass `--no-trust`. That only skips Cursor's "Workspace Trust Required" dialog in a registered cwd. It is visible in `--dry-run` and is **not** `--force` (it does not auto-approve tools or shell). A Mini smoke on 2026-11-10 hit that dialog before this default was added. Use `--no-trust` if you want the prompt.
+**Cursor `--trust` default (caller-controlled):** `aflt run` and `aflt resume` (including `--via herdr`) pass `--trust` unless you pass `--no-trust`. That only skips Cursor's "Workspace Trust Required" dialog in a registered cwd. It is visible in `--dry-run` and is **not** `--force` (it does not auto-approve tools or shell). A Mini smoke on 2026-11-10 hit that dialog before this default was added. Use `--no-trust` if you want the prompt.
 
-**Copilot:** `--help` claims `--allow-all-tools` is required for `-p`, but a no-tool "reply pong" prompt succeeded without it (CLI 1.0.83, Mini, 2026-11-10). `af run --engine copilot` therefore does **not** add `--allow-all-tools` unless you pass `--force`. `--force` is an explicit grant (not `--allow-all` / `--yolo`). For a text-only prompt, omit `--force`.
+**Copilot:** `--help` claims `--allow-all-tools` is required for `-p`, but a no-tool "reply pong" prompt succeeded without it (CLI 1.0.83, Mini, 2026-11-10). `aflt run --engine copilot` therefore does **not** add `--allow-all-tools` unless you pass `--force`. `--force` is an explicit grant (not `--allow-all` / `--yolo`). For a text-only prompt, omit `--force`.
 
 ```bash
-af run "copilot-probe" --engine copilot --prompt "Reply pong." --cwd "$PWD" --dry-run
-af run "copilot-probe" --engine copilot --prompt "Reply pong." --cwd "$PWD" --timeout 90
+aflt run "copilot-probe" --engine copilot --prompt "Reply pong." --cwd "$PWD" --dry-run
+aflt run "copilot-probe" --engine copilot --prompt "Reply pong." --cwd "$PWD" --timeout 90
 # only if you intend auto-approved tools in that cwd:
-af run "copilot-probe" --engine copilot --prompt "…" --cwd "$PWD" --force
+aflt run "copilot-probe" --engine copilot --prompt "…" --cwd "$PWD" --force
 ```
 
 `gh` itself (`gh pr`, `gh issue`, `gh api`, …) stays a separate CLI. `af` will not run it, will not commit or push, and will not create `gh agent-task` cloud jobs. Use `gh` directly when you want repo operations, with the usual approval rules.
 
-Do not combine `af run` with `--via herdr`. Long-lived interactive sessions use §5.3.
+Do not combine `aflt run` with `--via herdr`. Long-lived interactive sessions use §5.3.
 
 ### 5.3 Launch / resume via Herdr
 
 ```bash
 # One session into Herdr (default when hc is on PATH; skips if already live)
-af resume "$TASK"
-af resume "$TASK" --via herdr             # same
-af resume "$TASK" --dry-run               # print hc command + Attach line
-af resume "$TASK" --here                  # Cursor TUI in this terminal
-af resume "$TASK" --open                  # also open an iTerm2 tab: hc attach <name>
-af resume                                 # TTY picker (or: af resume -i / af pick)
+aflt resume "$TASK"
+aflt resume "$TASK" --via herdr             # same
+aflt resume "$TASK" --dry-run               # print hc command + Attach line
+aflt resume "$TASK" --here                  # Cursor TUI in this terminal
+aflt resume "$TASK" --open                  # also open an iTerm2 tab: hc attach <name>
+aflt resume                                 # TTY picker (or: aflt resume -i / aflt pick)
 
 # Entire active fleet
-af resume --all --via herdr
-af resume --all --via herdr --dry-run
+aflt resume --all --via herdr
+aflt resume --all --via herdr --dry-run
 ```
 
 What `af` builds (from `buildHerdrCommands`):
@@ -511,15 +514,15 @@ hc run --bg --no-parent --outlive-parent \
 
 (`TERM`/`COLORTERM` assignments are added only when the caller's `TERM` is unset, empty, or `dumb`, so non-TTY af launches still get a color-capable Cursor TUI.)
 
-Names are lowercased, sanitized to `[a-z0-9_-]`, truncated to 32 chars, and de-duplicated. `--cwd` is the realpath-normalized session folder (must exist); engine `--workspace` / `-C` and `herdr.space` use the same path. Sessions already present in `hc ls --json` with matching `af_id` and a **non-shell** agent are skipped. A live tab whose agent is only a shell (`zsh`/`bash`/…, typical after reboot/`--keep`) is **not** skipped: `af resume` runs `hc send <addr> "cd '<cwd>' && env -u … <engine>"` into that tab (no new `hc run`). Resume restores chat context via `--resume <chatId>` and does **not** resend the saved original task prompt (a prompt is sent only on `af new --prompt` or an explicit `--prompt` on that resume). Prefer herdr-core ≥ 0.1.20 (`af doctor` warns when older; update with `hc update`) so restored shells keep the launch cwd instead of landing in `~`.
+Names are lowercased, sanitized to `[a-z0-9_-]`, truncated to 32 chars, and de-duplicated. `--cwd` is the realpath-normalized session folder (must exist); engine `--workspace` / `-C` and `herdr.space` use the same path. Sessions already present in `hc ls --json` with matching `af_id` and a **non-shell** agent are skipped. A live tab whose agent is only a shell (`zsh`/`bash`/…, typical after reboot/`--keep`) is **not** skipped: `aflt resume` runs `hc send <addr> "cd '<cwd>' && env -u … <engine>"` into that tab (no new `hc run`). Resume restores chat context via `--resume <chatId>` and does **not** resend the saved original task prompt (a prompt is sent only on `aflt new --prompt` or an explicit `--prompt` on that resume). Prefer herdr-core ≥ 0.1.20 (`aflt doctor` warns when older; update with `hc update`) so restored shells keep the launch cwd instead of landing in `~`.
 
 #### Herdr app (desktop)
 
 ### Smoke
 
 ```bash
-hc server status && hc ls --json | head -c 200 && af ls
-af doctor
+hc server status && hc ls --json | head -c 200 && aflt ls
+aflt doctor
 ```
 
 Capability matrix: [CAPABILITIES.md](CAPABILITIES.md).
@@ -530,16 +533,16 @@ The Herdr desktop app shows any core terminal labeled `herdr.space=<id>` and `he
 - `herdr.space` = `sp` + md5(`agentfleet:space:` + normalized cwd) — sessions in the same repo/cwd share a space
 - `herdr.tab` = `tb` + md5(`agentfleet:tab:` + session.id) — one tab per af session; stable across resumes
 
-On Herdr launch, `af` also passes `--keep` (lost program → shell; Cursor is **not** re-run — use `af resume` again), waits briefly for the app to create the labeled space, then best-effort **names the space** (group session title) and **tab** (session title) via `herdr-app do space.rename` / `tab.rename` (never fails the resume). Space ids are **session-group** based (workers join the master), not folder/repo based — so the Agents list shows `dxs-icm-management · dxs-icm-management` instead of `copilot-master-directory · dxs-icm-management`. Opt out of labels with `--no-herdr-app` or `AGENTFLEET_HERDR_APP=0|false|off|no`; skip renames only with `AGENTFLEET_HERDR_NAMES=0`. Override the binary with `AGENTFLEET_HERDR_APP_BIN` (default: `herdr-app` on PATH, typically `~/.local/bin/herdr-app`).
+On Herdr launch, `aflt` also passes `--keep` (lost program → shell; Cursor is **not** re-run — use `aflt resume` again), waits briefly for the app to create the labeled space, then best-effort **names the space** (group session title) and **tab** (session title) via `herdr-app do space.rename` / `tab.rename` (never fails the resume). Space ids are **session-group** based (workers join the master), not folder/repo based — so the Agents list shows `dxs-icm-management · dxs-icm-management` instead of `copilot-master-directory · dxs-icm-management`. Opt out of labels with `--no-herdr-app` or `AGENTFLEET_HERDR_APP=0|false|off|no`; skip renames only with `AGENTFLEET_HERDR_NAMES=0`. Override the binary with `AGENTFLEET_HERDR_APP_BIN` (default: `herdr-app` on PATH, typically `~/.local/bin/herdr-app`).
 
-`af adopt` moves existing panes when the app is open: if `herdr-app ls` shows the terminal in the wrong space, it parks → labels → keeps → waits → renames (labels alone do not move panes). After pulling session-group naming, run `af adopt --all` with the Herdr app open; empty old spaces may remain and can be closed in the app.
+`aflt adopt` moves existing panes when the app is open: if `herdr-app ls` shows the terminal in the wrong space, it parks → labels → keeps → waits → renames (labels alone do not move panes). After pulling session-group naming, run `aflt adopt --all` with the Herdr app open; empty old spaces may remain and can be closed in the app.
 
 Adopt / migrate terminals (including legacy cwd-based `herdr.space` labels):
 
 ```bash
-af adopt --all                 # or: af adopt <title|id …>
-af adopt --all --dry-run
-af adopt --all --json
+aflt adopt --all                 # or: aflt adopt <title|id …>
+aflt adopt --all --dry-run
+aflt adopt --all --json
 ```
 
 That runs `hc label <addr> herdr.space=… herdr.tab=…` and `hc keep <addr>`, then space+tab rename. Cursor does not emit OSC 7501 (Agents panel empty for Cursor); Copilot may report agent state when supported. See [CAPABILITIES.md](CAPABILITIES.md).
@@ -547,7 +550,7 @@ That runs `hc label <addr> herdr.space=… herdr.tab=…` and `hc keep <addr>`, 
 Optional sidebar panel (lists af sessions; click to focus/resume):
 
 ```bash
-af herdr-app install              # symlink panel + af layout into ~/.config/herdr-app
+aflt herdr-app install              # symlink panel + af layout into ~/.config/herdr-app
 herdr-app do layout.switch --name af
 # back: herdr-app do layout.switch --name main   (or ctrl-shift-l / escape hatch)
 ```
@@ -556,38 +559,38 @@ List / attach:
 
 ```bash
 hc ls              # live only (finished are hidden)
-hc ls --all --json # includes finished (what af ls / af sync query)
+hc ls --all --json # includes finished (what aflt ls / aflt sync query)
 ~/.local/bin/hc attach <name>
 herdr-app ls       # desktop spaces/tabs (when the app window is running)
 ```
 
-`af resume` / `af resume --via herdr` (and `--dry-run`) prints a copy-pasteable `Attach: hc attach <name>` for each launched or already-live skipped session. In an iTerm2 TTY, a new tab running the attach command (absolute `~/.local/bin/hc` path) opens by default; `--no-open` prints the line only. `--all` still auto-detects its backend and does not default to Herdr just because `hc` is on PATH.
+`aflt resume` / `aflt resume --via herdr` (and `--dry-run`) prints a copy-pasteable `Attach: hc attach <name>` for each launched or already-live skipped session. In an iTerm2 TTY, a new tab running the attach command (absolute `~/.local/bin/hc` path) opens by default; `--no-open` prints the line only. `--all` still auto-detects its backend and does not default to Herdr just because `hc` is on PATH.
 
-`af ls` shows a HERDR column from that `--all` query without writing the registry. `af sync` persists last-known `herdr` evidence (runtime/address/exit) and does **not** overwrite `status` or `lastUsed`. Process exit ≠ task done.
+`aflt ls` shows a HERDR column from that `--all` query without writing the registry. `aflt sync` persists last-known `herdr` evidence (runtime/address/exit) and does **not** overwrite `status` or `lastUsed`. Process exit ≠ task done.
 
 ### 5.4 Launch / resume via tmux / WezTerm / iTerm2 / plain
 
 ```bash
-af resume --all --via tmux
+aflt resume --all --via tmux
 tmux attach -t agentfleet
 
-af resume --all --via wezterm
-af resume --all --via iterm2
-af resume --all --via plain          # print commands only
-af resume --all --dry-run
-af resume "$TASK" --here             # this terminal; sets OSC tab title
+aflt resume --all --via wezterm
+aflt resume --all --via iterm2
+aflt resume --all --via plain          # print commands only
+aflt resume --all --dry-run
+aflt resume "$TASK" --here             # this terminal; sets OSC tab title
 ```
 
 ### 5.5 Track → finish → cleanup
 
 ```bash
-af ls
-af rename "$TASK" "auth-jwt-done"
-af done "$TASK"          # status=done (hidden from default ls)
-af ls --all              # include done
-af export ~/backup-af-sessions.json
-af rm --dry-run "$TASK"  # preview; default deletes af-owned results/runs/plans under $AGENTFLEET_HOME
-af rm --keep-files "$TASK"  # registry row only (keeps handoffs/logs; never deletes Cursor/Copilot chats)
+aflt ls
+aflt rename "$TASK" "auth-jwt-done"
+aflt done "$TASK"          # status=done (hidden from default ls)
+aflt ls --all              # include done
+aflt export ~/backup-af-sessions.json
+aflt rm --dry-run "$TASK"  # preview; default deletes af-owned results/runs/plans under $AGENTFLEET_HOME
+aflt rm --keep-files "$TASK"  # registry row only (keeps handoffs/logs; never deletes Cursor/Copilot chats)
 
 # When finished with the worktree itself (your git hygiene — af does not delete trees)
 git -C "$REPO" worktree remove "$REPO-wt-${TASK}"
@@ -596,11 +599,11 @@ git -C "$REPO" worktree remove "$REPO-wt-${TASK}"
 **Wrong folder (work Mac example):** a Copilot session imported or added under `…/hello-af` that should be `~/github/wwlib/af`:
 
 ```bash
-af cwd hello-af                          # print current folder
-af cwd hello-af ~/github/wwlib/af        # update registry cwd + branch (~ ok)
-af cwd hello-af ~/github/wwlib/af --dry-run
-# If a Herdr tab is live: af stop hello-af (agent running) then af resume hello-af;
-# shell-only: just af resume hello-af (cd's into the new folder in-tab).
+aflt cwd hello-af                          # print current folder
+aflt cwd hello-af ~/github/wwlib/af        # update registry cwd + branch (~ ok)
+aflt cwd hello-af ~/github/wwlib/af --dry-run
+# If a Herdr tab is live: aflt stop hello-af (agent running) then aflt resume hello-af;
+# shell-only: just aflt resume hello-af (cd's into the new folder in-tab).
 # Space is session-based — adopt not required for the folder change.
 ```
 
@@ -619,25 +622,25 @@ cursor-agent -p "Fix the failing test" --force --output-format text --workspace 
 
 1. Boot, open Herdr **or** your terminal multiplexer.
 2. Ensure PATH includes `~/.local/bin`.
-3. `af ls` — confirm active sessions and that worktree paths still exist.
+3. `aflt ls` — confirm active sessions and that worktree paths still exist.
 4. Reopen the fleet:
 
 ```bash
-af resume --all --via herdr     # preferred if hc works
+aflt resume --all --via herdr     # preferred if hc works
 # or
-af resume --all                 # auto-detect
+aflt resume --all                 # auto-detect
 # or
-af resume --all --via tmux
+aflt resume --all --via tmux
 ```
 
-**Important (from README):** resume restores **chat context** via `--resume <chatId>` and does **not** resend the saved original task prompt. It also does not restart in-flight shells, servers, or watchers — restart those yourself (or keep them in `af note`).
+**Important (from README):** resume restores **chat context** via `--resume <chatId>` and does **not** resend the saved original task prompt. It also does not restart in-flight shells, servers, or watchers — restart those yourself (or keep them in `aflt note`).
 
 Backup / migrate registry between machines:
 
 ```bash
-af export ~/af-sessions.json
+aflt export ~/af-sessions.json
 # on the other Mac, after paths exist:
-af import-file ~/af-sessions.json
+aflt import-file ~/af-sessions.json
 ```
 
 ---
@@ -660,26 +663,26 @@ af import-file ~/af-sessions.json
 |---------|-------------|
 | `cursor-agent: command not found` | `ls ~/.local/bin/agent`; add `~/.local/bin` to PATH; re-run Cursor install. |
 | `hc: command not found` | Re-run core or app installer; check `~/.local/bin/hc`. |
-| `af resume --via herdr` / `cannot start "--"` | Confirmed on hc 0.1.16: do **not** put `--` before the program. Current `af` already omits it. If an older copy still emits `--`, update `lib/backends.js`. |
+| `aflt resume --via herdr` / `cannot start "--"` | Confirmed on hc 0.1.16: do **not** put `--` before the program. Current `aflt` already omits it. If an older copy still emits `--`, update `lib/backends.js`. |
 | Cursor TUI is plain white / uncolored in Herdr | Herdr/parent may set `NO_COLOR=1` and `FORCE_COLOR=0`; non-TTY callers may also pass `TERM=dumb`. `af` clears the color vars with `env -u NO_COLOR -u FORCE_COLOR` and, when `TERM` is unset/empty/`dumb`, sets `TERM=xterm-256color` `COLORTERM=truecolor` before `cursor-agent`. |
 | Herdr skips a session | `hc ls --json` already has `af_id=<id>`. Attach that terminal or kill it before re-launching. |
 | Resume lost context / wrong files | Always use the **same cwd/worktree** the chat was created with. `af` passes `--workspace`. |
-| Resume re-triggers the original task | Older `af` fell back to `session.prompt` on resume. Current `af` does not; only `af new --prompt` or an explicit resume `--prompt` sends a prompt. |
-| `af import` empty | Cursor: `cursor-agent ls` is interactive-only; import scans `~/.cursor/chats/`. Empty chats from `create-chat` may not appear until a prompt is sent — use `af new` or `af add --chat`. Copilot: scans `~/.copilot/session-state/` (override with `AGENTFLEET_COPILOT_HOME`); import by UUID with `af import copilot <id>`. |
+| Resume re-triggers the original task | Older `aflt` fell back to `session.prompt` on resume. Current `aflt` does not; only `aflt new --prompt` or an explicit resume `--prompt` sends a prompt. |
+| `aflt import` empty | Cursor: `cursor-agent ls` is interactive-only; import scans `~/.cursor/chats/`. Empty chats from `create-chat` may not appear until a prompt is sent — use `aflt new` or `aflt add --chat`. Copilot: scans `~/.copilot/session-state/` (override with `AGENTFLEET_COPILOT_HOME`); import by UUID with `aflt import copilot <id>`. |
 | iTerm2 backend fails | Needs macOS + iTerm2 + `osascript`. Use `--via tmux` or `--via wezterm` instead. |
 | OpenCode cannot reach ai-lb | Expected off-LAN. Reconfigure provider or skip OpenCode. |
 | Tests fail without Cursor CLI | Unit tests still pass with a stub; the optional live `create-chat` test needs a real binary + auth. |
-| Desktop Herdr has no Cursor/OpenCode recipe | App integrations need the Herdr GUI (not configured on the home Mini as of 2026-11-10). CLI alternative: `af herdr-templates` then `hc run cursor "…"` / `hc run opencode "…"`, or `af resume --via herdr`. |
+| Desktop Herdr has no Cursor/OpenCode recipe | App integrations need the Herdr GUI (not configured on the home Mini as of 2026-11-10). CLI alternative: `aflt herdr-templates` then `hc run cursor "…"` / `hc run opencode "…"`, or `aflt resume --via herdr`. |
 | Copilot tool prompts / hangs in `-p` | A no-tool text prompt does not need `--force`. `--force` adds `--allow-all-tools`. Auth is `copilot login`; there is no `copilot status`. |
-| `af run` / Herdr resume hangs on "Workspace Trust Required" | Default is `--trust` (documented; shown in `--dry-run`). Pass `--no-trust` to keep the dialog and accept it in the TUI or `hc keys`. `--trust` is not `--force`. |
+| `aflt run` / Herdr resume hangs on "Workspace Trust Required" | Default is `--trust` (documented; shown in `--dry-run`). Pass `--no-trust` to keep the dialog and accept it in the TUI or `hc keys`. `--trust` is not `--force`. |
 
 Useful dry-runs:
 
 ```bash
-af new "probe" --cwd "$PWD" --dry-run
-af resume --all --via herdr --dry-run
-af resume --all --via tmux --dry-run
-af which-backend
+aflt new "probe" --cwd "$PWD" --dry-run
+aflt resume --all --via herdr --dry-run
+aflt resume --all --via tmux --dry-run
+aflt which-backend
 ```
 
 ---
@@ -688,11 +691,11 @@ af which-backend
 
 | Path | Status |
 |------|--------|
-| Cursor `af run` headless (`-p`, `--mode ask`) + `af log` | **Verified** live (reply "pong", exit 0) |
-| Cursor `af resume --via herdr` | **Verified** live. hc 0.1.16 **rejects** a `--` separator (`cannot start "--"`); current `af` omits it. Default `--trust` required to clear the workspace-trust dialog. |
-| Copilot `copilot -p` / `af run --engine copilot` **without** `--force` | **Verified** live no-tool "pong" (CLI 1.0.83). Auth confirmed by that CLI result; credential files were not read. `--help` overstated the need for `--allow-all-tools`. |
+| Cursor `aflt run` headless (`-p`, `--mode ask`) + `aflt log` | **Verified** live (reply "pong", exit 0) |
+| Cursor `aflt resume --via herdr` | **Verified** live. hc 0.1.16 **rejects** a `--` separator (`cannot start "--"`); current `aflt` omits it. Default `--trust` required to clear the workspace-trust dialog. |
+| Copilot `copilot -p` / `aflt run --engine copilot` **without** `--force` | **Verified** live no-tool "pong" (CLI 1.0.83). Auth confirmed by that CLI result; credential files were not read. `--help` overstated the need for `--allow-all-tools`. |
 | Copilot `--force` (`--allow-all-tools`) | Supported by `af`; **not** live-tested (broad tool grant). `af` never adds `--allow-all` / `--yolo`. |
-| OpenCode | **Template only** (`af herdr-templates` → `hc run opencode "…"`). Not wrapped by `af run`. First-message send not live-tested. |
+| OpenCode | **Template only** (`aflt herdr-templates` → `hc run opencode "…"`). Not wrapped by `aflt run`. First-message send not live-tested. |
 | Herdr desktop Cursor/OpenCode integrations | **Unconfigured**. Herdr.app is present; `~/.config/herdr-app` is absent. Needs the GUI. |
 | Reboot persistence | **Not tested** (Mini was not rebooted). |
 | `cursor-agent persist` | Exists (`list` / `attach` / `stop`); not wrapped by `af`. |
@@ -712,13 +715,13 @@ Other notes: bundled Herdr templates use official frontmatter and `ready: quiet`
 - [ ] `hc` installed; optional Herdr.app
 - [ ] OpenCode installed **or** consciously skipped
 - [ ] `af` installed on PATH (`~/.local/bin/af`); `npm test` green
-- [ ] `af help` shows `run`, `log`, `sync`, `herdr-templates`
-- [ ] `af ls` shows HERDR; `af sync --dry-run` does not write
-- [ ] `af run "smoke" --prompt "Reply pong." --mode ask --cwd … --dry-run` looks right; then a cheap live ask if you want to spend Cursor quota
-- [ ] `af resume smoke --via herdr --dry-run` has **no** `--` before `cursor-agent`; then without `--dry-run` if you want a live TUI
-- [ ] `af herdr-templates` && `hc templates` lists `cursor` and `opencode`
-- [ ] `af export` backup stored outside the repo
-- [ ] (Copilot work Mac) `af import copilot` lists sessions; import an existing UUID by id
-- [ ] (Wrong folder) `af cwd <title> ~/correct/path` updates cwd; resume/adopt if a Herdr tab was live
+- [ ] `aflt help` shows `run`, `log`, `sync`, `herdr-templates`
+- [ ] `aflt ls` shows HERDR; `aflt sync --dry-run` does not write
+- [ ] `aflt run "smoke" --prompt "Reply pong." --mode ask --cwd … --dry-run` looks right; then a cheap live ask if you want to spend Cursor quota
+- [ ] `aflt resume smoke --via herdr --dry-run` has **no** `--` before `cursor-agent`; then without `--dry-run` if you want a live TUI
+- [ ] `aflt herdr-templates` && `hc templates` lists `cursor` and `opencode`
+- [ ] `aflt export` backup stored outside the repo
+- [ ] (Copilot work Mac) `aflt import copilot` lists sessions; import an existing UUID by id
+- [ ] (Wrong folder) `aflt cwd <title> ~/correct/path` updates cwd; resume/adopt if a Herdr tab was live
 
 When in doubt, lean on Cursor CLI + `af` + tmux; treat Herdr as the nicer front end and OpenCode as optional.

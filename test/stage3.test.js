@@ -9,7 +9,7 @@ const { spawnSync } = require('child_process');
 
 const afJs = path.join(__dirname, '..', 'bin', 'af.js');
 
-describe('af stage 3: send-grace wait + af master', () => {
+describe('af stage 3: send-grace wait + aflt master', () => {
   let home;
   let stubDir;
   let stubCursor;
@@ -215,7 +215,7 @@ esac
     assert.ok(gets >= 3, `expected >=3 get calls, got ${gets}`);
   });
 
-  it('af master --dry-run does not write registry', () => {
+  it('aflt master --dry-run does not write registry', () => {
     const r = af([
       'master',
       '--goal',
@@ -232,7 +232,7 @@ esac
     })());
   });
 
-  it('af master --headless: role master, env, prompt, add-dir, plan', () => {
+  it('aflt master --headless: role master, env, prompt, add-dir, plan', () => {
     const r = af([
       'master',
       '--goal',
@@ -256,7 +256,7 @@ esac
     assert.ok(m.plan);
     assert.ok(m.plan.includes(path.join('plans', `${m.id}.md`)));
     assert.ok(m.prompt.includes('Extract helpers and add tests'));
-    assert.ok(m.prompt.includes('af spawn'));
+    assert.ok(m.prompt.includes('aflt spawn'));
     assert.ok(m.prompt.includes(m.id));
     assert.ok(m.prompt.includes(m.plan));
     assert.ok(!m.prompt.includes('{{GOAL}}'));
@@ -286,7 +286,7 @@ esac
     assert.ok(addDirs.includes(path.dirname(m.plan)));
   });
 
-  it('af master interactive: hc run labels + env prefix', () => {
+  it('aflt master interactive: hc run labels + env prefix', () => {
     const r = af(
       [
         'master',
@@ -353,7 +353,7 @@ esac
     assert.equal(rows[0].resultSource, 'af-fallback');
   });
 
-  it('af wait --parent waits on children; bare wait hints when one active master', () => {
+  it('aflt wait --parent waits on children; bare wait hints when one active master', () => {
     const registry = loadRegistry();
     const parent = registry.add({
       title: 'WaitParent',
@@ -374,10 +374,10 @@ esac
     loadRegistry().update('WaitParent-w1', { workerStatus: 'running', runPid: 999999, runHost: 'other-host' });
     const hint = af(['wait']);
     assert.equal(hint.status, 1);
-    assert.ok(/e\.g\. af wait --parent WaitParent/i.test(hint.stderr), hint.stderr);
+    assert.ok(/e\.g\. aflt wait --parent WaitParent/i.test(hint.stderr), hint.stderr);
   });
 
-  it('af ls ID column distinguishes sibling slug ids; find accepts hex suffix', () => {
+  it('aflt ls ID column distinguishes sibling slug ids; find accepts hex suffix', () => {
     const registry = loadRegistry();
     const a = registry.add({
       title: 'hello-af',

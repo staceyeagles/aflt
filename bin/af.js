@@ -37,59 +37,70 @@ const {
 
 const ID_COL = 16;
 
-const USAGE = `agentfleet (af) — track & resume Cursor / Copilot CLI agent sessions
+const PKG_VERSION = (() => {
+  try {
+    return require('../package.json').version || '0.0.0';
+  } catch (_) {
+    return '0.0.0';
+  }
+})();
+
+const USAGE = `aflt (AgentFleet) — track & resume Cursor / Copilot CLI agent sessions
+Aliases: af, agentfleet (same CLI)
 
 Usage:
-  af new "<title>" [--cwd DIR] [--prompt "..."] [--model X] [--engine cursor|copilot]
+  aflt --version | -v | version [--json]
+                            Print version (aflt ${PKG_VERSION})
+  aflt new "<title>" [--cwd DIR] [--prompt "..."] [--model X] [--engine cursor|copilot]
                             [--force] [--messaging|--no-messaging] [--tag T]... [--dry-run]
-  af add "<title>" --chat <id> [--cwd DIR] [--model X] [--engine cursor|copilot]
+  aflt add "<title>" --chat <id> [--cwd DIR] [--model X] [--engine cursor|copilot]
                             [--tag T]... [--prompt "..."]
                             For --engine copilot, --chat is the Copilot session UUID
-  af import [--engine cursor|copilot] [cursor|copilot]
+  aflt import [--engine cursor|copilot] [cursor|copilot]
                             List local chats/sessions to register. Default engine
                             follows AGENTFLEET_ENGINE/config (builtin: cursor).
                             Cursor: scan ~/.cursor/chats (unchanged). Copilot:
                             list ~/.copilot/session-state (or import by id).
-  af import --engine copilot [<id|prefix>...] [--title T] [--tag T]...
+  aflt import --engine copilot [<id|prefix>...] [--title T] [--tag T]...
                             [--cwd DIR] [--limit N] [--json] [--all] [--dry-run]
                             [--allow-missing] [-i|--pick]
                             Copilot: list (newest first) or register by UUID/prefix.
                             --title only with a single id. -i requires a TTY.
-  af ls [--status S] [--tag T] [--all] [--json]
+  aflt ls [--status S] [--tag T] [--all] [--json]
                             STATUS is lifecycle; HERDR is live runtime
                             (running|shell|exited|missing|unknown|-)
-  af sync [--dry-run] [--json]
+  aflt sync [--dry-run] [--json]
                             Persist last-known Herdr runtime evidence (does not change status/lastUsed)
-  af run "<title>" --prompt "..." [--cwd DIR] [--model X] [--engine cursor|copilot]
+  aflt run "<title>" --prompt "..." [--cwd DIR] [--model X] [--engine cursor|copilot]
                             [--mode ask|plan] [--force] [--output-format text|json]
                             [--timeout SEC] [--messaging|--no-messaging] [--no-docs]
                             [--dry-run] [--json]
                             Headless one-shot: create or resume, capture output, exit.
                             If the session is role=master and exits 0, may trigger
-                            af docs (same as headless master; skip with --no-docs).
-  af run <title|id> --prompt "..." [...]
+                            aflt docs (same as headless master; skip with --no-docs).
+  aflt run <title|id> --prompt "..." [...]
                             Same, resuming an existing tracked session
-  af log <title|id> [--path]  Print last captured run output (or its path)
-  af spawn --parent <id|title> --prompt TEXT [--engine cursor|copilot] [--cwd DIR]
+  aflt log <title|id> [--path]  Print last captured run output (or its path)
+  aflt spawn --parent <id|title> --prompt TEXT [--engine cursor|copilot] [--cwd DIR]
                             [--title T] [--task TEXT] [--model X] [--timeout SEC]
                             [--force] [--interactive] [--detach]
                             [--messaging|--no-messaging] [--dry-run] [--json]
                             Create a worker under a master; headless by default
-                            (same machinery as af run). --interactive launches via Herdr.
+                            (same machinery as aflt run). --interactive launches via Herdr.
                             --detach (headless only): return immediately; a supervisor
                             records exit/handoff. Prefer --detach over shell &.
                             Messaging-enabled masters pass messaging:true to workers
                             unless --no-messaging.
-  af master --goal TEXT [--engine cursor|copilot] [--cwd DIR] [--title T] [--model X]
+  aflt master --goal TEXT [--engine cursor|copilot] [--cwd DIR] [--title T] [--model X]
                             [--worker-engine copilot|cursor] [--headless] [--timeout SEC]
                             [--force] [--messaging|--no-messaging] [--no-docs]
                             [--dry-run] [--json]
                             Create a master session with the orchestrator template as
                             the initial prompt. Default: interactive via Herdr.
-                            --headless uses af run machinery (workerStatus tracked).
-                            On successful headless exit, runs af docs once if the
+                            --headless uses aflt run machinery (workerStatus tracked).
+                            On successful headless exit, runs aflt docs once if the
                             project has {"docs": true} (skip with --no-docs).
-  af docs [<project dir>] [--since <commit>] [--engine cursor|copilot] [--model X]
+  aflt docs [<project dir>] [--since <commit>] [--engine cursor|copilot] [--model X]
                             [--force|--no-force] [--anyway] [--dry-run] [--json]
                             Documentarian: one headless docs worker (role=docs) that
                             updates only configured docs paths. Opt-in via
@@ -98,18 +109,18 @@ Usage:
                             (Cursor --force / Copilot --allow-all-tools); opt out
                             with --no-force or {"docsForce": false}. Dry-run prints
                             the plan only.
-  af msg <to> <text...> [--type T] [--reply <msgId>] [--from S] [--json] [--dry-run]
+  aflt msg <to> <text...> [--type T] [--reply <msgId>] [--from S] [--json] [--dry-run]
                             Task-scoped message (off by default; see Messaging).
                             With --reply and no <to>, defaults to=reply sender.
-  af msg enable|disable <session> [--json] [--dry-run]
+  aflt msg enable|disable <session> [--json] [--dry-run]
                             Per-session messaging opt-in / opt-out
-  af inbox [<session>] [--unread] [--mark-read] [--json]
+  aflt inbox [<session>] [--unread] [--mark-read] [--json]
                             Messages for a session (default: AGENTFLEET_SESSION/ID).
-                            Plain-shell: af inbox <master> to view a team inbox.
-  af thread <msgId|master> [--json]
+                            Plain-shell: aflt inbox <master> to view a team inbox.
+  aflt thread <msgId|master> [--json]
                             One thread in order, or whole team log for a master.
-  af mcp                    Stdio MCP server (tools when messaging enabled)
-  af mcp install --engine copilot|cursor [--write] [--project] [--cwd DIR]
+  aflt mcp                    Stdio MCP server (tools when messaging enabled)
+  aflt mcp install --engine copilot|cursor [--write] [--project] [--cwd DIR]
                             [--dry-run] [--json]
                             Print or merge MCP config. Copilot: ~/.copilot/mcp-config.json
                             with --write. Cursor user: ~/.cursor/mcp.json with --write.
@@ -117,34 +128,34 @@ Usage:
                             (backs up first). Messaging-enabled Copilot runs get
                             --additional-mcp-config per launch; Cursor gets
                             --approve-mcps when af is in project/user mcp.json.
-  af children [<id|title>] [--json] [--all]
+  aflt children [<id|title>] [--json] [--all]
                             List a master's workers, or (no arg) resolve master from
                             AGENTFLEET_ID / AGENTFLEET_PARENT, or summarize all masters.
                             --all includes lifecycle-done masters in the summary.
-  af result <id|title> [--path]
+  aflt result <id|title> [--path]
                             Print a worker's handoff file (or its path). If missing,
                             stderr note + last ~40 lines of the run log; exit 1.
-  af wait [<id|title>...] [--parent <master>] [--any] [--timeout SEC] [--interval SEC]
+  aflt wait [<id|title>...] [--parent <master>] [--any] [--timeout SEC] [--interval SEC]
                             [--send-grace SEC] [--docs] [--json]
                             Block until listed workers reach done|failed|stopped|waiting.
                             Explicit ids/titles win over --parent. No ids: --parent children,
                             else children of AGENTFLEET_ID (master) or AGENTFLEET_PARENT.
                             Exit: 0 ok, 1 failed/stopped, 2 timeout, 3 waiting.
-                            --send-grace: ignore stale Herdr done/idle after af send
+                            --send-grace: ignore stale Herdr done/idle after aflt send
                             (default 15; env AGENTFLEET_SEND_GRACE).
-                            --docs: after exit 0, run af docs once for the master's
+                            --docs: after exit 0, run aflt docs once for the master's
                             project (same one-shot guard as headless master).
                             Errors if no master can be resolved.
-  af tail <id|title> [-n N] [-f]
+  aflt tail <id|title> [-n N] [-f]
                             Last N lines of run log (or hc read for live Herdr). -f follows
                             until the worker leaves running (or Ctrl-C).
-  af send <id|title> "text" [--timeout SEC] [--force] [--json]
+  aflt send <id|title> "text" [--timeout SEC] [--force] [--json]
                             Interactive: hc send (records lastSendAt; workerStatus=running).
                             Headless (not running): continue chat with a short handoff
                             reminder. Refuses if headless runPid live.
-  af stop <id|title> | af stop --all-children <master> [--json]
+  aflt stop <id|title> | aflt stop --all-children <master> [--json]
                             Stop a running worker (SIGTERM process group / hc interrupt+kill).
-  af resume <title|id> [--via herdr|plain] [--here] [--open|--no-open]
+  aflt resume <title|id> [--via herdr|plain] [--here] [--open|--no-open]
                             [--prompt "..."] [--force] [--dry-run] [--no-herdr-app]
                             Resume one session (argv from session.engine). Default:
                             Herdr when hc is on PATH (prints Attach: hc attach <name>).
@@ -156,47 +167,47 @@ Usage:
                             only (Cursor unchanged). Herdr launches also label
                             herdr.space / herdr.tab (and --keep); --no-herdr-app
                             disables that.
-  af resume | af resume -i | af pick
+  aflt resume | aflt resume -i | aflt pick
                             Interactive multi-select (TTY only); resume via Herdr
-  af resume --all [--tag T] [--via tmux|iterm2|wezterm|herdr|plain]
+  aflt resume --all [--tag T] [--via tmux|iterm2|wezterm|herdr|plain]
                             [--open|--no-open] [--force] [--dry-run] [--no-herdr-app]
-  af adopt <title|id ...> | af adopt --all [--dry-run] [--json]
+  aflt adopt <title|id ...> | aflt adopt --all [--dry-run] [--json]
                             Move live af Herdr panes into session-group spaces
                             (park→label→keep when needed), then rename space
                             (group title) and tab (session title). Migrates
                             legacy cwd-based spaces. App must be open to move panes.
-  af cursor | af copilot    Set default engine for new sessions (config.json)
-  af engine [cursor|copilot]
+  aflt cursor | aflt copilot    Set default engine for new sessions (config.json)
+  aflt engine [cursor|copilot]
                             Print default engine + source, or set it
-  af rename <title|id> "<new title>"
-  af cwd <title|id> [path] [--dry-run] [--json]
-                            Show or change a session's folder (alias: af set-cwd).
+  aflt rename <title|id> "<new title>"
+  aflt cwd <title|id> [path] [--dry-run] [--json]
+                            Show or change a session's folder (alias: aflt set-cwd).
                             Path must exist; refreshes branch. Live Herdr tab is
                             not moved — resume (and optionally adopt) after.
-  af done <title|id>
-  af rm <title|id> [--keep-files] [--force] [--dry-run]
+  aflt done <title|id>
+  aflt rm <title|id> [--keep-files] [--force] [--dry-run]
                             Remove a session and its af-owned files under
                             $AGENTFLEET_HOME (results/, runs/<id>/, plans/).
                             Prefer --dry-run first. --keep-files: registry only
                             (keeps handoffs/logs). Refuses if running unless
-                            --force (does not stop the process — af stop first).
-  af rm --children <master> [--with-master] [--keep-files] [--force] [--dry-run]
+                            --force (does not stop the process — aflt stop first).
+  aflt rm --children <master> [--with-master] [--keep-files] [--force] [--dry-run]
                             Remove all workers of a master; --with-master also
                             removes the master. --dry-run lists actions only.
-  af note <title|id> "<text>"
-  af export [file]          Write registry JSON (default: stdout)
-  af import-file <file>     Merge sessions from a backup file
-  af which-backend          Show auto-detected resume --all backend
-  af herdr-templates [--force] [--dry-run]
+  aflt note <title|id> "<text>"
+  aflt export [file]          Write registry JSON (default: stdout)
+  aflt import-file <file>     Merge sessions from a backup file
+  aflt which-backend          Show auto-detected resume --all backend
+  aflt herdr-templates [--force] [--dry-run]
                             Install Cursor/OpenCode/Copilot templates into
                             ~/.config/herdr-core/templates
-  af herdr-app install [--copy] [--force] [--dry-run]
+  aflt herdr-app install [--copy] [--force] [--dry-run]
                             Symlink (default) or copy the af-sessions Herdr panel
                             + af layout into ~/.config/herdr-app (or $HERDR_APP_HOME)
-  af herdr-app status       Report linked/copied/missing for the panel + layout
-  af doctor [--json]
+  aflt herdr-app status       Report linked/copied/missing for the panel + layout
+  aflt doctor [--json]
                             Read-only environment checks (hc, engines, home)
-  af help
+  aflt help
                             Exit: 0 ok, 1 error, 2 wait timeout, 3 waiting,
                             75 critical registry write failed after a run
 
@@ -217,17 +228,27 @@ Environment:
   AGENTFLEET_HERDR_NAMES  Set to 0/false/off/no to skip space.rename + tab.rename
                             (labels still applied; Herdr defaults space names to repo)
   HERDR_APP_HOME          Herdr app config dir (default: ~/.config/herdr-app)
-  AGENTFLEET_ID           Set on launched sessions (af id); used by af children
+  AGENTFLEET_ID           Set on launched sessions (af id); used by aflt children
   AGENTFLEET_SESSION      Same as AGENTFLEET_ID (messaging / MCP identity)
   AGENTFLEET_MASTER       Team master id when known
   AGENTFLEET_PARENT       Set on spawned workers (master af id)
   AGENTFLEET_RESULT       Set on spawned workers / masters (handoff or summary path)
   AGENTFLEET_PLAN         Set on masters (plan under $AGENTFLEET_HOME/plans/)
-  AGENTFLEET_ROLE         Set on masters (master) when launched via af master
-  AGENTFLEET_SEND_GRACE   Seconds for af wait to ignore stale done/idle after send
+  AGENTFLEET_ROLE         Set on masters (master) when launched via aflt master
+  AGENTFLEET_SEND_GRACE   Seconds for aflt wait to ignore stale done/idle after send
   AGENTFLEET_MSG_MAX_THREAD  Max messages per thread (default 6)
   AGENTFLEET_MSG_RATE     Max messages per sender per 60s (default 10)
 `;
+
+function cmdVersion(rest) {
+  const { flags } = parseArgs(rest);
+  const asJson = Boolean(flags.json);
+  if (asJson) {
+    process.stdout.write(JSON.stringify({ version: PKG_VERSION }) + '\n');
+  } else {
+    process.stdout.write(`aflt ${PKG_VERSION}\n`);
+  }
+}
 
 async function main() {
   const argv = process.argv.slice(2);
@@ -236,10 +257,19 @@ async function main() {
     return;
   }
 
+  // Global version flags before subcommands
+  if (argv[0] === '--version' || argv[0] === '-v') {
+    cmdVersion(argv.slice(1));
+    return;
+  }
+
   const cmd = argv[0];
   const rest = argv.slice(1);
 
   switch (cmd) {
+    case 'version':
+      cmdVersion(rest);
+      break;
     case 'new':
       await cmdNew(rest);
       break;
@@ -364,7 +394,7 @@ async function cmdNew(argv) {
   const { args, flags } = parseArgs(argv);
   const title = args[0];
   if (!title) {
-    fail('usage: af new "<title>" [--cwd DIR] [--prompt "..."] [--model X] [--engine cursor|copilot]');
+    fail('usage: aflt new "<title>" [--cwd DIR] [--prompt "..."] [--model X] [--engine cursor|copilot]');
   }
 
   const cwd = resolveCwd(flags.cwd || flags.C);
@@ -455,10 +485,10 @@ function cmdAdd(argv) {
   const title = args[0];
   const chatId = flags.chat || flags.c;
   if (!title || !chatId) {
-    fail('usage: af add "<title>" --chat <id> [--cwd DIR] [--engine cursor|copilot]');
+    fail('usage: aflt add "<title>" --chat <id> [--cwd DIR] [--engine cursor|copilot]');
   }
 
-  // New row: same precedence as af new/run (--engine > AGENTFLEET_ENGINE > config > cursor).
+  // New row: same precedence as aflt new/run (--engine > AGENTFLEET_ENGINE > config > cursor).
   let engineName;
   try {
     engineName = engine.resolveEngine({ flag: flags.engine }).engine;
@@ -483,7 +513,7 @@ function cmdAdd(argv) {
 
 /**
  * Cursor import — kept byte-for-byte in behavior from the pre-Copilot path.
- * Explicit `af import cursor` / `--engine cursor` always lands here.
+ * Explicit `aflt import cursor` / `--engine cursor` always lands here.
  */
 function cmdImportCursor() {
   process.stdout.write(
@@ -496,8 +526,8 @@ function cmdImportCursor() {
       'No chats found under ~/.cursor/chats/.\n' +
         'Tips:\n' +
         '  • create-chat alone may not write files until a prompt is sent\n' +
-        '  • use: af add "<title>" --chat <id> --cwd <dir>\n' +
-        '  • or:  af new "<title>" to create + register in one step\n'
+        '  • use: aflt add "<title>" --chat <id> --cwd <dir>\n' +
+        '  • or:  aflt new "<title>" to create + register in one step\n'
     );
     return;
   }
@@ -513,7 +543,7 @@ function cmdImportCursor() {
     );
   }
   process.stdout.write(
-    `\nRegister one with:\n  af add "<title>" --chat <chatId> --cwd <dir>\n`
+    `\nRegister one with:\n  aflt add "<title>" --chat <chatId> --cwd <dir>\n`
   );
 }
 
@@ -639,14 +669,14 @@ async function cmdImportCopilot(argv, flags) {
         'No Copilot sessions found under ~/.copilot/session-state/.\n' +
           'Tips:\n' +
           '  • set AGENTFLEET_COPILOT_HOME if sessions live elsewhere\n' +
-          '  • import by id: af import --engine copilot <uuid>\n' +
-          '  • or: af add "<title>" --chat <uuid> --engine copilot --cwd <dir>\n'
+          '  • import by id: aflt import --engine copilot <uuid>\n' +
+          '  • or: aflt add "<title>" --chat <uuid> --engine copilot --cwd <dir>\n'
       );
       return;
     }
     printCopilotSessionTable(sessions, tracked);
     process.stdout.write(
-      `\nImport with:\n  af import --engine copilot <id|prefix> [...]\n  af import --engine copilot --all\n`
+      `\nImport with:\n  aflt import --engine copilot <id|prefix> [...]\n  aflt import --engine copilot --all\n`
     );
     return;
   }
@@ -1005,7 +1035,7 @@ async function cmdResume(argv) {
   }
 
   const query = args[0];
-  if (!query) fail('usage: af resume <title|id>  OR  af resume --all [--via …]');
+  if (!query) fail('usage: aflt resume <title|id>  OR  aflt resume --all [--via …]');
 
   const session = registry.find(query);
   if (!session) fail(`session not found: ${query}`);
@@ -1088,7 +1118,7 @@ function buildResumeOpts(flags = {}) {
 
 function cmdSetDefaultEngine(name, argv) {
   const { args } = parseArgs(argv);
-  if (args.length > 0) fail(`usage: af ${name}`);
+  if (args.length > 0) fail(`usage: aflt ${name}`);
   let engineName;
   try {
     engineName = config.setDefaultEngine(name);
@@ -1113,7 +1143,7 @@ function cmdEngine(argv) {
     );
     return;
   }
-  if (args.length !== 1) fail('usage: af engine [cursor|copilot]');
+  if (args.length !== 1) fail('usage: aflt engine [cursor|copilot]');
   let engineName;
   try {
     engineName = config.setDefaultEngine(args[0]);
@@ -1316,7 +1346,7 @@ function maybeOpenITermAttach(plan, flags, { executed, dryRun }) {
 async function cmdResumePick(flags) {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     fail(
-      'usage: af resume <title|id>  OR  af resume --all [--via …]\n' +
+      'usage: aflt resume <title|id>  OR  aflt resume --all [--via …]\n' +
         'interactive selection requires a TTY (or pass a title / --all)'
     );
   }
@@ -1332,7 +1362,7 @@ async function cmdResumePick(flags) {
     fail('interactive resume uses Herdr; drop --here / --via plain, or resume one title with --here');
   }
   if (resolved.via !== 'herdr') {
-    fail('interactive resume requires Herdr (hc on PATH); use af resume <title> --here for this terminal');
+    fail('interactive resume requires Herdr (hc on PATH); use aflt resume <title> --here for this terminal');
   }
 
   const sessions = registry.list({ status: 'active', tag: flags.tag });
@@ -1405,7 +1435,7 @@ function cmdAdopt(argv) {
   const all = Boolean(flags.all);
 
   if (!all && args.length === 0) {
-    fail('usage: af adopt <title|id ...> | af adopt --all [--dry-run] [--json]');
+    fail('usage: aflt adopt <title|id ...> | aflt adopt --all [--dry-run] [--json]');
   }
 
   let sessions;
@@ -1485,7 +1515,7 @@ function cmdAdopt(argv) {
 
       if (row.appMove && row.appMove.skipped) {
         process.stdout.write(
-          `labeled  ${item.address}  ${item.title}  (Herdr app not running — re-run af adopt --all after starting the app)\n`
+          `labeled  ${item.address}  ${item.title}  (Herdr app not running — re-run aflt adopt --all after starting the app)\n`
         );
       } else if (row.appMove && row.appMove.parked) {
         const fromName =
@@ -1548,7 +1578,7 @@ function cmdAdopt(argv) {
 
 function cmdRename(argv) {
   const { args } = parseArgs(argv);
-  if (args.length < 2) fail('usage: af rename <title|id> "<new title>"');
+  if (args.length < 2) fail('usage: aflt rename <title|id> "<new title>"');
   const updated = registry.update(args[0], { title: args[1] });
   printSession(updated, 'renamed');
 }
@@ -1558,7 +1588,7 @@ function cmdCwd(argv) {
   const asJson = Boolean(flags.json);
   const dryRun = Boolean(flags['dry-run']);
   if (!args[0]) {
-    fail('usage: af cwd <title|id> [path] [--dry-run] [--json]\n       af set-cwd <title|id> [path] [--dry-run] [--json]', {
+    fail('usage: aflt cwd <title|id> [path] [--dry-run] [--json]\n       aflt set-cwd <title|id> [path] [--dry-run] [--json]', {
       json: asJson,
     });
   }
@@ -1598,7 +1628,7 @@ function cmdCwd(argv) {
   );
   if ((session.engine || 'cursor') === 'copilot') {
     notes.push(
-      'Copilot session-state workspace.yaml still records the old cwd (af does not edit it); resume uses -C <new folder> (may ask to trust once — answer with: af send <id> "1").'
+      'Copilot session-state workspace.yaml still records the old cwd (af does not edit it); resume uses -C <new folder> (may ask to trust once — answer with: aflt send <id> "1").'
     );
   } else {
     notes.push('Cursor resume passes --workspace <new folder>.');
@@ -1616,11 +1646,11 @@ function cmdCwd(argv) {
       };
       if (enriched.runtime === 'shell') {
         notes.push(
-          `Live Herdr terminal is shell-only (program still in the old folder). Run: af resume ${session.id} (relaunches into that tab with cd <new folder>). Herdr space is session-based (not folder-based), so adopt is not required for the space.`
+          `Live Herdr terminal is shell-only (program still in the old folder). Run: aflt resume ${session.id} (relaunches into that tab with cd <new folder>). Herdr space is session-based (not folder-based), so adopt is not required for the space.`
         );
       } else {
         notes.push(
-          `Live Herdr terminal is still running (program still in the old folder). Run: af stop ${session.id} then af resume ${session.id} (or af resume after the agent exits). Herdr space is session-based (not folder-based), so adopt is not required for the space.`
+          `Live Herdr terminal is still running (program still in the old folder). Run: aflt stop ${session.id} then aflt resume ${session.id} (or aflt resume after the agent exits). Herdr space is session-based (not folder-based), so adopt is not required for the space.`
         );
       }
     }
@@ -1701,7 +1731,7 @@ function cmdCwd(argv) {
 
 function cmdDone(argv) {
   const { args } = parseArgs(argv);
-  if (!args[0]) fail('usage: af done <title|id>');
+  if (!args[0]) fail('usage: aflt done <title|id>');
   const updated = registry.update(args[0], { status: 'done', lastUsed: nowIso() });
   printSession(updated, 'done');
 }
@@ -1733,14 +1763,14 @@ function collectRmTargets(argvFlags, args) {
     const targets = kids.slice();
     if (withMaster) targets.push(master);
     if (targets.length === 0 && !withMaster) {
-      fail(`af rm --children: master "${master.title}" has no workers`);
+      fail(`aflt rm --children: master "${master.title}" has no workers`);
     }
     return { targets, master };
   }
   if (!args[0]) {
     fail(
-      'usage: af rm <title|id> [--keep-files] [--force] [--dry-run]\n' +
-        '       af rm --children <master> [--with-master] [--keep-files] [--force] [--dry-run]'
+      'usage: aflt rm <title|id> [--keep-files] [--force] [--dry-run]\n' +
+        '       aflt rm --children <master> [--with-master] [--keep-files] [--force] [--dry-run]'
     );
   }
   if (withMaster) {
@@ -1762,8 +1792,8 @@ function cmdRm(argv) {
     const run = sessionLooksRunning(s);
     if (run.running && !force) {
       fail(
-        `af rm: "${s.title}" appears to be running (${run.via}). ` +
-          `Stop it first with \`af stop ${s.title}\`, or pass --force to remove the record/files without stopping.`
+        `aflt rm: "${s.title}" appears to be running (${run.via}). ` +
+          `Stop it first with \`aflt stop ${s.title}\`, or pass --force to remove the record/files without stopping.`
       );
     }
     const owned = keepFiles
@@ -1789,20 +1819,20 @@ function cmdRm(argv) {
   for (const item of plan) {
     const s = item.session;
     for (const sk of item.owned.skipped) {
-      process.stderr.write(`af rm: skip ${sk.path} (${sk.reason})\n`);
+      process.stderr.write(`aflt rm: skip ${sk.path} (${sk.reason})\n`);
     }
     for (const f of item.owned.files) {
       try {
         if (fs.existsSync(f)) fs.unlinkSync(f);
       } catch (err) {
-        process.stderr.write(`af rm: could not remove ${f}: ${err.message}\n`);
+        process.stderr.write(`aflt rm: could not remove ${f}: ${err.message}\n`);
       }
     }
     for (const d of item.owned.dirs) {
       try {
         if (fs.existsSync(d)) fs.rmSync(d, { recursive: true, force: true });
       } catch (err) {
-        process.stderr.write(`af rm: could not remove ${d}: ${err.message}\n`);
+        process.stderr.write(`aflt rm: could not remove ${d}: ${err.message}\n`);
       }
     }
     const removed = registry.remove(s.id);
@@ -1812,7 +1842,7 @@ function cmdRm(argv) {
 
 function cmdNote(argv) {
   const { args } = parseArgs(argv);
-  if (args.length < 2) fail('usage: af note <title|id> "<text>"');
+  if (args.length < 2) fail('usage: aflt note <title|id> "<text>"');
   const updated = registry.update(args[0], { notes: args.slice(1).join(' ') });
   printSession(updated, 'noted');
 }
@@ -1831,7 +1861,7 @@ function cmdExport(argv) {
 
 function cmdImportFile(argv) {
   const { args, flags } = parseArgs(argv);
-  if (!args[0]) fail('usage: af import-file <file>');
+  if (!args[0]) fail('usage: aflt import-file <file>');
   const payload = JSON.parse(fs.readFileSync(args[0], 'utf8'));
   const result = registry.importAll(payload, { merge: !flags.replace });
   process.stdout.write(`import-file: added ${result.added}, updated ${result.updated}, total ${result.total}\n`);
@@ -1865,9 +1895,9 @@ function printSession(s, verb, { stream } = {}) {
 
 /**
  * Headless print-mode run for an already-registered session.
- * Shared by `af run`, `af spawn`, and headless `af send` continuations.
+ * Shared by `aflt run`, `aflt spawn`, and headless `aflt send` continuations.
  * Spawns the engine detached in its own process group (still awaited; not
- * unref'd) and records runPid/runPgid/runHost so `af stop` can kill the group.
+ * unref'd) and records runPid/runPgid/runHost so `aflt stop` can kill the group.
  * Streams stdout into the run log as data arrives.
  * @returns {{ code, timedOut, outPath, result, stopped }}
  */
@@ -2093,7 +2123,7 @@ async function cmdRun(argv) {
   const prompt = flags.prompt;
   if (!titleOrId || !prompt || prompt === true) {
     fail(
-      'usage: af run "<title>" --prompt "..." [--cwd DIR] [--engine cursor|copilot] [--mode ask|plan] [--force] [--messaging|--no-messaging] [--dry-run] [--json]'
+      'usage: aflt run "<title>" --prompt "..." [--cwd DIR] [--engine cursor|copilot] [--mode ask|plan] [--force] [--messaging|--no-messaging] [--dry-run] [--json]'
     );
   }
 
@@ -2249,7 +2279,7 @@ async function cmdSpawn(argv) {
   const prompt = flags.prompt;
   if (!parentQuery || parentQuery === true || !prompt || prompt === true) {
     fail(
-      'usage: af spawn --parent <id|title> --prompt TEXT [--engine cursor|copilot] [--cwd DIR] [--title T] [--task TEXT] [--interactive] [--detach] [--force] [--messaging|--no-messaging] [--dry-run] [--json]'
+      'usage: aflt spawn --parent <id|title> --prompt TEXT [--engine cursor|copilot] [--cwd DIR] [--title T] [--task TEXT] [--interactive] [--detach] [--force] [--messaging|--no-messaging] [--dry-run] [--json]'
     );
   }
 
@@ -2397,7 +2427,7 @@ async function cmdSpawn(argv) {
 
   // Create with role=worker so normalizeEntry sets default result path from id.
   // Default titles are finalized under the registry lock so parallel
-  // `af spawn ... &` cannot collide on `<master>-wN`.
+  // `aflt spawn ... &` cannot collide on `<master>-wN`.
   let worker;
   try {
     const addOpts = explicitTitle
@@ -2628,14 +2658,14 @@ async function cmdSpawn(argv) {
 }
 
 /**
- * Internal: detached supervisor for `af spawn --detach`.
+ * Internal: detached supervisor for `aflt spawn --detach`.
  * Runs the engine and records lastExit / workerStatus / handoff like the blocking path.
  */
 async function cmdSuperviseHeadless(argv) {
   const { args, flags } = parseArgs(argv);
   const id = args[0];
   if (!id) {
-    process.stderr.write('usage: af _supervise-headless <sessionId>\n');
+    process.stderr.write('usage: aflt _supervise-headless <sessionId>\n');
     process.exitCode = 2;
     return;
   }
@@ -2707,7 +2737,7 @@ async function cmdMaster(argv) {
   const goal = flags.goal;
   if (!goal || goal === true) {
     fail(
-      'usage: af master --goal TEXT [--engine cursor|copilot] [--cwd DIR] [--title T] [--model X] [--worker-engine copilot|cursor] [--headless] [--timeout SEC] [--force] [--messaging|--no-messaging] [--no-docs] [--dry-run] [--json]'
+      'usage: aflt master --goal TEXT [--engine cursor|copilot] [--cwd DIR] [--title T] [--model X] [--worker-engine copilot|cursor] [--headless] [--timeout SEC] [--force] [--messaging|--no-messaging] [--no-docs] [--dry-run] [--json]'
     );
   }
   const goalText = String(goal);
@@ -3143,7 +3173,7 @@ async function maybeTriggerDocsForMaster(master, opts = {}) {
 }
 
 /**
- * Core docs run used by `af docs` and auto-triggers. When dryRun, writes nothing.
+ * Core docs run used by `aflt docs` and auto-triggers. When dryRun, writes nothing.
  */
 async function runDocsForProject(projectRoot, opts = {}) {
   const asJson = Boolean(opts.asJson);
@@ -3465,7 +3495,7 @@ async function cmdDocs(argv) {
 function cmdMsgEnableDisable(action, query, flags) {
   const asJson = Boolean(flags.json);
   const dryRun = Boolean(flags['dry-run']);
-  if (!query) fail(`usage: af msg ${action} <session> [--json] [--dry-run]`, { json: asJson });
+  if (!query) fail(`usage: aflt msg ${action} <session> [--json] [--dry-run]`, { json: asJson });
   let session;
   try {
     session = registry.find(query);
@@ -3564,8 +3594,8 @@ function cmdMsg(argv) {
   const text = textParts.join(' ');
   if (!replyTo && !to) {
     fail(
-      'usage: af msg <to> <text...> [--type T] [--reply <msgId>] [--from S] [--json] [--dry-run]\n' +
-        '       af msg --reply <msgId> <text...>  (defaults to=reply sender)',
+      'usage: aflt msg <to> <text...> [--type T] [--reply <msgId>] [--from S] [--json] [--dry-run]\n' +
+        '       aflt msg --reply <msgId> <text...>  (defaults to=reply sender)',
       { json: asJson }
     );
   }
@@ -3620,7 +3650,7 @@ function cmdInbox(argv) {
   const query = args[0] || messages.resolveEnvSessionId(process.env);
   if (!query) {
     fail(
-      'usage: af inbox [<session>] [--unread] [--mark-read] [--json]\n' +
+      'usage: aflt inbox [<session>] [--unread] [--mark-read] [--json]\n' +
         '(default session: AGENTFLEET_SESSION / AGENTFLEET_ID; or pass a master id to view)',
       { json: asJson }
     );
@@ -3683,7 +3713,7 @@ function cmdThread(argv) {
   const { args, flags } = parseArgs(argv);
   const asJson = Boolean(flags.json);
   const query = args[0];
-  if (!query) fail('usage: af thread <msgId|master> [--json]', { json: asJson });
+  if (!query) fail('usage: aflt thread <msgId|master> [--json]', { json: asJson });
 
   const envId = messages.resolveEnvSessionId(process.env);
   // Human plain-shell viewing is allowed; an in-session identity must be messaging-enabled.
@@ -3751,7 +3781,7 @@ async function cmdMcp(argv) {
     const engineName = flags.engine ? String(flags.engine) : null;
     if (!engineName) {
       fail(
-        'usage: af mcp install --engine copilot|cursor [--write] [--project] [--cwd DIR] [--dry-run] [--json]',
+        'usage: aflt mcp install --engine copilot|cursor [--write] [--project] [--cwd DIR] [--dry-run] [--json]',
         { json: asJson }
       );
     }
@@ -3780,7 +3810,7 @@ async function cmdMcp(argv) {
   }
   if (args.length > 0) {
     fail(
-      'usage: af mcp | af mcp install --engine copilot|cursor [--write] [--project] [--cwd DIR] [--dry-run] [--json]'
+      'usage: aflt mcp | aflt mcp install --engine copilot|cursor [--write] [--project] [--cwd DIR] [--dry-run] [--json]'
     );
   }
   await mcp.runServer();
@@ -3970,7 +4000,7 @@ function cmdChildren(argv) {
 
 function cmdResult(argv) {
   const { args, flags } = parseArgs(argv);
-  if (!args[0]) fail('usage: af result <id|title> [--path] [--json] [--require-fresh]');
+  if (!args[0]) fail('usage: aflt result <id|title> [--path] [--json] [--require-fresh]');
   let session;
   try {
     session = registry.find(args[0]);
@@ -4042,7 +4072,7 @@ function runHcCli(argv, { timeoutMs } = {}) {
 }
 
 /**
- * Resolve the live Herdr terminal for a session by af_id (same as af ls/resume).
+ * Resolve the live Herdr terminal for a session by af_id (same as aflt ls/resume).
  * Never falls back to an unrelated terminal.
  * @returns {{ key: string, address: string|null, name: string|null, enriched: object }|null}
  */
@@ -4105,7 +4135,7 @@ function snapshotWorkerRow(session, { herdrInfo = null, waitingHint = null, agen
 
 function waitNothingError() {
   let msg =
-    'af wait: nothing to wait on. Pass worker ids/titles, or --parent <master>, or run inside a master (AGENTFLEET_ID) / worker (AGENTFLEET_PARENT).';
+    'aflt wait: nothing to wait on. Pass worker ids/titles, or --parent <master>, or run inside a master (AGENTFLEET_ID) / worker (AGENTFLEET_PARENT).';
   try {
     const sessions = registry.list({ includeDone: true });
     const childParentIds = new Set(sessions.filter((s) => s.parent).map((s) => s.parent));
@@ -4125,7 +4155,7 @@ function waitNothingError() {
       }
     }
     if (active.length === 1) {
-      msg += `\ne.g. af wait --parent ${active[0].title}`;
+      msg += `\ne.g. aflt wait --parent ${active[0].title}`;
     }
   } catch (_) {
     /* ignore */
@@ -4142,7 +4172,7 @@ function resolveWaitTargets(args, flags = {}) {
     const master = requireSession(String(flags.parent));
     const kids = listChildrenOf(master.id);
     if (kids.length === 0) {
-      fail(`af wait: master "${master.title}" has no workers`);
+      fail(`aflt wait: master "${master.title}" has no workers`);
     }
     return kids;
   }
@@ -4152,13 +4182,13 @@ function resolveWaitTargets(args, flags = {}) {
   }
   const kids = listChildrenOf(master.id);
   if (kids.length === 0) {
-    fail(`af wait: master "${master.title}" has no workers`);
+    fail(`aflt wait: master "${master.title}" has no workers`);
   }
   return kids;
 }
 
 /**
- * Resolve the master for an af wait --docs trigger.
+ * Resolve the master for an aflt wait --docs trigger.
  */
 function resolveWaitDocsMaster(targets, flags = {}) {
   if (flags.parent && flags.parent !== true) {
@@ -4318,14 +4348,14 @@ async function cmdWait(argv) {
 
       if (row.stateSource === 'none' && !st.noStateWarned) {
         process.stderr.write(
-          `no agent state from Herdr for ${s.id}; cannot detect completion — use af tail / af result\n`
+          `no agent state from Herdr for ${s.id}; cannot detect completion — use aflt tail / aflt result\n`
         );
         st.noStateWarned = true;
         waitState.set(s.id, st);
       }
       if (row.stateSource === 'shell' && !st.shellWarned) {
         process.stderr.write(
-          `agent not running in its terminal (shell only); run af resume ${s.id}\n`
+          `agent not running in its terminal (shell only); run aflt resume ${s.id}\n`
         );
         st.shellWarned = true;
         waitState.set(s.id, st);
@@ -4417,7 +4447,7 @@ function lastNLines(text, n) {
 
 async function cmdTail(argv) {
   const { args, flags } = parseArgs(argv);
-  if (!args[0]) fail('usage: af tail <id|title> [-n N] [-f]');
+  if (!args[0]) fail('usage: aflt tail <id|title> [-n N] [-f]');
   const session = requireSession(args[0]);
   const n =
     flags.n != null && flags.n !== true
@@ -4554,10 +4584,10 @@ async function cmdTail(argv) {
 async function cmdSend(argv) {
   const { args, flags } = parseArgs(argv);
   const asJsonEarly = Boolean(flags.json);
-  if (args.length < 2) fail('usage: af send <id|title> "text" [--timeout SEC] [--force] [--json]', { json: asJsonEarly });
+  if (args.length < 2) fail('usage: aflt send <id|title> "text" [--timeout SEC] [--force] [--json]', { json: asJsonEarly });
   const session = requireSession(args[0]);
   const text = args.slice(1).join(' ');
-  if (!text) fail('usage: af send <id|title> "text" [--timeout SEC] [--force] [--json]', { json: asJsonEarly });
+  if (!text) fail('usage: aflt send <id|title> "text" [--timeout SEC] [--force] [--json]', { json: asJsonEarly });
   const forceFlag = flags.force != null ? Boolean(flags.force) : null;
   const timeoutSec =
     flags.timeout != null && flags.timeout !== true ? Number(flags.timeout) : 0;
@@ -4610,7 +4640,7 @@ async function cmdSend(argv) {
   });
   if (alive || status === 'running') {
     fail(
-      `worker "${session.title}" is still running (pid ${session.runPid}); refuse send. Use af stop first or wait.`
+      `worker "${session.title}" is still running (pid ${session.runPid}); refuse send. Use aflt stop first or wait.`
     );
   }
 
@@ -4795,7 +4825,7 @@ async function cmdStop(argv) {
   if (allChildren) {
     const masterQuery = args[0] || flags['all-children'];
     if (!masterQuery || masterQuery === true) {
-      fail('usage: af stop --all-children <master>');
+      fail('usage: aflt stop --all-children <master>');
     }
     const master = requireSession(String(masterQuery));
     targets = listChildrenOf(master.id);
@@ -4803,7 +4833,7 @@ async function cmdStop(argv) {
       fail(`no workers under "${master.title}"`);
     }
   } else {
-    if (!args[0]) fail('usage: af stop <id|title> | af stop --all-children <master>');
+    if (!args[0]) fail('usage: aflt stop <id|title> | aflt stop --all-children <master>');
     targets = [requireSession(args[0])];
   }
 
@@ -4825,7 +4855,7 @@ async function cmdStop(argv) {
 
 function cmdLog(argv) {
   const { args, flags } = parseArgs(argv);
-  if (!args[0]) fail('usage: af log <title|id> [--path]');
+  if (!args[0]) fail('usage: aflt log <title|id> [--path]');
   const session = registry.find(args[0]);
   if (!session) fail(`session not found: ${args[0]}`);
   const file = session.lastOutput;
@@ -4875,8 +4905,8 @@ function cmdHerdrApp(argv) {
   const sub = args[0];
   if (!sub || sub === 'help' || sub === '-h' || sub === '--help') {
     process.stdout.write(
-      'usage: af herdr-app install [--copy] [--force] [--dry-run]\n' +
-        '       af herdr-app status\n'
+      'usage: aflt herdr-app install [--copy] [--force] [--dry-run]\n' +
+        '       aflt herdr-app status\n'
     );
     return;
   }
@@ -4906,7 +4936,7 @@ function cmdHerdrApp(argv) {
     }
     return;
   }
-  fail(`unknown herdr-app subcommand: ${sub}\nusage: af herdr-app install|status`);
+  fail(`unknown herdr-app subcommand: ${sub}\nusage: aflt herdr-app install|status`);
 }
 
 
@@ -5026,7 +5056,7 @@ function cmdDoctor(argv) {
       process.stdout.write(`${c.ok ? 'ok ' : '!! '} ${c.name}: ${c.detail || ''}\n`);
     }
     process.stdout.write(
-      '\nHerdr smoke: hc server status && hc ls --json | head -c 200 && af ls\n'
+      '\nHerdr smoke: hc server status && hc ls --json | head -c 200 && aflt ls\n'
     );
   }
   process.exitCode = ok ? 0 : 1;
@@ -5151,7 +5181,7 @@ function herdrLaunchFailed(plan) {
   return null;
 }
 
-// `af ls | head` closes stdout early; exit quietly instead of crashing with EPIPE.
+// `aflt ls | head` closes stdout early; exit quietly instead of crashing with EPIPE.
 process.stdout.on('error', (err) => {
   if (err && err.code === 'EPIPE') process.exit(0);
   throw err;

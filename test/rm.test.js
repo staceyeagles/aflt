@@ -155,7 +155,7 @@ esac
     const denied = af(['rm', 'RunW']);
     assert.equal(denied.status, 1);
     assert.ok(/running/i.test(denied.stderr), denied.stderr);
-    assert.ok(/af stop/i.test(denied.stderr), denied.stderr);
+    assert.ok(/aflt stop/i.test(denied.stderr), denied.stderr);
     assert.ok(loadRegistry().find('RunW'));
 
     const forced = af(['rm', 'RunW', '--force']);

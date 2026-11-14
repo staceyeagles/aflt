@@ -613,7 +613,7 @@ process.exit(0);
     );
     assert.equal(r.status, 1, r.stderr + r.stdout);
     assert.match(r.stderr, /shell only/i);
-    assert.match(r.stderr, /af resume/);
+    assert.match(r.stderr, /aflt resume/);
   });
 
   it('concurrent resumes of shell-only → exactly one send', async () => {
