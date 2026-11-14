@@ -42,7 +42,7 @@ _af() {
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  cmds="new add import ls list sync run log spawn master children result wait tail send stop resume pick adopt cursor copilot engine rename cwd set-cwd done rm remove note export import-file which-backend herdr-templates herdr-app doctor help"
+  cmds="new add import ls list sync run log spawn master children result wait tail send stop resume pick adopt cursor copilot engine rename cwd set-cwd done rm remove note export import-file which-backend herdr-templates herdr-app doctor msg inbox thread mcp help"
 
   if [[ ${COMP_CWORD} -eq 1 ]]; then
     COMPREPLY=( $(compgen -W "${cmds}" -- "${cur}") )
@@ -57,21 +57,62 @@ _af() {
       COMPREPLY=( $(compgen -W "--all --dry-run --json" -- "${cur}") )
       ;;
     new|add)
-      COMPREPLY=( $(compgen -W "--cwd --prompt --model --tag --chat --engine --force --dry-run --no-trust cursor copilot" -- "${cur}") )
+      COMPREPLY=( $(compgen -W "--cwd --prompt --model --tag --chat --engine --force --messaging --no-messaging --dry-run --no-trust cursor copilot" -- "${cur}") )
       ;;
     run)
-      COMPREPLY=( $(compgen -W "--prompt --cwd --model --engine --mode --force --output-format --timeout --dry-run --json --no-trust --no-silent cursor copilot ask plan text json" -- "${cur}") )
+      COMPREPLY=( $(compgen -W "--prompt --cwd --model --engine --mode --force --output-format --timeout --messaging --no-messaging --dry-run --json --no-trust --no-silent cursor copilot ask plan text json" -- "${cur}") )
       ;;
     spawn)
       if [[ "$prev" == "--parent" ]]; then
         titles="$(_af_session_titles)"
         COMPREPLY=( $(compgen -W "${titles}" -- "${cur}") )
       else
-        COMPREPLY=( $(compgen -W "--parent --prompt --engine --cwd --title --task --model --timeout --force --interactive --dry-run --json --no-trust cursor copilot" -- "${cur}") )
+        COMPREPLY=( $(compgen -W "--parent --prompt --engine --cwd --title --task --model --timeout --force --interactive --detach --messaging --no-messaging --dry-run --json --no-trust cursor copilot" -- "${cur}") )
       fi
       ;;
     master)
-      COMPREPLY=( $(compgen -W "--goal --engine --cwd --title --model --worker-engine --headless --timeout --force --dry-run --json --no-trust cursor copilot" -- "${cur}") )
+      COMPREPLY=( $(compgen -W "--goal --engine --cwd --title --model --worker-engine --headless --timeout --force --messaging --no-messaging --dry-run --json --no-trust cursor copilot" -- "${cur}") )
+      ;;
+    msg)
+      if [[ "$prev" == "--from" || "$prev" == "--reply" || "$prev" == "--type" ]]; then
+        if [[ "$prev" == "--type" ]]; then
+          COMPREPLY=( $(compgen -W "question answer note blocked" -- "${cur}") )
+        else
+          titles="$(_af_session_titles)"
+          COMPREPLY=( $(compgen -W "${titles}" -- "${cur}") )
+        fi
+      elif [[ ${COMP_CWORD} -eq 2 ]]; then
+        titles="$(_af_session_titles)"
+        COMPREPLY=( $(compgen -W "enable disable master all-siblings --type --reply --from --json --dry-run ${titles}" -- "${cur}") )
+      else
+        titles="$(_af_session_titles)"
+        COMPREPLY=( $(compgen -W "--type --reply --from --json --dry-run master all-siblings ${titles}" -- "${cur}") )
+      fi
+      ;;
+    inbox)
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "--unread --mark-read --json" -- "${cur}") )
+      else
+        titles="$(_af_session_titles)"
+        COMPREPLY=( $(compgen -W "--unread --mark-read --json ${titles}" -- "${cur}") )
+      fi
+      ;;
+    thread)
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "--json" -- "${cur}") )
+      else
+        titles="$(_af_session_titles)"
+        COMPREPLY=( $(compgen -W "--json ${titles}" -- "${cur}") )
+      fi
+      ;;
+    mcp)
+      if [[ ${COMP_CWORD} -eq 2 ]]; then
+        COMPREPLY=( $(compgen -W "install" -- "${cur}") )
+      elif [[ "$prev" == "--engine" ]]; then
+        COMPREPLY=( $(compgen -W "copilot cursor" -- "${cur}") )
+      else
+        COMPREPLY=( $(compgen -W "--engine --write --project --cwd --dry-run --json copilot cursor" -- "${cur}") )
+      fi
       ;;
     result)
       if [[ "$cur" == -* ]]; then

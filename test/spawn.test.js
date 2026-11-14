@@ -256,4 +256,79 @@ exit 0
     assert.equal(r.status, 1);
     assert.ok(/not found/i.test(r.stderr));
   });
+
+  it('spawn --detach returns immediately; supervisor records done + handoff', async () => {
+    const parent = seedParent('DetachMaster');
+    const writeStub = path.join(stubDir, 'cursor-agent-write');
+    fs.writeFileSync(
+      writeStub,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${1:-}" == "create-chat" ]]; then
+  echo "deadbeef-3333-4333-8333-$(printf '%012x' $RANDOM$RANDOM)"
+  exit 0
+fi
+if [[ -n "\${AGENTFLEET_RESULT:-}" ]]; then
+  printf '%s\\n' '## Summary' 'detached ok' '## Files changed' 'none' '## Open questions' 'none' > "\$AGENTFLEET_RESULT"
+fi
+sleep 0.2
+echo stub-ok
+exit 0
+`,
+      { mode: 0o755 }
+    );
+    const r = af(
+      [
+        'spawn',
+        '--parent',
+        parent.title,
+        '--prompt',
+        'Detach work',
+        '--detach',
+        '--json',
+      ],
+      { AGENTFLEET_CURSOR_BIN: writeStub }
+    );
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    const body = JSON.parse(r.stdout);
+    assert.equal(body.detached, true);
+    assert.ok(body.worker.id);
+    assert.equal(body.worker.workerStatus, 'running');
+
+    delete require.cache[require.resolve('../lib/util')];
+    delete require.cache[require.resolve('../lib/orchestrate')];
+    delete require.cache[require.resolve('../lib/registry')];
+    process.env.AGENTFLEET_HOME = home;
+    const registry = require('../lib/registry');
+
+    let worker = null;
+    const deadline = Date.now() + 15000;
+    while (Date.now() < deadline) {
+      worker = registry.find(body.worker.id);
+      if (worker && worker.workerStatus === 'done') break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.ok(worker, 'worker missing');
+    assert.equal(worker.workerStatus, 'done', JSON.stringify(worker));
+    assert.equal(worker.lastExit, 0);
+    assert.equal(worker.runPid, null);
+    assert.ok(worker.resultRunId || worker.resultSource === 'worker');
+    assert.ok(fs.existsSync(worker.result));
+    assert.match(fs.readFileSync(worker.result, 'utf8'), /detached ok/);
+  });
+
+  it('spawn --detach refuses --interactive', () => {
+    const parent = seedParent('NoCombo');
+    const r = af([
+      'spawn',
+      '--parent',
+      parent.title,
+      '--prompt',
+      'x',
+      '--detach',
+      '--interactive',
+    ]);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /detach.*headless|interactive/i);
+  });
 });

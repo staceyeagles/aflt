@@ -298,6 +298,25 @@ af import copilot --all --cwd ~/src/app
 
 Override without changing config: `af new "…" --engine cursor` / `AGENTFLEET_ENGINE=cursor`. Resume always uses the session's recorded engine. Import follows the same default-engine rules; `af import cursor` always scans `~/.cursor/chats/`.
 
+**Task-scoped messaging MCP (optional):** messaging is **off by default**. After `af msg enable <session>` (or project `.agentfleet.json` with `{"messaging": true}`), Copilot can use af’s MCP tools when the session was launched by af (identity via inherited `AGENTFLEET_SESSION` / `AGENTFLEET_ID` — no per-session env in the MCP config):
+
+```bash
+# Preview the snippet for ~/.copilot/mcp-config.json (type:local + tools:["*"])
+af mcp install --engine copilot
+
+# Merge into the real config (backs up to mcp-config.json.bak-<timestamp> first)
+af mcp install --engine copilot --write
+
+# Cursor: project mcp.json (preferred; then af passes --approve-mcps when messaging is on).
+# Install writes env "${env:AGENTFLEET_SESSION}" (etc.) so cursor-agent forwards identity
+# into the MCP child (cursor does not inherit process env into MCP servers).
+af mcp install --engine cursor --project --cwd ~/src/app
+# Cursor user config (optional)
+af mcp install --engine cursor --write
+```
+
+Until messaging is enabled for the running session, `af mcp` advertises no tools. Copilot launches get a per-run `--additional-mcp-config` automatically when messaging is enabled (no `~/.copilot` write). If an older Cursor `af` entry lacks the `${env:…}` mapping, re-run install (af warns on launch; `af doctor` flags `mcp_cursor`).
+
 ### 3.9 Install `af` from this archive
 
 Copy `agentfleet/` (or extract `agentfleet.tar.gz`) onto the work machine, then:
@@ -359,7 +378,9 @@ export AGENTFLEET_CURSOR_BIN="$HOME/.local/bin/cursor-agent"
 | `~/.config/herdr-core/templates/*.md` | `hc` agent templates (`af herdr-templates`). |
 | `~/.agentfleet/runs/<id>/` | Captured `af run` output (mode `0600`). |
 | `~/.agentfleet/results/<id>.md` | Worker handoff files from `af spawn` (see README “Master and worker agents”). |
-| `AGENTFLEET_ID` / `PARENT` / `RESULT` | Set on launched sessions / spawned workers for orchestration. |
+| `AGENTFLEET_ID` / `SESSION` / `MASTER` / `PARENT` / `RESULT` | Set on launched sessions / spawned workers for orchestration and messaging. |
+| `af msg` / `inbox` / `thread` / `af mcp` | Task-scoped messaging (off by default; see README “Messaging”). |
+| `AGENTFLEET_MSG_MAX_THREAD` / `AGENTFLEET_MSG_RATE` | Thread cap (default 6) and per-sender rate (default 10/60s). |
 | `af wait` / `af tail` / `af send` / `af stop` | Stage 2 master/worker controls (see README “Master and worker agents (stage 2)”). |
 | `af master` / `--send-grace` / `AGENTFLEET_SEND_GRACE` | Stage 3: bootstrap a master with `templates/orchestrator.md`; wait grace after interactive send (see README “Master and worker agents (stage 3)”). |
 | `AGENTFLEET_ROLE` / `AGENTFLEET_PLAN` | Set on `af master` launches (`master`; plan under `~/.agentfleet/plans/<id>.md`). |

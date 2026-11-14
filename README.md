@@ -143,7 +143,7 @@ Chat history stays on the same session id. Copilot's on-disk `workspace.yaml` is
 | `af sync [--dry-run] [--json]` | Query `hc ls --all --json`; persist last-known Herdr runtime (not status) |
 | `af run "<title>" --prompt "…"` | Headless create-or-resume; capture stdout to `~/.agentfleet/runs/` |
 | `af log <title\|id>` | Print last captured run (or `--path`) |
-| `af spawn --parent … --prompt …` | Create a worker under a master (headless by default; `--interactive` → Herdr) |
+| `af spawn --parent … --prompt …` | Create a worker under a master (headless by default; `--interactive` → Herdr; `--detach` returns immediately) |
 | `af children [<id\|title>]` | List workers for a master, or summarize masters |
 | `af result <id\|title>` | Print handoff (`--path`, `--json`, `--require-fresh` exits 1 if stale) |
 | `af resume <title\|id>` | Resume one (argv from `session.engine`). Default: Herdr when `hc` is on PATH; prints `Attach: hc attach <name>`. `--here` / `--via plain` = this terminal. `--open` = new iTerm2 attach tab (default in an iTerm TTY). `--force` → Copilot `--allow-all-tools` only. |
@@ -155,6 +155,8 @@ Chat history stays on the same session id. Copilot's on-disk `workspace.yaml` is
 | `af herdr-templates` | Install Cursor/OpenCode/Copilot templates into `~/.config/herdr-core/templates` |
 | `af herdr-app install` / `status` | Install the af-sessions Herdr panel + `af` layout (symlink by default) |
 | `af doctor [--json]` | Read-only environment checks |
+| `af msg` / `inbox` / `thread` | Task-scoped messaging (off by default; see Messaging) |
+| `af mcp` / `af mcp install` | Stdio MCP server; merge Copilot/Cursor MCP config |
 | `af rename` / `af done` / `af note` | Metadata |
 | `af cwd <title\|id> [path]` / `af set-cwd` | Show or change a session's folder (refreshes `branch`; does not move a live Herdr tab — resume/adopt after) |
 | `af rm <title\|id>` | Remove session + af-owned files under `$AGENTFLEET_HOME` by default. Prefer `--dry-run` first; `--keep-files` keeps handoffs/logs (`--children`, `--with-master`, `--force`) |
@@ -335,7 +337,7 @@ af stop --all-children auth-refactor   # cancel stragglers
 
 ## Master and worker agents (stage 3)
 
-Stage 3 adds `af master` (bootstrap a master with an orchestrator prompt) and fixes a race after interactive `af send`. Parallel `af spawn … &` is safe: registry read-modify-write uses a cross-process `<sessions.json>.lock`, and default worker titles (`<master>-wN`) are chosen under that lock so two spawns cannot overwrite each other or collide on the same title.
+Stage 3 adds `af master` (bootstrap a master with an orchestrator prompt) and fixes a race after interactive `af send`. Parallel workers: prefer `af spawn … --detach` (then `af wait`) over shell `&` — backgrounded af wrappers can die while the engine keeps running. Registry read-modify-write uses a cross-process `<sessions.json>.lock`, and default worker titles (`<master>-wN`) are chosen under that lock so two spawns cannot overwrite each other or collide on the same title.
 
 ### Permissions and handoffs
 
@@ -376,13 +378,47 @@ af master --goal "Extract JWT helpers and add unit tests" --cwd ~/src/app-wt-aut
 # Attach: hc attach <name>  (or work headlessly with --headless)
 
 # Inside the master (or from a controller driving the same loop):
-af spawn --parent "$AGENTFLEET_ID" --engine copilot --task "JWT helpers" --prompt "…" &
-af spawn --parent "$AGENTFLEET_ID" --engine cursor --task "tests" --prompt "…" --force &
+af spawn --parent "$AGENTFLEET_ID" --engine copilot --task "JWT helpers" --prompt "…" --detach
+af spawn --parent "$AGENTFLEET_ID" --engine cursor --task "tests" --prompt "…" --force --detach
 af wait --parent "$AGENTFLEET_ID" --any --timeout 900
 af result <worker-id>
 af send <worker-id> "Tighten Open questions"
 af wait <worker-id> --send-grace 15
 ```
+
+## Messaging (task-scoped)
+
+**Messaging is off by default.** Opt in per session (`af msg enable <title>`, or `--messaging` on `af run` / `af new` / `af master` / `af spawn`) or per project (`.agentfleet.json` with `{"messaging": true}` in the session folder or an ancestor up to the git root). An explicit session `messaging: false` overrides a project opt-in. Workers spawned by a messaging-enabled master inherit `messaging: true` unless `--no-messaging`.
+
+Team = the master (`role=master`); a worker’s team is its `parent`. Sessions with no role/parent have no team and cannot message.
+
+```bash
+af msg enable auth-master
+af msg master "blocked on schema" --type blocked --from auth-w1
+af msg all-siblings "FYI: shared util moved" --from auth-w1
+af msg --reply m-deadbeef "ack" --from auth-master   # to defaults to reply sender
+af inbox --unread --mark-read
+af thread m-deadbeef
+af thread auth-master          # whole team log (human plain-shell viewing OK)
+```
+
+Limits (from the append-only JSONL under `$AGENTFLEET_HOME/messages/<masterId>.jsonl`): max **6** messages per thread (`AGENTFLEET_MSG_MAX_THREAD`); **10** messages / 60s per sender (`AGENTFLEET_MSG_RATE`). Types: `question|answer|note|blocked` (default `note`).
+
+Launched sessions get `AGENTFLEET_SESSION` (= id) and `AGENTFLEET_MASTER` (when known) alongside `AGENTFLEET_ID`. Identity for CLI: `--from` > `AGENTFLEET_SESSION` > `AGENTFLEET_ID`.
+
+**MCP:** `af mcp` is a stdio JSON-RPC server (`post_message`, `read_inbox`, `list_team`) that only exposes tools when messaging is enabled for the inherited session identity.
+
+- **Copilot:** when messaging is enabled, each launch gets `--additional-mcp-config` (inline JSON; never writes `~/.copilot`) plus `--allow-tool=af`.
+- **Cursor:** no per-run MCP inject flag — install into the project, then af passes `--approve-mcps` when an `af` server is present (approves all configured MCP servers for that run). Cursor does not inherit process env into MCP stdio servers; the install writes an `env` block with `"AGENTFLEET_SESSION": "${env:AGENTFLEET_SESSION}"` (and ID/MASTER/PARENT/HOME) so cursor-agent interpolates identity from the af-launched session:
+
+```bash
+af mcp install --engine copilot          # print snippet for ~/.copilot/mcp-config.json
+af mcp install --engine copilot --write  # merge user config (backs up first)
+af mcp install --engine cursor --project # merge <cwd>/.cursor/mcp.json (backs up first)
+af mcp install --engine cursor --write   # merge ~/.cursor/mcp.json
+```
+
+`af ls --json` / `af children --json` include `messaging`, `messagingSource` (`session|project|default`), and `unread`.
 
 ## Headless / controller usage
 

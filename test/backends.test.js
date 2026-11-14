@@ -198,13 +198,18 @@ describe('herdr backend', () => {
     // program name and fails with spawn_failed ("cannot start \"--\"").
     assert.ok(!c0.argv.includes('--'));
     const resume = cursor.buildResumeCommand({ ...sample[0], cwd: herdrapp.normalizeCwd(cwdAuth) });
-    const wrapped = ['env', '-u', 'NO_COLOR', '-u', 'FORCE_COLOR', ...resume];
-    assert.deepEqual(c0.argv.slice(-wrapped.length), wrapped);
     assert.deepEqual(c0.argv.slice(envIdx, envIdx + 5), ['env', '-u', 'NO_COLOR', '-u', 'FORCE_COLOR']);
-    assert.equal(c0.argv[envIdx + 5], resume[0]);
+    assert.ok(c0.argv.includes('AGENTFLEET_ID=auth-aaa'));
+    assert.ok(c0.argv.includes('AGENTFLEET_SESSION=auth-aaa'));
+    assert.ok(c0.argv.some((a) => String(a).startsWith('AGENTFLEET_HOME=')));
+    const homeIdx = c0.argv.findIndex((a) => String(a).startsWith('AGENTFLEET_HOME='));
+    assert.ok(homeIdx > envIdx);
+    assert.equal(c0.argv[c0.argv.length - resume.length], resume[0]);
     assert.ok(!c0.argv.includes('TERM=xterm-256color'));
     assert.ok(c0.shell.startsWith('hc run --bg'));
     assert.ok(c0.shell.includes('env -u NO_COLOR -u FORCE_COLOR'));
+    assert.ok(c0.shell.includes('AGENTFLEET_SESSION=auth-aaa'));
+    assert.ok(c0.shell.includes('AGENTFLEET_HOME='));
     assert.ok(c0.shell.includes('--keep'));
     assert.ok(!c0.shell.includes(' -- -- '));
   });

@@ -5,6 +5,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const os = require('os');
 const path = require('path');
+const { spawn } = require('child_process');
 const registry = require('../lib/registry');
 const cursor = require('../lib/cursor');
 const copilot = require('../lib/copilot');
@@ -16,6 +17,8 @@ const herdr = require('../lib/herdr');
 const herdrapp = require('../lib/herdrapp');
 const orchestrate = require('../lib/orchestrate');
 const launch = require('../lib/launch');
+const messages = require('../lib/messages');
+const mcp = require('../lib/mcp');
 const {
   parseArgs,
   resolveCwd,
@@ -37,7 +40,7 @@ const USAGE = `agentfleet (af) — track & resume Cursor / Copilot CLI agent ses
 
 Usage:
   af new "<title>" [--cwd DIR] [--prompt "..."] [--model X] [--engine cursor|copilot]
-                            [--force] [--tag T]... [--dry-run]
+                            [--force] [--messaging|--no-messaging] [--tag T]... [--dry-run]
   af add "<title>" --chat <id> [--cwd DIR] [--model X] [--engine cursor|copilot]
                             [--tag T]... [--prompt "..."]
                             For --engine copilot, --chat is the Copilot session UUID
@@ -58,22 +61,46 @@ Usage:
                             Persist last-known Herdr runtime evidence (does not change status/lastUsed)
   af run "<title>" --prompt "..." [--cwd DIR] [--model X] [--engine cursor|copilot]
                             [--mode ask|plan] [--force] [--output-format text|json]
-                            [--timeout SEC] [--dry-run] [--json]
+                            [--timeout SEC] [--messaging|--no-messaging] [--dry-run] [--json]
                             Headless one-shot: create or resume, capture output, exit
   af run <title|id> --prompt "..." [...]
                             Same, resuming an existing tracked session
   af log <title|id> [--path]  Print last captured run output (or its path)
   af spawn --parent <id|title> --prompt TEXT [--engine cursor|copilot] [--cwd DIR]
                             [--title T] [--task TEXT] [--model X] [--timeout SEC]
-                            [--force] [--interactive] [--dry-run] [--json]
+                            [--force] [--interactive] [--detach]
+                            [--messaging|--no-messaging] [--dry-run] [--json]
                             Create a worker under a master; headless by default
                             (same machinery as af run). --interactive launches via Herdr.
+                            --detach (headless only): return immediately; a supervisor
+                            records exit/handoff. Prefer --detach over shell &.
+                            Messaging-enabled masters pass messaging:true to workers
+                            unless --no-messaging.
   af master --goal TEXT [--engine cursor|copilot] [--cwd DIR] [--title T] [--model X]
                             [--worker-engine copilot|cursor] [--headless] [--timeout SEC]
-                            [--force] [--dry-run] [--json]
+                            [--force] [--messaging|--no-messaging] [--dry-run] [--json]
                             Create a master session with the orchestrator template as
                             the initial prompt. Default: interactive via Herdr.
                             --headless uses af run machinery (workerStatus tracked).
+  af msg <to> <text...> [--type T] [--reply <msgId>] [--from S] [--json] [--dry-run]
+                            Task-scoped message (off by default; see Messaging).
+                            With --reply and no <to>, defaults to=reply sender.
+  af msg enable|disable <session> [--json] [--dry-run]
+                            Per-session messaging opt-in / opt-out
+  af inbox [<session>] [--unread] [--mark-read] [--json]
+                            Messages for a session (default: AGENTFLEET_SESSION/ID).
+                            Plain-shell: af inbox <master> to view a team inbox.
+  af thread <msgId|master> [--json]
+                            One thread in order, or whole team log for a master.
+  af mcp                    Stdio MCP server (tools when messaging enabled)
+  af mcp install --engine copilot|cursor [--write] [--project] [--cwd DIR]
+                            [--dry-run] [--json]
+                            Print or merge MCP config. Copilot: ~/.copilot/mcp-config.json
+                            with --write. Cursor user: ~/.cursor/mcp.json with --write.
+                            Cursor project: --project writes <cwd>/.cursor/mcp.json
+                            (backs up first). Messaging-enabled Copilot runs get
+                            --additional-mcp-config per launch; Cursor gets
+                            --approve-mcps when af is in project/user mcp.json.
   af children [<id|title>] [--json] [--all]
                             List a master's workers, or (no arg) resolve master from
                             AGENTFLEET_ID / AGENTFLEET_PARENT, or summarize all masters.
@@ -172,11 +199,15 @@ Environment:
                             (labels still applied; Herdr defaults space names to repo)
   HERDR_APP_HOME          Herdr app config dir (default: ~/.config/herdr-app)
   AGENTFLEET_ID           Set on launched sessions (af id); used by af children
+  AGENTFLEET_SESSION      Same as AGENTFLEET_ID (messaging / MCP identity)
+  AGENTFLEET_MASTER       Team master id when known
   AGENTFLEET_PARENT       Set on spawned workers (master af id)
   AGENTFLEET_RESULT       Set on spawned workers / masters (handoff or summary path)
-  AGENTFLEET_PLAN         Set on masters (plan file under $AGENTFLEET_HOME/plans/)
+  AGENTFLEET_PLAN         Set on masters (plan under $AGENTFLEET_HOME/plans/)
   AGENTFLEET_ROLE         Set on masters (master) when launched via af master
   AGENTFLEET_SEND_GRACE   Seconds for af wait to ignore stale done/idle after send
+  AGENTFLEET_MSG_MAX_THREAD  Max messages per thread (default 6)
+  AGENTFLEET_MSG_RATE     Max messages per sender per 60s (default 10)
 `;
 
 async function main() {
@@ -202,8 +233,23 @@ async function main() {
     case 'spawn':
       await cmdSpawn(rest);
       break;
+    case '_supervise-headless':
+      await cmdSuperviseHeadless(rest);
+      break;
     case 'master':
       await cmdMaster(rest);
+      break;
+    case 'msg':
+      cmdMsg(rest);
+      break;
+    case 'inbox':
+      cmdInbox(rest);
+      break;
+    case 'thread':
+      cmdThread(rest);
+      break;
+    case 'mcp':
+      await cmdMcp(rest);
       break;
     case 'children':
       cmdChildren(rest);
@@ -332,6 +378,7 @@ async function cmdNew(argv) {
     chatId = await cursor.createChat();
   }
 
+  const messagingFlag = messages.normalizeMessagingFlag(flags);
   const entry = {
     title,
     chatId,
@@ -343,6 +390,7 @@ async function cmdNew(argv) {
     status: 'active',
     engine: engineName,
   };
+  if (messagingFlag !== null) entry.messaging = messagingFlag;
 
   const launchOpts = {
     prompt: prompt || undefined,
@@ -374,7 +422,7 @@ async function cmdNew(argv) {
   }
 
   const argvLaunch = engine.buildInteractiveCommand(saved, launchOpts);
-  const launchEnv = { ...process.env, AGENTFLEET_ID: saved.id };
+  const launchEnv = { ...process.env, ...messages.sessionIdentityEnv(saved) };
   const { code } = await engine.spawnInteractive(argvLaunch, { cwd, env: launchEnv });
   registry.bestEffortTouch(saved.id);
   process.exitCode = code || 0;
@@ -769,42 +817,49 @@ function cmdLs(argv) {
   const enriched = herdr.enrichSessions(sessions, fetchResult);
 
   if (flags.json) {
-    const rows = enriched.map((e) => ({
-      id: e.session.id,
-      title: e.session.title,
-      chatId: e.session.chatId,
-      engine: e.session.engine || 'cursor',
-      cwd: e.session.cwd,
-      branch: e.session.branch || null,
-      status: e.session.status,
-      lastUsed: e.session.lastUsed || null,
-      herdr: {
-        runtime: herdr.displayRuntime(e.runtime),
-        address: e.address,
-        name: e.name,
-        exitCode: e.exitCode,
-        reason: e.reason,
-        checkedAt: e.checkedAt,
-      },
-      herdrApp: (() => {
-        const match =
-          fetchResult.ok &&
-          (fetchResult.terminals || []).find(
-            (t) => t.afId && t.afId === e.session.id && herdr.isLiveTerminal(t)
-          );
-        const st = herdrapp.herdrAppStatus(e.session, match || null, {
-          sessions,
-        });
-        return {
-          space: st.space,
-          tab: st.tab,
-          spaceTitle: st.spaceTitle,
-          ok: st.ok,
-          legacy: st.legacy,
-          needsAdopt: st.needsAdopt,
-        };
-      })(),
-    }));
+    const unreadMap = messages.unreadBySessionId(sessions);
+    const rows = enriched.map((e) => {
+      const eff = messages.isMessagingEnabled(e.session);
+      return {
+        id: e.session.id,
+        title: e.session.title,
+        chatId: e.session.chatId,
+        engine: e.session.engine || 'cursor',
+        cwd: e.session.cwd,
+        branch: e.session.branch || null,
+        status: e.session.status,
+        lastUsed: e.session.lastUsed || null,
+        messaging: eff.enabled,
+        messagingSource: eff.source,
+        unread: unreadMap[e.session.id] || 0,
+        herdr: {
+          runtime: herdr.displayRuntime(e.runtime),
+          address: e.address,
+          name: e.name,
+          exitCode: e.exitCode,
+          reason: e.reason,
+          checkedAt: e.checkedAt,
+        },
+        herdrApp: (() => {
+          const match =
+            fetchResult.ok &&
+            (fetchResult.terminals || []).find(
+              (t) => t.afId && t.afId === e.session.id && herdr.isLiveTerminal(t)
+            );
+          const st = herdrapp.herdrAppStatus(e.session, match || null, {
+            sessions,
+          });
+          return {
+            space: st.space,
+            tab: st.tab,
+            spaceTitle: st.spaceTitle,
+            ok: st.ok,
+            legacy: st.legacy,
+            needsAdopt: st.needsAdopt,
+          };
+        })(),
+      };
+    });
     emitJson({ sessions: rows, queryOk: Boolean(fetchResult.ok) });
     return;
   }
@@ -988,7 +1043,11 @@ async function cmdResume(argv) {
     fail(err.message);
   }
   const argvLaunch = engine.buildInteractiveCommand(session, resumeOpts);
-  const { code } = await engine.spawnInteractive(argvLaunch, { cwd: session.cwd });
+  const launchEnv = { ...process.env, ...messages.sessionIdentityEnv(session) };
+  const { code } = await engine.spawnInteractive(argvLaunch, {
+    cwd: session.cwd,
+    env: launchEnv,
+  });
   process.exitCode = code || 0;
 }
 
@@ -1841,7 +1900,7 @@ async function executeHeadlessRun(session, opts = {}) {
   process.stderr.write(
     `Running "${session.title}" via ${bin} (${engineName}${mode ? `, mode=${mode}` : ''}${force ? ', force' : ''}) in ${session.cwd}\n`
   );
-  const childEnv = env || { ...process.env, AGENTFLEET_ID: session.id };
+  const childEnv = env || { ...process.env, ...messages.sessionIdentityEnv(session) };
   const outPath = runlib.newRunLogPath(session.id, engineName);
   runlib.writeRunLogHeader(outPath, { argv: [bin, ...argvRun], cwd: session.cwd });
 
@@ -2010,7 +2069,9 @@ async function cmdRun(argv) {
   const titleOrId = args[0];
   const prompt = flags.prompt;
   if (!titleOrId || !prompt || prompt === true) {
-    fail('usage: af run "<title>" --prompt "..." [--cwd DIR] [--engine cursor|copilot] [--mode ask|plan] [--force]');
+    fail(
+      'usage: af run "<title>" --prompt "..." [--cwd DIR] [--engine cursor|copilot] [--mode ask|plan] [--force] [--messaging|--no-messaging] [--dry-run] [--json]'
+    );
   }
 
   const engineFlag = flags.engine ? String(flags.engine) : null;
@@ -2068,6 +2129,7 @@ async function cmdRun(argv) {
     } else {
       chatId = copilot.newSessionId();
     }
+    const messagingFlag = messages.normalizeMessagingFlag(flags);
     const entry = {
       title: titleOrId,
       chatId,
@@ -2079,6 +2141,7 @@ async function cmdRun(argv) {
       status: 'active',
       engine: engineName,
     };
+    if (messagingFlag !== null) entry.messaging = messagingFlag;
     if (dryRun) {
       session = { ...entry, id: 'dry-run' };
     } else {
@@ -2150,7 +2213,7 @@ async function cmdSpawn(argv) {
   const prompt = flags.prompt;
   if (!parentQuery || parentQuery === true || !prompt || prompt === true) {
     fail(
-      'usage: af spawn --parent <id|title> --prompt TEXT [--engine cursor|copilot] [--cwd DIR] [--title T] [--task TEXT] [--interactive] [--dry-run]'
+      'usage: af spawn --parent <id|title> --prompt TEXT [--engine cursor|copilot] [--cwd DIR] [--title T] [--task TEXT] [--interactive] [--detach] [--force] [--messaging|--no-messaging] [--dry-run] [--json]'
     );
   }
 
@@ -2181,11 +2244,15 @@ async function cmdSpawn(argv) {
   const force = Boolean(flags.force);
   const dryRun = Boolean(flags['dry-run']);
   const interactive = Boolean(flags.interactive);
+  const detach = Boolean(flags.detach);
   const trust = !flags['no-trust'];
   const asJson = Boolean(flags.json);
   const timeoutSec = flags.timeout != null && flags.timeout !== true ? Number(flags.timeout) : 0;
   if (flags.timeout && (Number.isNaN(timeoutSec) || timeoutSec < 0)) {
     fail('--timeout must be a number of seconds');
+  }
+  if (detach && interactive) {
+    fail('--detach is headless only (cannot combine with --interactive)', { json: asJson });
   }
 
   const cwd = flags.cwd || flags.C ? resolveCwd(flags.cwd || flags.C) : parent.cwd;
@@ -2193,6 +2260,7 @@ async function cmdSpawn(argv) {
     typeof flags.task === 'string' && flags.task
       ? String(flags.task)
       : orchestrate.taskFromPrompt(prompt);
+  const messagingFlag = messages.normalizeMessagingFlag(flags, { inheritFrom: parent });
 
   const explicitTitle =
     typeof flags.title === 'string' && flags.title ? String(flags.title) : null;
@@ -2230,13 +2298,20 @@ async function cmdSpawn(argv) {
       task,
       result: orchestrate.defaultResultPath(dryId),
       workerStatus: interactive ? 'running' : 'queued',
+      messaging: messagingFlag,
     };
+    const previewMessaging = messages.isMessagingEnabled({
+      ...previewEntry,
+      messaging: messagingFlag,
+      cwd,
+    }).enabled;
     const previewWrapped = orchestrate.wrapWorkerPrompt({
       parentTitle: parent.title,
       parentId: parent.id,
       task,
       resultPath: previewEntry.result,
       prompt,
+      messagingEnabled: previewMessaging,
     });
     if (asJson) {
       emitJson({
@@ -2292,35 +2367,36 @@ async function cmdSpawn(argv) {
     const addOpts = explicitTitle
       ? {}
       : { autoTitle: { parentTitle: parent.title, parentId: parent.id } };
-    worker = registry.add(
-      {
-        title: explicitTitle || title,
-        chatId,
-        cwd,
-        branch: gitBranch(cwd),
-        model: flags.model || null,
-        prompt: '',
-        tags: [],
-        status: 'active',
-        engine: engineName,
-        parent: parent.id,
-        role: 'worker',
-        task,
-        workerStatus: 'queued',
-      },
-      addOpts
-    );
+    const addPartial = {
+      title: explicitTitle || title,
+      chatId,
+      cwd,
+      branch: gitBranch(cwd),
+      model: flags.model || null,
+      prompt: '',
+      tags: [],
+      status: 'active',
+      engine: engineName,
+      parent: parent.id,
+      role: 'worker',
+      task,
+      workerStatus: 'queued',
+    };
+    if (messagingFlag !== null) addPartial.messaging = messagingFlag;
+    worker = registry.add(addPartial, addOpts);
   } catch (err) {
     fail(err.message);
   }
 
   const finalResult = worker.result || orchestrate.defaultResultPath(worker.id);
+  const workerMessagingOn = messages.isMessagingEnabled(worker).enabled;
   const finalWrapped = orchestrate.wrapWorkerPrompt({
     parentTitle: parent.title,
     parentId: parent.id,
     task,
     resultPath: finalResult,
     prompt,
+    messagingEnabled: workerMessagingOn,
   });
   worker = registry.update(worker.id, {
     prompt: finalWrapped,
@@ -2329,11 +2405,10 @@ async function cmdSpawn(argv) {
     stopRequested: false,
   });
 
-  const envOverlay = {
-    AGENTFLEET_ID: worker.id,
+  const envOverlay = messages.sessionIdentityEnv(worker, {
     AGENTFLEET_PARENT: parent.id,
     AGENTFLEET_RESULT: finalResult,
-  };
+  });
 
   if (interactive) {
     try {
@@ -2423,6 +2498,42 @@ async function cmdSpawn(argv) {
     force,
     stopRequested: false,
   });
+
+  if (detach) {
+    const superviseArgv = [__filename, '_supervise-headless', worker.id];
+    if (force) superviseArgv.push('--force');
+    if (timeoutSec) superviseArgv.push('--timeout', String(timeoutSec));
+    if (trust === false) superviseArgv.push('--no-trust');
+    const child = spawn(process.execPath, superviseArgv, {
+      detached: true,
+      stdio: 'ignore',
+      env: process.env,
+    });
+    child.unref();
+    if (asJson) {
+      emitJson({
+        ok: true,
+        detached: true,
+        supervisorPid: child.pid || null,
+        worker: {
+          id: worker.id,
+          title: worker.title,
+          engine: worker.engine,
+          result: finalResult,
+          workerStatus: 'running',
+        },
+        parent: { id: parent.id, title: parent.title },
+      });
+    } else {
+      process.stdout.write(`${worker.id}\n`);
+      process.stderr.write(
+        `detached worker: ${worker.title} (${worker.id}) supervisorPid=${child.pid || '?'}\n` +
+          `result: ${finalResult}\n`
+      );
+    }
+    return;
+  }
+
   const { code, timedOut, outPath, stopped, result, runId, registryWriteError } = await executeHeadlessRun(worker, {
     prompt: finalWrapped,
     force,
@@ -2480,12 +2591,87 @@ async function cmdSpawn(argv) {
   process.exitCode = code;
 }
 
+/**
+ * Internal: detached supervisor for `af spawn --detach`.
+ * Runs the engine and records lastExit / workerStatus / handoff like the blocking path.
+ */
+async function cmdSuperviseHeadless(argv) {
+  const { args, flags } = parseArgs(argv);
+  const id = args[0];
+  if (!id) {
+    process.stderr.write('usage: af _supervise-headless <sessionId>\n');
+    process.exitCode = 2;
+    return;
+  }
+  let session;
+  try {
+    session = registry.find(id);
+  } catch (err) {
+    process.stderr.write(String(err.message) + '\n');
+    process.exitCode = 2;
+    return;
+  }
+  if (!session) {
+    process.stderr.write(`session not found: ${id}\n`);
+    process.exitCode = 2;
+    return;
+  }
+  const force = flags.force != null ? Boolean(flags.force) : Boolean(session.force);
+  const trust = !flags['no-trust'];
+  const timeoutSec = flags.timeout != null && flags.timeout !== true ? Number(flags.timeout) : 0;
+  const prompt = session.prompt || '';
+  const resultPath = session.result || orchestrate.defaultResultPath(session.id);
+  const envOverlay = messages.sessionIdentityEnv(session, {
+    ...(session.parent ? { AGENTFLEET_PARENT: session.parent } : {}),
+    ...(resultPath ? { AGENTFLEET_RESULT: resultPath } : {}),
+  });
+  try {
+    registry.update(session.id, {
+      workerStatus: 'running',
+      stopRequested: false,
+      force,
+      lastUsed: nowIso(),
+    });
+  } catch (_) {
+    /* ignore */
+  }
+  const { code, timedOut, stopped, result, runId } = await executeHeadlessRun(session, {
+    prompt,
+    force,
+    outputFormat: 'text',
+    trust,
+    timeoutSec: Number.isFinite(timeoutSec) && timeoutSec > 0 ? timeoutSec : 0,
+    silent: true,
+    env: { ...process.env, ...envOverlay },
+    quietCopilotHints: true,
+    json: false,
+  });
+  let workerStatus;
+  if (stopped) workerStatus = 'stopped';
+  else if (!timedOut && code === 0) workerStatus = 'done';
+  else workerStatus = 'failed';
+  try {
+    session = registry.update(session.id, { workerStatus, runPid: null, runPgid: null });
+  } catch (_) {
+    /* ignore */
+  }
+  applyResultHandoffFallback(session, {
+    code,
+    timedOut,
+    stopped,
+    stdout: result && result.stdout,
+    resultPath,
+    runId,
+  });
+  process.exitCode = code;
+}
+
 async function cmdMaster(argv) {
   const { flags } = parseArgs(argv);
   const goal = flags.goal;
   if (!goal || goal === true) {
     fail(
-      'usage: af master --goal TEXT [--engine cursor|copilot] [--cwd DIR] [--title T] [--model X] [--worker-engine copilot|cursor] [--headless] [--timeout SEC] [--force] [--dry-run] [--json]'
+      'usage: af master --goal TEXT [--engine cursor|copilot] [--cwd DIR] [--title T] [--model X] [--worker-engine copilot|cursor] [--headless] [--timeout SEC] [--force] [--messaging|--no-messaging] [--dry-run] [--json]'
     );
   }
   const goalText = String(goal);
@@ -2538,7 +2724,9 @@ async function cmdMaster(argv) {
   const previewId = 'dry-run-master';
   const previewResult = orchestrate.defaultResultPath(previewId);
 
-  function buildPromptFor(masterId, masterTitle, resultPath, planPath) {
+  const messagingFlag = messages.normalizeMessagingFlag(flags);
+
+  function buildPromptFor(masterId, masterTitle, resultPath, planPath, messagingEnabled) {
     const tpl = orchestrate.loadOrchestratorTemplate();
     return orchestrate.renderTemplate(tpl, {
       GOAL: goalText,
@@ -2547,16 +2735,16 @@ async function cmdMaster(argv) {
       CWD: cwd,
       DEFAULT_WORKER_ENGINE: workerEngine,
       PLAN: planPath || '',
+      MESSAGING: messages.messagingPromptBlock(Boolean(messagingEnabled), { role: 'master' }),
     });
   }
 
   function masterEnvOverlay(session) {
-    const overlay = {
-      AGENTFLEET_ID: session.id,
+    const overlay = messages.sessionIdentityEnv(session, {
       AGENTFLEET_RESULT: session.result,
       AGENTFLEET_ROLE: 'master',
       PATH: orchestrate.pathWithAf(process.env),
-    };
+    });
     if (session.plan) overlay.AGENTFLEET_PLAN = session.plan;
     return overlay;
   }
@@ -2564,7 +2752,14 @@ async function cmdMaster(argv) {
   const previewPlan = orchestrate.defaultPlanPath(previewId);
 
   if (dryRun) {
-    const prompt = buildPromptFor(previewId, title, previewResult, previewPlan);
+    const previewMessagingOn = messages.isMessagingEnabled({
+      id: previewId,
+      title,
+      cwd,
+      role: 'master',
+      messaging: messagingFlag,
+    }).enabled;
+    const prompt = buildPromptFor(previewId, title, previewResult, previewPlan, previewMessagingOn);
     const previewEntry = {
       id: previewId,
       title,
@@ -2577,6 +2772,7 @@ async function cmdMaster(argv) {
       result: previewResult,
       plan: previewPlan,
       workerStatus: headless ? 'queued' : 'running',
+      messaging: messagingFlag,
       prompt,
     };
     if (asJson) {
@@ -2629,7 +2825,7 @@ async function cmdMaster(argv) {
 
   let master;
   try {
-    master = registry.add({
+    const masterPartial = {
       title,
       chatId,
       cwd,
@@ -2644,14 +2840,23 @@ async function cmdMaster(argv) {
       workerStatus: 'queued',
       force,
       stopRequested: false,
-    });
+    };
+    if (messagingFlag !== null) masterPartial.messaging = messagingFlag;
+    master = registry.add(masterPartial);
   } catch (err) {
     fail(err.message);
   }
 
   const finalResult = master.result || orchestrate.defaultResultPath(master.id);
   const finalPlan = master.plan || orchestrate.defaultPlanPath(master.id);
-  const finalPrompt = buildPromptFor(master.id, master.title, finalResult, finalPlan);
+  const masterMessagingOn = messages.isMessagingEnabled(master).enabled;
+  const finalPrompt = buildPromptFor(
+    master.id,
+    master.title,
+    finalResult,
+    finalPlan,
+    masterMessagingOn
+  );
   master = registry.update(master.id, {
     prompt: finalPrompt,
     result: finalResult,
@@ -2809,6 +3014,330 @@ async function cmdMaster(argv) {
   process.exitCode = code;
 }
 
+function cmdMsgEnableDisable(action, query, flags) {
+  const asJson = Boolean(flags.json);
+  const dryRun = Boolean(flags['dry-run']);
+  if (!query) fail(`usage: af msg ${action} <session> [--json] [--dry-run]`, { json: asJson });
+  let session;
+  try {
+    session = registry.find(query);
+  } catch (err) {
+    fail(err.message, { json: asJson });
+  }
+  if (!session) fail(`session not found: ${query}`, { json: asJson });
+  const next = action === 'enable' ? true : false;
+  if (dryRun) {
+    if (asJson) {
+      emitJson({
+        ok: true,
+        dryRun: true,
+        session: { id: session.id, title: session.title },
+        messaging: next,
+      });
+    } else {
+      process.stdout.write(
+        `[dry-run] would set messaging=${next} on ${session.title} (${session.id})\n`
+      );
+    }
+    return;
+  }
+  session = registry.update(session.id, { messaging: next });
+  if (asJson) {
+    emitJson({
+      ok: true,
+      session: { id: session.id, title: session.title },
+      messaging: session.messaging,
+    });
+  } else {
+    process.stdout.write(`messaging ${next ? 'enabled' : 'disabled'} for ${session.title}\n`);
+  }
+}
+
+function cmdMsg(argv) {
+  const { args, flags } = parseArgs(argv);
+  const asJson = Boolean(flags.json);
+  const dryRun = Boolean(flags['dry-run']);
+
+  if (args[0] === 'enable' || args[0] === 'disable') {
+    cmdMsgEnableDisable(args[0], args[1], flags);
+    return;
+  }
+
+  const fromQuery = messages.resolveFromId(flags, process.env);
+  if (!fromQuery) {
+    fail(
+      'sender unknown: pass --from <session> or run inside an af-launched session (AGENTFLEET_SESSION/AGENTFLEET_ID)',
+      { json: asJson }
+    );
+  }
+
+  let fromSession;
+  try {
+    fromSession = registry.find(fromQuery);
+  } catch (err) {
+    fail(err.message, { json: asJson });
+  }
+  if (!fromSession) fail(`sender session not found: ${fromQuery}`, { json: asJson });
+
+  let to = null;
+  let textParts = [];
+  const replyTo =
+    flags.reply != null && flags.reply !== true ? String(flags.reply) : null;
+
+  if (replyTo && args.length >= 1) {
+    // With --reply: if first arg is a known alias or in-team session, treat as <to>; else all args are text.
+    if (args[0] === 'master' || args[0] === 'all-siblings') {
+      to = args[0];
+      textParts = args.slice(1);
+    } else {
+      let maybeTo = null;
+      try {
+        maybeTo = registry.find(args[0]);
+      } catch (_) {
+        maybeTo = null;
+      }
+      const teamId = messages.teamIdOf(fromSession);
+      const maybeTeam = maybeTo ? messages.teamIdOf(maybeTo) : null;
+      const inTeam =
+        maybeTo && teamId && (maybeTo.id === teamId || maybeTeam === teamId);
+      if (inTeam) {
+        to = args[0];
+        textParts = args.slice(1);
+      } else {
+        to = null; // default to reply sender inside postMessage
+        textParts = args;
+      }
+    }
+  } else {
+    to = args[0] || null;
+    textParts = args.slice(1);
+  }
+
+  const text = textParts.join(' ');
+  if (!replyTo && !to) {
+    fail(
+      'usage: af msg <to> <text...> [--type T] [--reply <msgId>] [--from S] [--json] [--dry-run]\n' +
+        '       af msg --reply <msgId> <text...>  (defaults to=reply sender)',
+      { json: asJson }
+    );
+  }
+  if (!text.trim()) {
+    fail('message text is required', { json: asJson });
+  }
+
+  try {
+    const result = messages.postMessage({
+      fromSession,
+      to,
+      text,
+      type: flags.type,
+      replyTo,
+      sessions: registry.list({ includeDone: true }),
+      find: (q) => registry.find(q),
+      dryRun,
+    });
+    if (asJson) {
+      emitJson({
+        ok: true,
+        dryRun: Boolean(result.dryRun),
+        message: result.message,
+        skipped: (result.skipped || []).map((s) => ({ id: s.id, title: s.title })),
+      });
+    } else if (dryRun) {
+      process.stdout.write(`${result.message.id}\n`);
+      process.stderr.write('[dry-run] validated; wrote nothing\n');
+      if (result.skipped && result.skipped.length) {
+        process.stderr.write(
+          `skipped (messaging off): ${result.skipped.map((s) => s.title).join(', ')}\n`
+        );
+      }
+    } else {
+      process.stdout.write(`${result.message.id}\n`);
+      if (result.skipped && result.skipped.length) {
+        process.stderr.write(
+          `skipped (messaging off): ${result.skipped.map((s) => s.title).join(', ')}\n`
+        );
+      }
+    }
+  } catch (err) {
+    fail(err.message, { json: asJson });
+  }
+}
+
+function cmdInbox(argv) {
+  const { args, flags } = parseArgs(argv);
+  const asJson = Boolean(flags.json);
+  const unreadOnly = Boolean(flags.unread);
+  const markRead = Boolean(flags['mark-read']);
+  const query = args[0] || messages.resolveEnvSessionId(process.env);
+  if (!query) {
+    fail(
+      'usage: af inbox [<session>] [--unread] [--mark-read] [--json]\n' +
+        '(default session: AGENTFLEET_SESSION / AGENTFLEET_ID; or pass a master id to view)',
+      { json: asJson }
+    );
+  }
+
+  let session;
+  try {
+    session = registry.find(query);
+  } catch (err) {
+    fail(err.message, { json: asJson });
+  }
+  if (!session) fail(`session not found: ${query}`, { json: asJson });
+
+  const teamId = messages.teamIdOf(session);
+  if (!teamId) {
+    fail(`session "${session.title}" has no team; messaging refused`, { json: asJson });
+  }
+
+  // Human viewing from a plain shell (no AGENTFLEET_SESSION) is allowed without enablement.
+  const envId = messages.resolveEnvSessionId(process.env);
+  const viewingAsHuman = !envId;
+  if (!viewingAsHuman) {
+    try {
+      messages.assertEnabled(session);
+    } catch (err) {
+      fail(err.message, { json: asJson });
+    }
+  }
+
+  const records = messages.readLog(teamId);
+  const inbox = messages.inboxFor(session, records, { unreadOnly });
+  if (markRead && !viewingAsHuman && inbox.length) {
+    messages.markRead(
+      teamId,
+      inbox.map((m) => m.id),
+      session.id
+    );
+    for (const m of inbox) m.read = true;
+  }
+
+  if (asJson) {
+    emitJson({ session: { id: session.id, title: session.title }, messages: inbox });
+    return;
+  }
+  if (inbox.length === 0) {
+    process.stdout.write('(no messages)\n');
+    return;
+  }
+  process.stdout.write(
+    `${pad('READ', 4)} ${pad('ID', 12)} ${pad('FROM', 16)} ${pad('TYPE', 8)} ${pad('THREAD', 12)} TEXT\n`
+  );
+  for (const m of inbox) {
+    process.stdout.write(
+      `${pad(m.read ? 'yes' : 'no', 4)} ${pad(m.id, 12)} ${pad(displayId(m.from, 16), 16)} ${pad(m.type || 'note', 8)} ${pad(m.thread || '', 12)} ${String(m.text || '').replace(/\s+/g, ' ').slice(0, 80)}\n`
+    );
+  }
+}
+
+function cmdThread(argv) {
+  const { args, flags } = parseArgs(argv);
+  const asJson = Boolean(flags.json);
+  const query = args[0];
+  if (!query) fail('usage: af thread <msgId|master> [--json]', { json: asJson });
+
+  const envId = messages.resolveEnvSessionId(process.env);
+  // Human plain-shell viewing is allowed; an in-session identity must be messaging-enabled.
+  if (envId) {
+    let self;
+    try {
+      self = registry.find(envId);
+    } catch (err) {
+      fail(err.message, { json: asJson });
+    }
+    if (self) {
+      try {
+        messages.assertEnabled(self);
+      } catch (err) {
+        fail(err.message, { json: asJson });
+      }
+    }
+  }
+
+  // Prefer master/session lookup for whole-team log.
+  let asSession = null;
+  try {
+    asSession = registry.find(query);
+  } catch (_) {
+    asSession = null;
+  }
+
+  if (asSession && (asSession.role === 'master' || messages.teamIdOf(asSession) === asSession.id)) {
+    const teamId = asSession.id;
+    const records = messages.readLog(teamId).filter((r) => r && r.kind === 'msg');
+    if (asJson) {
+      emitJson({ team: teamId, messages: records });
+      return;
+    }
+    if (records.length === 0) {
+      process.stdout.write('(no messages)\n');
+      return;
+    }
+    for (const m of records) {
+      process.stdout.write(
+        `${m.ts || ''} ${m.id} ${m.from} → ${m.to} [${m.type}] ${String(m.text || '').replace(/\s+/g, ' ')}\n`
+      );
+    }
+    return;
+  }
+
+  const hit = messages.findMessageAnywhere(query);
+  if (!hit) fail(`message or master not found: ${query}`, { json: asJson });
+  const thread = messages.threadMessages(hit.records, hit.msg.thread || hit.msg.id);
+  if (asJson) {
+    emitJson({ thread: hit.msg.thread || hit.msg.id, messages: thread });
+    return;
+  }
+  for (const m of thread) {
+    process.stdout.write(
+      `${m.ts || ''} ${m.id} ${m.from} → ${m.to} [${m.type}] ${String(m.text || '').replace(/\s+/g, ' ')}\n`
+    );
+  }
+}
+
+async function cmdMcp(argv) {
+  const { args, flags } = parseArgs(argv);
+  if (args[0] === 'install') {
+    const asJson = Boolean(flags.json);
+    const engineName = flags.engine ? String(flags.engine) : null;
+    if (!engineName) {
+      fail(
+        'usage: af mcp install --engine copilot|cursor [--write] [--project] [--cwd DIR] [--dry-run] [--json]',
+        { json: asJson }
+      );
+    }
+    try {
+      const result = mcp.installMcp({
+        engine: engineName,
+        write: Boolean(flags.write),
+        project: Boolean(flags.project),
+        cwd: flags.cwd && flags.cwd !== true ? resolveCwd(flags.cwd) : process.cwd(),
+        dryRun: Boolean(flags['dry-run']),
+      });
+      if (asJson) {
+        emitJson(result);
+      } else if (result.wrote) {
+        process.stderr.write(
+          `wrote ${result.path}${result.backup ? ` (backup ${result.backup})` : ''}\n`
+        );
+        process.stdout.write(JSON.stringify(result.snippet, null, 2) + '\n');
+      } else {
+        process.stdout.write(JSON.stringify(result.snippet, null, 2) + '\n');
+      }
+    } catch (err) {
+      fail(err.message, { json: asJson });
+    }
+    return;
+  }
+  if (args.length > 0) {
+    fail(
+      'usage: af mcp | af mcp install --engine copilot|cursor [--write] [--project] [--cwd DIR] [--dry-run] [--json]'
+    );
+  }
+  await mcp.runServer();
+}
+
 function listChildrenOf(masterId) {
   return registry
     .list({ includeDone: true })
@@ -2914,6 +3443,8 @@ function cmdChildren(argv) {
       seenWorking: Boolean(s._seenWorking),
       idleTicks: 0,
     });
+    const liveOpts = { isAlive: orchestrate.defaultIsAlive, hostname: os.hostname() };
+    const recon = orchestrate.reconcileDeadRunPid(s, liveOpts);
     const derived = orchestrate.deriveWorkerStatus(
       s,
       {
@@ -2921,7 +3452,7 @@ function cmdChildren(argv) {
         exitCode: e.exitCode,
         waitingHint: waitInfo.hint === 'waiting' ? 'waiting' : null,
       },
-      { isAlive: orchestrate.defaultIsAlive, hostname: os.hostname() }
+      liveOpts
     );
     const resultPath = s.result || orchestrate.defaultResultPath(s.id);
     const hand = orchestrate.handoffInfo(s, resultPath);
@@ -2930,7 +3461,13 @@ function cmdChildren(argv) {
       exitCode: e.exitCode,
       agentState,
       derivedStatus: derived,
+      ...liveOpts,
     });
+    if (recon && recon.persist && recon.patch) {
+      const wr = registry.bestEffortUpdate(s.id, recon.patch);
+      if (wr.ok && wr.session) Object.assign(s, wr.session);
+    }
+    const eff = messages.isMessagingEnabled(s);
     return {
       id: s.id,
       title: s.title,
@@ -2949,6 +3486,9 @@ function cmdChildren(argv) {
       handoff: hand.handoff,
       lastExit: s.lastExit != null ? s.lastExit : null,
       lastOutput: s.lastOutput || null,
+      messaging: eff.enabled,
+      messagingSource: eff.source,
+      unread: 0,
       herdr: {
         runtime: herdr.displayRuntime(e.runtime),
         address: e.address,
@@ -2960,6 +3500,8 @@ function cmdChildren(argv) {
   });
 
   if (asJson) {
+    const unreadMap = messages.unreadBySessionId(children);
+    for (const r of rows) r.unread = unreadMap[r.id] || 0;
     emitJson(rows);
     return;
   }
@@ -3069,6 +3611,8 @@ function snapshotWorkerRow(session, { herdrInfo = null, waitingHint = null, agen
   const runtime = herdrInfo ? herdrInfo.runtime : null;
   const effectiveHint =
     runtime === 'running' && (agentState == null || agentState === '') ? null : waitingHint;
+  const liveOpts = { isAlive: orchestrate.defaultIsAlive, hostname: os.hostname() };
+  const recon = orchestrate.reconcileDeadRunPid(session, liveOpts);
   const derived = orchestrate.deriveWorkerStatus(
     session,
     {
@@ -3076,7 +3620,7 @@ function snapshotWorkerRow(session, { herdrInfo = null, waitingHint = null, agen
       exitCode: herdrInfo ? herdrInfo.exitCode : null,
       waitingHint: effectiveHint,
     },
-    { isAlive: orchestrate.defaultIsAlive, hostname: os.hostname() }
+    liveOpts
   );
   const resultPath = session.result || orchestrate.defaultResultPath(session.id);
   const hand = orchestrate.handoffInfo(session, resultPath);
@@ -3085,7 +3629,12 @@ function snapshotWorkerRow(session, { herdrInfo = null, waitingHint = null, agen
     exitCode: herdrInfo ? herdrInfo.exitCode : null,
     agentState,
     derivedStatus: derived,
+    ...liveOpts,
   });
+  if (recon && recon.persist && recon.patch) {
+    const wr = registry.bestEffortUpdate(session.id, recon.patch);
+    if (wr.ok && wr.session) Object.assign(session, wr.session);
+  }
   return {
     id: session.id,
     title: session.title,
@@ -3574,9 +4123,9 @@ async function cmdSend(argv) {
       ? orchestrate.continueWorkerPrompt(resultPath, text)
       : text;
 
-  const envOverlay = { AGENTFLEET_ID: session.id };
-  if (session.parent) envOverlay.AGENTFLEET_PARENT = session.parent;
-  if (resultPath) envOverlay.AGENTFLEET_RESULT = resultPath;
+  const envOverlay = messages.sessionIdentityEnv(session, {
+    ...(resultPath ? { AGENTFLEET_RESULT: resultPath } : {}),
+  });
 
   const asJson = Boolean(flags.json);
 
@@ -3945,13 +4494,30 @@ function cmdDoctor(argv) {
   } catch (err) {
     add('copilot_bin', false, err.message);
   }
+  try {
+    const sessions = registry.list({ includeDone: true });
+    const wiring = mcp.doctorMcpWiring(sessions, process.env);
+    if (wiring) {
+      add('mcp_copilot', true, wiring.copilot.detail);
+      add('mcp_cursor', Boolean(wiring.cursor.ok), wiring.cursor.detail);
+    }
+  } catch (err) {
+    add('mcp_wiring', false, err.message);
+  }
   // copilot/hc optional for plain-only workflows — warn on old herdr-core but do not fail exit
   const ok = checks
     .filter(
       (c) =>
-        !['copilot_bin', 'hc_on_path', 'hc_server_status', 'hc_ls', 'herdr_core_version'].includes(
-          c.name
-        )
+        ![
+          'copilot_bin',
+          'hc_on_path',
+          'hc_server_status',
+          'hc_ls',
+          'herdr_core_version',
+          'mcp_copilot',
+          'mcp_cursor',
+          'mcp_wiring',
+        ].includes(c.name)
     )
     .every((c) => c.ok);
   if (asJson) {

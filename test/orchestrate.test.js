@@ -2,6 +2,8 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const orchestrate = require('../lib/orchestrate');
 
@@ -114,6 +116,65 @@ describe('orchestrate pure helpers', () => {
       }),
       'running'
     );
+  });
+
+  it('dead runPid + fresh worker handoff → done (stateSource handoff)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'af-recon-'));
+    try {
+      const resultPath = path.join(dir, 'w1.md');
+      const started = Date.now() - 60_000;
+      fs.writeFileSync(resultPath, '## Summary\nworker wrote this\n');
+      // Ensure mtime is after runStartedAt
+      const after = new Date();
+      fs.utimesSync(resultPath, after, after);
+      const session = {
+        id: 'w1',
+        workerStatus: 'running',
+        runPid: 99999,
+        runHost: 'box',
+        lastExit: null,
+        stopRequested: false,
+        runStartedAt: new Date(started).toISOString(),
+        result: resultPath,
+        resultSource: null,
+      };
+      const recon = orchestrate.reconcileDeadRunPid(session, {
+        isAlive: () => false,
+        hostname: 'box',
+      });
+      assert.ok(recon);
+      assert.equal(recon.status, 'done');
+      assert.equal(recon.stateSource, 'handoff');
+      assert.equal(recon.persist, true);
+      assert.equal(
+        orchestrate.deriveWorkerStatus(session, null, {
+          isAlive: () => false,
+          hostname: 'box',
+        }),
+        'done'
+      );
+      const meta = orchestrate.waitOutcomeMeta(session, {
+        derivedStatus: 'done',
+        isAlive: () => false,
+        hostname: 'box',
+      });
+      assert.equal(meta.stateSource, 'handoff');
+
+      // Fallback marker must not count as success
+      fs.writeFileSync(
+        resultPath,
+        `${orchestrate.FALLBACK_HANDOFF_MARKER}\n## Summary\nfallback\n`
+      );
+      fs.utimesSync(resultPath, after, after);
+      const bad = orchestrate.reconcileDeadRunPid(
+        { ...session, resultSource: null },
+        { isAlive: () => false, hostname: 'box' }
+      );
+      assert.equal(bad.status, 'failed');
+      assert.equal(bad.stateSource, 'pid');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('deriveWorkerStatus honors waitingHint for live Herdr', () => {
@@ -387,6 +448,7 @@ describe('detectWaitingTransition send-grace', () => {
     const tpl = orchestrate.loadOrchestratorTemplate();
     assert.ok(tpl.includes('{{GOAL}}'));
     assert.ok(tpl.includes('af spawn'));
+    assert.ok(tpl.includes('{{MESSAGING}}'));
     const full = orchestrate.renderTemplate(tpl, {
       GOAL: 'Do the thing',
       MASTER_ID: 'm1',
@@ -394,6 +456,7 @@ describe('detectWaitingTransition send-grace', () => {
       CWD: '/tmp/proj',
       DEFAULT_WORKER_ENGINE: 'copilot',
       PLAN: '/tmp/fleet/plans/m1.md',
+      MESSAGING: '',
     });
     assert.ok(full.includes('Do the thing'));
     assert.ok(full.includes('m1'));
@@ -408,5 +471,6 @@ describe('detectWaitingTransition send-grace', () => {
     assert.ok(!full.includes('{{CWD}}'));
     assert.ok(!full.includes('{{DEFAULT_WORKER_ENGINE}}'));
     assert.ok(!full.includes('{{PLAN}}'));
+    assert.ok(!full.includes('{{MESSAGING}}'));
   });
 });
