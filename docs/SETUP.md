@@ -2,7 +2,7 @@
 
 Self-contained guide to reproduce the home Mac mini agent-fleet stack on another macOS machine (for example a work laptop). Assumes macOS. Calls out **home-only** pieces (LAN ai-lb / ComfyUI) and gives work-friendly alternatives.
 
-Source of truth for `aflt`: the code and README in this repo (`bin/af.js`, `lib/backends.js`, `lib/cursor.js`, tests). Install commands below for Herdr, Cursor CLI, OpenCode, tmux, and WezTerm were checked against their official docs (2026-11).
+Source of truth for `aflt`: the code and README in this repo (`bin/af.js`, `lib/backends.js`, `lib/cursor.js`, tests). AI coding agents should start with [AGENTS.md](../AGENTS.md). Install commands below for Herdr, Cursor CLI, OpenCode, tmux, and WezTerm were checked against their official docs (2026-11).
 
 ---
 

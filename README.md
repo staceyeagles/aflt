@@ -14,6 +14,8 @@
 
 `aflt` is the main command; `af` and `agentfleet` are aliases that run the same CLI.
 
+**For AI agents:** [AGENTS.md](AGENTS.md) — install, commands, engines, and how to delegate or orchestrate work from Cursor or Copilot CLI.
+
 Zero npm runtime dependencies beyond **Node ≥18**. Install once (`npm i -g .`) to get `aflt` plus the aliases `af` and `agentfleet`. Engine × mode behavior (liveness, completion, handoffs, `aflt wait`): [docs/CAPABILITIES.md](docs/CAPABILITIES.md). Setup deep-dive: [docs/SETUP.md](docs/SETUP.md).
 
 ## Why AgentFleet
@@ -49,7 +51,7 @@ CLI coding agents are powerful but ephemeral: chat IDs live in engine-local stor
 
 ```bash
 # Node 18+
-cd af   # this repo
+cd aflt   # this repo
 npm install -g .
 # Primary binary: aflt  (also installs aliases af + agentfleet)
 # or without global install:
@@ -57,14 +59,14 @@ npm install -g .
 #   ln -s "$(pwd)/bin/af.js" ~/.local/bin/aflt
 # Optional aliases:
 #   ln -s ~/.local/bin/aflt ~/.local/bin/af
-#   alias aflt='node /path/to/af/bin/af.js'
+#   alias aflt='node /path/to/aflt/bin/af.js'
 
 # Cursor CLI (required for --engine cursor)
 curl https://cursor.com/install -fsS | bash   # agent / cursor-agent on PATH
 
 # Optional: Copilot CLI, Herdr (hc + herdr-app), bash completion
 # npm install -g @github/copilot
-source /path/to/af/completions/af.bash   # completes aflt, af, and agentfleet
+source /path/to/aflt/completions/af.bash   # completes aflt, af, and agentfleet
 ```
 
 ```bash
@@ -361,6 +363,7 @@ See `af --help` / `aflt help` for the authoritative flag list. Long-form help co
 
 ## More docs
 
+- [AGENTS.md](AGENTS.md) — guide for AI coding agents (Copilot CLI, Cursor, orchestrators)
 - [docs/CAPABILITIES.md](docs/CAPABILITIES.md) — engine × mode capability matrix and `aflt wait` outcomes
 - [docs/SETUP.md](docs/SETUP.md) — environment setup, Herdr, troubleshooting
 - [completions/af.bash](completions/af.bash) — bash completion

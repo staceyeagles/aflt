@@ -22,7 +22,8 @@
     "completions",
     "templates",
     "docs",
-    "README.md"
+    "README.md",
+    "AGENTS.md"
   ],
   "keywords": [
     "cursor",
