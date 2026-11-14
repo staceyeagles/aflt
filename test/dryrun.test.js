@@ -224,6 +224,34 @@ process.exit(1);
       args: () => ['master', '--goal', 'Ship it', '--cwd', home, '--dry-run'],
     },
     {
+      name: 'docs',
+      setup: () => {
+        spawnSync('git', ['init'], { cwd: home, encoding: 'utf8' });
+        spawnSync('git', ['-C', home, 'config', 'user.email', 'af-test@example.com'], {
+          encoding: 'utf8',
+        });
+        spawnSync('git', ['-C', home, 'config', 'user.name', 'af-test'], { encoding: 'utf8' });
+        fs.writeFileSync(path.join(home, '.agentfleet.json'), '{"docs":true}\n');
+        spawnSync('git', ['-C', home, 'add', '.agentfleet.json'], { encoding: 'utf8' });
+        spawnSync(
+          'git',
+          [
+            '-C',
+            home,
+            '-c',
+            'user.email=af-test@example.com',
+            '-c',
+            'user.name=af-test',
+            'commit',
+            '-m',
+            'init',
+          ],
+          { encoding: 'utf8' }
+        );
+      },
+      args: () => ['docs', home, '--dry-run'],
+    },
+    {
       name: 'adopt',
       setup: () => seedSession({ title: 'DryAdopt', chatId: 'dddddddd-bbbb-cccc-dddd-eeeeeeeeeeee' }),
       args: () => ['adopt', 'DryAdopt', '--dry-run'],

@@ -243,6 +243,7 @@ describe('orchestrate pure helpers', () => {
   it('validateRole and validateWorkerStatus', () => {
     assert.equal(orchestrate.validateRole(null), null);
     assert.equal(orchestrate.validateRole('master'), 'master');
+    assert.equal(orchestrate.validateRole('docs'), 'docs');
     assert.throws(() => orchestrate.validateRole('boss'), /invalid role/);
     assert.equal(orchestrate.validateWorkerStatus('queued'), 'queued');
     assert.throws(() => orchestrate.validateWorkerStatus('nope'), /invalid workerStatus/);

@@ -42,7 +42,7 @@ _af() {
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  cmds="new add import ls list sync run log spawn master children result wait tail send stop resume pick adopt cursor copilot engine rename cwd set-cwd done rm remove note export import-file which-backend herdr-templates herdr-app doctor msg inbox thread mcp help"
+  cmds="new add import ls list sync run log spawn master docs children result wait tail send stop resume pick adopt cursor copilot engine rename cwd set-cwd done rm remove note export import-file which-backend herdr-templates herdr-app doctor msg inbox thread mcp help"
 
   if [[ ${COMP_CWORD} -eq 1 ]]; then
     COMPREPLY=( $(compgen -W "${cmds}" -- "${cur}") )
@@ -60,7 +60,7 @@ _af() {
       COMPREPLY=( $(compgen -W "--cwd --prompt --model --tag --chat --engine --force --messaging --no-messaging --dry-run --no-trust cursor copilot" -- "${cur}") )
       ;;
     run)
-      COMPREPLY=( $(compgen -W "--prompt --cwd --model --engine --mode --force --output-format --timeout --messaging --no-messaging --dry-run --json --no-trust --no-silent cursor copilot ask plan text json" -- "${cur}") )
+      COMPREPLY=( $(compgen -W "--prompt --cwd --model --engine --mode --force --output-format --timeout --messaging --no-messaging --no-docs --dry-run --json --no-trust --no-silent cursor copilot ask plan text json" -- "${cur}") )
       ;;
     spawn)
       if [[ "$prev" == "--parent" ]]; then
@@ -71,7 +71,10 @@ _af() {
       fi
       ;;
     master)
-      COMPREPLY=( $(compgen -W "--goal --engine --cwd --title --model --worker-engine --headless --timeout --force --messaging --no-messaging --dry-run --json --no-trust cursor copilot" -- "${cur}") )
+      COMPREPLY=( $(compgen -W "--goal --engine --cwd --title --model --worker-engine --headless --timeout --force --messaging --no-messaging --no-docs --dry-run --json --no-trust cursor copilot" -- "${cur}") )
+      ;;
+    docs)
+      COMPREPLY=( $(compgen -W "--since --engine --model --force --no-force --anyway --dry-run --json --cwd --timeout cursor copilot" -- "${cur}") )
       ;;
     msg)
       if [[ "$prev" == "--from" || "$prev" == "--reply" || "$prev" == "--type" ]]; then
@@ -135,10 +138,10 @@ _af() {
         titles="$(_af_session_titles)"
         COMPREPLY=( $(compgen -W "${titles}" -- "${cur}") )
       elif [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "--parent --any --timeout --interval --send-grace --json" -- "${cur}") )
+        COMPREPLY=( $(compgen -W "--parent --any --timeout --interval --send-grace --docs --json" -- "${cur}") )
       else
         titles="$(_af_session_titles)"
-        COMPREPLY=( $(compgen -W "--parent --any --timeout --interval --send-grace --json ${titles}" -- "${cur}") )
+        COMPREPLY=( $(compgen -W "--parent --any --timeout --interval --send-grace --docs --json ${titles}" -- "${cur}") )
       fi
       ;;
     tail)

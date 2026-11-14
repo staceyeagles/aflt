@@ -156,6 +156,7 @@ Chat history stays on the same session id. Copilot's on-disk `workspace.yaml` is
 | `af herdr-app install` / `status` | Install the af-sessions Herdr panel + `af` layout (symlink by default) |
 | `af doctor [--json]` | Read-only environment checks |
 | `af msg` / `inbox` / `thread` | Task-scoped messaging (off by default; see Messaging) |
+| `af docs [<dir>]` | Documentarian (off by default; see Documentarian) |
 | `af mcp` / `af mcp install` | Stdio MCP server; merge Copilot/Cursor MCP config |
 | `af rename` / `af done` / `af note` | Metadata |
 | `af cwd <title\|id> [path]` / `af set-cwd` | Show or change a session's folder (refreshes `branch`; does not move a live Herdr tab — resume/adopt after) |
@@ -385,6 +386,28 @@ af result <worker-id>
 af send <worker-id> "Tighten Open questions"
 af wait <worker-id> --send-grace 15
 ```
+
+## Documentarian
+
+**Docs updates are off by default.** Opt in per project with `.agentfleet.json` `{"docs": true}` (same ancestor lookup up to the git root as messaging). Optional fields:
+
+- `"docsPaths"` — default is `README.md` + `docs/`, plus `CHANGELOG.md` **only if that file already exists**. List `CHANGELOG.md` explicitly to allow creating it.
+- `"docsEngine": "cursor"|"copilot"` — engine for docs / auto-trigger (else master's engine / fleet default).
+- `"docsForce": false` — opt out of the default write grant (see below).
+
+```bash
+echo '{"docs": true}' > .agentfleet.json
+af docs                    # cwd must be a git repo; --force write grant ON by default
+af docs --no-force         # opt out of Cursor --force / Copilot --allow-all-tools
+af docs --since HEAD~3
+af docs --anyway           # one-shot without enabling in config
+af docs --dry-run --json   # plan only (no registry/state/session)
+af result docs-<folder>    # handoff from the docs worker
+```
+
+`af docs` launches one short headless session (`role=docs`, title `docs-<project-folder>`, reused across runs) with `templates/documentarian.md`. **Force/write is on by default** (Cursor `--force`; Copilot `--allow-all-tools` as with other `--force` runs, plus existing handoff write allowances). Opt out with `--no-force` or `"docsForce": false`. The worker may edit only the configured docs paths; af snapshots the working tree and **warns** (stderr / JSON `warnings`) if anything else changed — including a newly created `CHANGELOG.md` when changelog is not allowed — and does not revert. State is stored under `$AGENTFLEET_HOME/docs/<hash-of-project-root>.json` after a successful run (`lastCommit` = HEAD at run start).
+
+**Auto-trigger:** after a successful headless master run (`af master --headless`, or `af run` on a `role=master` session), af runs docs once for that project when enabled (skip with `--no-docs`). If that docs run fails, the master still exits **0**, prints `WARNING: docs run failed: …` on stderr, and records `docs: { ok: false, error }` in `--json`. Skipped triggers appear as `docs: { skipped: true, reason }`. `af wait --docs` runs the same after wait exit 0; it **errors** (non-zero) if no master can be resolved. Guarded by `docsTriggeredRunId` on the master so it fires at most once per master run.
 
 ## Messaging (task-scoped)
 

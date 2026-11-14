@@ -298,6 +298,8 @@ af import copilot --all --cwd ~/src/app
 
 Override without changing config: `af new "…" --engine cursor` / `AGENTFLEET_ENGINE=cursor`. Resume always uses the session's recorded engine. Import follows the same default-engine rules; `af import cursor` always scans `~/.cursor/chats/`.
 
+**Documentarian (optional):** docs updates are **off by default**. Add `{"docs": true}` to `.agentfleet.json` (optional `"docsPaths"`, `"docsEngine"`, `"docsForce": false`). Default paths are `README.md` + `docs/` (+ `CHANGELOG.md` only if it already exists). `af docs` grants write tools by default (`--no-force` to opt out). Auto-trigger after headless master / `af wait --docs`; docs failure warns but does not fail the master; `af wait --docs` errors if no master. State: `$AGENTFLEET_HOME/docs/<hash>.json`. See README “Documentarian”.
+
 **Task-scoped messaging MCP (optional):** messaging is **off by default**. After `af msg enable <session>` (or project `.agentfleet.json` with `{"messaging": true}`), Copilot can use af’s MCP tools when the session was launched by af (identity via inherited `AGENTFLEET_SESSION` / `AGENTFLEET_ID` — no per-session env in the MCP config):
 
 ```bash

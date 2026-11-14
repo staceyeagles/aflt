@@ -18,6 +18,7 @@ const herdrapp = require('../lib/herdrapp');
 const orchestrate = require('../lib/orchestrate');
 const launch = require('../lib/launch');
 const messages = require('../lib/messages');
+const docs = require('../lib/docs');
 const mcp = require('../lib/mcp');
 const {
   parseArgs,
@@ -61,8 +62,11 @@ Usage:
                             Persist last-known Herdr runtime evidence (does not change status/lastUsed)
   af run "<title>" --prompt "..." [--cwd DIR] [--model X] [--engine cursor|copilot]
                             [--mode ask|plan] [--force] [--output-format text|json]
-                            [--timeout SEC] [--messaging|--no-messaging] [--dry-run] [--json]
-                            Headless one-shot: create or resume, capture output, exit
+                            [--timeout SEC] [--messaging|--no-messaging] [--no-docs]
+                            [--dry-run] [--json]
+                            Headless one-shot: create or resume, capture output, exit.
+                            If the session is role=master and exits 0, may trigger
+                            af docs (same as headless master; skip with --no-docs).
   af run <title|id> --prompt "..." [...]
                             Same, resuming an existing tracked session
   af log <title|id> [--path]  Print last captured run output (or its path)
@@ -78,10 +82,22 @@ Usage:
                             unless --no-messaging.
   af master --goal TEXT [--engine cursor|copilot] [--cwd DIR] [--title T] [--model X]
                             [--worker-engine copilot|cursor] [--headless] [--timeout SEC]
-                            [--force] [--messaging|--no-messaging] [--dry-run] [--json]
+                            [--force] [--messaging|--no-messaging] [--no-docs]
+                            [--dry-run] [--json]
                             Create a master session with the orchestrator template as
                             the initial prompt. Default: interactive via Herdr.
                             --headless uses af run machinery (workerStatus tracked).
+                            On successful headless exit, runs af docs once if the
+                            project has {"docs": true} (skip with --no-docs).
+  af docs [<project dir>] [--since <commit>] [--engine cursor|copilot] [--model X]
+                            [--force|--no-force] [--anyway] [--dry-run] [--json]
+                            Documentarian: one headless docs worker (role=docs) that
+                            updates only configured docs paths. Opt-in via
+                            .agentfleet.json {"docs": true}. --anyway runs once
+                            without enabling. Force/write grant is ON by default
+                            (Cursor --force / Copilot --allow-all-tools); opt out
+                            with --no-force or {"docsForce": false}. Dry-run prints
+                            the plan only.
   af msg <to> <text...> [--type T] [--reply <msgId>] [--from S] [--json] [--dry-run]
                             Task-scoped message (off by default; see Messaging).
                             With --reply and no <to>, defaults to=reply sender.
@@ -109,13 +125,16 @@ Usage:
                             Print a worker's handoff file (or its path). If missing,
                             stderr note + last ~40 lines of the run log; exit 1.
   af wait [<id|title>...] [--parent <master>] [--any] [--timeout SEC] [--interval SEC]
-                            [--send-grace SEC] [--json]
+                            [--send-grace SEC] [--docs] [--json]
                             Block until listed workers reach done|failed|stopped|waiting.
                             Explicit ids/titles win over --parent. No ids: --parent children,
                             else children of AGENTFLEET_ID (master) or AGENTFLEET_PARENT.
                             Exit: 0 ok, 1 failed/stopped, 2 timeout, 3 waiting.
                             --send-grace: ignore stale Herdr done/idle after af send
                             (default 15; env AGENTFLEET_SEND_GRACE).
+                            --docs: after exit 0, run af docs once for the master's
+                            project (same one-shot guard as headless master).
+                            Errors if no master can be resolved.
   af tail <id|title> [-n N] [-f]
                             Last N lines of run log (or hc read for live Herdr). -f follows
                             until the worker leaves running (or Ctrl-C).
@@ -238,6 +257,9 @@ async function main() {
       break;
     case 'master':
       await cmdMaster(rest);
+      break;
+    case 'docs':
+      await cmdDocs(rest);
       break;
     case 'msg':
       cmdMsg(rest);
@@ -829,6 +851,7 @@ function cmdLs(argv) {
         branch: e.session.branch || null,
         status: e.session.status,
         lastUsed: e.session.lastUsed || null,
+        role: e.session.role || null,
         messaging: eff.enabled,
         messagingSource: eff.source,
         unread: unreadMap[e.session.id] || 0,
@@ -2184,10 +2207,21 @@ async function cmdRun(argv) {
   // Copilot --help says --allow-all-tools is required for non-interactive mode,
   // but a no-tool text prompt succeeded without it (Mini, 2026-11-10, 1.0.83).
   // Do not add that grant unless the caller passes --force.
-  const { code, timedOut, outPath, result, registryWriteError } = await executeHeadlessRun(session, {
+  const { code, timedOut, outPath, result, runId, registryWriteError } = await executeHeadlessRun(session, {
     ...runOpts,
     json: asJson,
   });
+  let docsResult = null;
+  if (!timedOut && code === 0 && session.role === 'master' && !flags['no-docs']) {
+    const fresh = registry.find(session.id) || session;
+    docsResult = await maybeTriggerDocsForMaster(fresh, {
+      runId,
+      engine: fresh.engine || 'cursor',
+      flags,
+      asJson,
+      quiet: asJson,
+    });
+  }
   if (asJson) {
     const excerptSrc = (result && result.stdout) || '';
     const payload = {
@@ -2202,6 +2236,8 @@ async function cmdRun(argv) {
       outputExcerpt: runlib.outputExcerpt(excerptSrc),
     };
     if (registryWriteError) payload.registryWriteError = registryWriteError;
+    const docsJson = docsTriggerJson(docsResult);
+    if (docsJson) payload.docs = docsJson;
     emitJson(payload);
   }
   process.exitCode = code;
@@ -2671,7 +2707,7 @@ async function cmdMaster(argv) {
   const goal = flags.goal;
   if (!goal || goal === true) {
     fail(
-      'usage: af master --goal TEXT [--engine cursor|copilot] [--cwd DIR] [--title T] [--model X] [--worker-engine copilot|cursor] [--headless] [--timeout SEC] [--force] [--messaging|--no-messaging] [--dry-run] [--json]'
+      'usage: af master --goal TEXT [--engine cursor|copilot] [--cwd DIR] [--title T] [--model X] [--worker-engine copilot|cursor] [--headless] [--timeout SEC] [--force] [--messaging|--no-messaging] [--no-docs] [--dry-run] [--json]'
     );
   }
   const goalText = String(goal);
@@ -2986,8 +3022,19 @@ async function cmdMaster(argv) {
     runId,
   });
 
+  let docsResult = null;
+  if (!stopped && !timedOut && code === 0 && !flags['no-docs']) {
+    docsResult = await maybeTriggerDocsForMaster(master, {
+      runId,
+      engine: master.engine || engineName,
+      flags,
+      asJson,
+      quiet: asJson,
+    });
+  }
+
   if (asJson) {
-    emitJson({
+    const payload = {
       ok: code === 0 && !timedOut,
       master: {
         id: master.id,
@@ -3000,10 +3047,14 @@ async function cmdMaster(argv) {
         resultSource: master.resultSource || null,
         lastExit: timedOut ? 124 : code,
         lastOutput: outPath,
+        docsTriggeredRunId: (registry.find(master.id) || master).docsTriggeredRunId || null,
       },
       outputPath: outPath,
       outputExcerpt: runlib.outputExcerpt((result && result.stdout) || ''),
-    });
+    };
+    const docsJson = docsTriggerJson(docsResult);
+    if (docsJson) payload.docs = docsJson;
+    emitJson(payload);
   } else {
     printSession(master, 'master');
     process.stdout.write(`  result:  ${finalResult}\n`);
@@ -3012,6 +3063,403 @@ async function cmdMaster(argv) {
     process.stderr.write(`log: ${outPath}\n`);
   }
   process.exitCode = code;
+}
+
+/** Shape auto-trigger result for master/run --json (`docs` field). */
+function docsTriggerJson(docsResult) {
+  if (!docsResult) return undefined;
+  if (docsResult.skipped) {
+    return { skipped: true, reason: docsResult.reason || 'skipped' };
+  }
+  if (docsResult.ok === false) {
+    return {
+      ok: false,
+      error: docsResult.error || 'docs run failed',
+    };
+  }
+  return docsResult.summary || { ok: true };
+}
+
+/**
+ * Run documentarian once per master runId when the project has docs enabled.
+ * Best-effort: master exit stays 0; stderr WARNING + --json docs:{ok:false,error}.
+ */
+async function maybeTriggerDocsForMaster(master, opts = {}) {
+  if (!master || master.role !== 'master') return { skipped: true, reason: 'not-master' };
+  const runId = opts.runId || master.runId;
+  if (!runId) return { skipped: true, reason: 'no-runId' };
+  const fresh = registry.find(master.id) || master;
+  if (fresh.docsTriggeredRunId && fresh.docsTriggeredRunId === runId) {
+    return { skipped: true, reason: 'already-triggered', runId };
+  }
+  let projectRoot;
+  try {
+    projectRoot = docs.resolveGitRoot(master.cwd);
+  } catch (_) {
+    return { skipped: true, reason: 'not-git' };
+  }
+  const project = docs.readProjectDocs(projectRoot);
+  if (!project.enabled && !opts.anyway) {
+    return { skipped: true, reason: 'disabled' };
+  }
+  try {
+    registry.update(master.id, { docsTriggeredRunId: runId });
+  } catch (_) {
+    /* ignore */
+  }
+  const engineName =
+    project.docsEngine || opts.engine || master.engine || 'cursor';
+  const force =
+    opts.force != null
+      ? Boolean(opts.force)
+      : docs.resolveDocsForce(opts.flags || {}, project);
+  try {
+    const summary = await runDocsForProject(projectRoot, {
+      engine: engineName,
+      force,
+      anyway: true, // already checked enablement / trigger path
+      asJson: Boolean(opts.asJson),
+      quiet: opts.quiet !== false,
+      trigger: opts.trigger || 'master',
+    });
+    if (summary.ok === false) {
+      const errMsg =
+        summary.error ||
+        `docs worker exited ${summary.lastExit != null ? summary.lastExit : 'nonzero'}`;
+      process.stderr.write(`WARNING: docs run failed: ${errMsg}\n`);
+      return {
+        ok: false,
+        error: errMsg,
+        summary,
+        runId,
+      };
+    }
+    return { ok: true, summary, runId };
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    process.stderr.write(`WARNING: docs run failed: ${msg}\n`);
+    return { ok: false, error: msg, runId };
+  }
+}
+
+/**
+ * Core docs run used by `af docs` and auto-triggers. When dryRun, writes nothing.
+ */
+async function runDocsForProject(projectRoot, opts = {}) {
+  const asJson = Boolean(opts.asJson);
+  const dryRun = Boolean(opts.dryRun);
+  const anyway = Boolean(opts.anyway);
+  const quiet = Boolean(opts.quiet);
+
+  const project = docs.readProjectDocs(projectRoot);
+  if (!project.enabled && !anyway) {
+    const err = new Error(docs.DOCS_NOT_ENABLED(projectRoot));
+    err.code = 'DOCS_DISABLED';
+    throw err;
+  }
+
+  const force =
+    opts.force != null
+      ? Boolean(opts.force)
+      : docs.resolveDocsForce(opts.flags || {}, project);
+
+  let engineName = opts.engine || project.docsEngine || null;
+  if (engineName) {
+    try {
+      config.validateEngine(engineName);
+    } catch (err) {
+      throw err;
+    }
+  } else {
+    const resolved = engine.resolveEngine({ flag: null });
+    engineName = resolved.engine;
+  }
+
+  const state = docs.loadState(projectRoot);
+  const sinceInfo = docs.resolveSince(projectRoot, {
+    sinceFlag: opts.since,
+    state,
+  });
+  const title = docs.docsTitleFor(projectRoot);
+  const sessions = dryRun ? [] : registry.list({ includeDone: true });
+  const previewId = 'dry-run-docs';
+  const previewResult = orchestrate.defaultResultPath(previewId);
+
+  const built = docs.buildPrompt(projectRoot, {
+    docsPaths: project.docsPaths,
+    changelogAllowed: project.changelogAllowed,
+    sinceInfo,
+    state,
+    sessions: dryRun ? opts.sessions || [] : sessions,
+    resultPath: dryRun ? previewResult : '',
+  });
+
+  if (dryRun) {
+    const plan = {
+      ok: true,
+      dryRun: true,
+      projectRoot,
+      since: sinceInfo.since,
+      sinceSource: sinceInfo.source,
+      head: sinceInfo.head,
+      docsPaths: project.docsPaths,
+      changelogAllowed: project.changelogAllowed,
+      engine: engineName,
+      model: opts.model || null,
+      title,
+      promptBytes: built.promptBytes,
+      force,
+      anyway,
+    };
+    if (asJson) {
+      emitJson(plan);
+    } else {
+      process.stderr.write(
+        `[dry-run] docs for ${projectRoot}\n` +
+          `[dry-run] since=${sinceInfo.since || '-'} (${sinceInfo.source}) engine=${engineName} force=${force}\n` +
+          `[dry-run] docsPaths=${project.docsPaths.join(', ')} changelog=${project.changelogAllowed}\n` +
+          `[dry-run] promptBytes=${built.promptBytes} title=${title}\n`
+      );
+      process.stdout.write(built.prompt.slice(0, 500) + (built.prompt.length > 500 ? '\n…\n' : '\n'));
+    }
+    return plan;
+  }
+
+  const beforeSnap = docs.snapshotWorkingTree(projectRoot);
+  const headAtStart = sinceInfo.head || docs.headCommit(projectRoot);
+
+  let session = null;
+  try {
+    session = registry.find(title);
+  } catch (_) {
+    session = null;
+  }
+  if (session && session.role && session.role !== 'docs') {
+    throw new Error(`session title "${title}" exists with role=${session.role}; refuse to reuse`);
+  }
+
+  if (!session) {
+    let chatId;
+    if (engineName === 'cursor') {
+      if (!quiet) process.stderr.write(`Creating chat via ${cursor.resolveCursorBin()} create-chat…\n`);
+      chatId = await cursor.createChat();
+    } else {
+      chatId = copilot.newSessionId();
+    }
+    fs.mkdirSync(path.join(fleetDir(), 'results'), { recursive: true, mode: 0o700 });
+    session = registry.add({
+      title,
+      chatId,
+      cwd: projectRoot,
+      branch: gitBranch(projectRoot),
+      model: opts.model || null,
+      prompt: '',
+      tags: [],
+      status: 'active',
+      engine: engineName,
+      role: 'docs',
+      task: 'documentarian',
+      workerStatus: 'queued',
+      force,
+      stopRequested: false,
+    });
+  } else {
+    const patch = {
+      cwd: projectRoot,
+      branch: gitBranch(projectRoot),
+      role: 'docs',
+      task: 'documentarian',
+      workerStatus: 'queued',
+      force,
+      stopRequested: false,
+      status: 'active',
+    };
+    if (opts.model) patch.model = opts.model;
+    if (engineName && (session.engine || 'cursor') !== engineName) {
+      // Keep existing engine unless caller overrides via --engine
+      if (opts.engine) patch.engine = engineName;
+      else engineName = session.engine || 'cursor';
+    } else if (opts.engine) {
+      patch.engine = engineName;
+    }
+    session = registry.update(session.id, patch);
+  }
+
+  const finalResult = session.result || orchestrate.defaultResultPath(session.id);
+  const rebuilt = docs.buildPrompt(projectRoot, {
+    docsPaths: project.docsPaths,
+    changelogAllowed: project.changelogAllowed,
+    sinceInfo,
+    state,
+    sessions,
+    resultPath: finalResult,
+  });
+  session = registry.update(session.id, {
+    prompt: rebuilt.prompt,
+    result: finalResult,
+    workerStatus: 'running',
+    lastUsed: nowIso(),
+  });
+
+  try {
+    engine.assertEngineAvailable(session);
+  } catch (err) {
+    throw err;
+  }
+
+  const envOverlay = messages.sessionIdentityEnv(session, {
+    AGENTFLEET_RESULT: finalResult,
+    AGENTFLEET_ROLE: 'docs',
+    PATH: orchestrate.pathWithAf(process.env),
+  });
+
+  const { code, timedOut, outPath, stopped, result, runId, registryWriteError } =
+    await executeHeadlessRun(session, {
+      prompt: rebuilt.prompt,
+      force,
+      outputFormat: 'text',
+      trust: true,
+      timeoutSec: opts.timeoutSec || 0,
+      silent: true,
+      env: { ...process.env, ...envOverlay },
+      quietCopilotHints: quiet,
+      json: asJson,
+    });
+
+  let workerStatus;
+  if (stopped) workerStatus = 'stopped';
+  else if (!timedOut && code === 0) workerStatus = 'done';
+  else workerStatus = 'failed';
+  try {
+    session = registry.update(session.id, { workerStatus, runPid: null, runPgid: null });
+  } catch (_) {
+    /* ignore */
+  }
+  session = applyResultHandoffFallback(session, {
+    code,
+    timedOut,
+    stopped,
+    stdout: result && result.stdout,
+    resultPath: finalResult,
+    runId,
+  });
+
+  const { changed } = docs.changedPathsSince(projectRoot, beforeSnap);
+  const { docFiles, nonDocFiles } = docs.classifyChangedFiles(changed, project.docsPaths);
+  const warnings = docs.warningsForNonDocs(nonDocFiles);
+  for (const w of warnings) {
+    process.stderr.write(`WARNING: ${w}\n`);
+  }
+
+  const ok = !stopped && !timedOut && code === 0;
+  if (ok) {
+    docs.saveState(projectRoot, {
+      lastRunAt: nowIso(),
+      lastCommit: headAtStart,
+      lastSessionId: session.id,
+      lastChangedFiles: docFiles,
+      lastWarnings: warnings,
+    });
+  }
+
+  const summary = {
+    ok,
+    projectRoot,
+    since: sinceInfo.since,
+    sinceSource: sinceInfo.source,
+    head: headAtStart,
+    docsPaths: project.docsPaths,
+    changelogAllowed: project.changelogAllowed,
+    force,
+    docFilesChanged: docFiles,
+    warnings,
+    session: {
+      id: session.id,
+      title: session.title,
+      engine: session.engine || engineName,
+      result: finalResult,
+      workerStatus,
+      role: 'docs',
+    },
+    handoff: finalResult,
+    outputPath: outPath,
+    lastExit: timedOut ? 124 : code,
+  };
+  if (!ok) {
+    summary.error = `docs worker exited ${summary.lastExit}`;
+  }
+  if (registryWriteError) summary.registryWriteError = registryWriteError;
+
+  if (!quiet) {
+    if (asJson) {
+      emitJson(summary);
+    } else {
+      printSession(session, 'docs');
+      process.stdout.write(`  result:  ${finalResult}\n`);
+      process.stdout.write(`  role:    docs\n`);
+      process.stdout.write(`  since:   ${sinceInfo.since || '-'} .. ${headAtStart || '-'}\n`);
+      process.stdout.write(
+        `  docs:    ${docFiles.length ? docFiles.join(', ') : '(none detected)'}\n`
+      );
+      if (warnings.length) {
+        process.stdout.write(`  warnings:${warnings.length}\n`);
+      }
+      process.stderr.write(`log: ${outPath}\n`);
+    }
+  }
+
+  summary._exitCode = timedOut ? 124 : code;
+  return summary;
+}
+
+async function cmdDocs(argv) {
+  const { args, flags } = parseArgs(argv);
+  const asJson = Boolean(flags.json);
+  const dryRun = Boolean(flags['dry-run']);
+  const anyway = Boolean(flags.anyway);
+  const dirArg = args[0] || flags.cwd || flags.C || process.cwd();
+  const cwd = resolveCwd(dirArg);
+
+  let projectRoot;
+  try {
+    projectRoot = docs.resolveGitRoot(cwd);
+  } catch (err) {
+    fail(err.message, { json: asJson });
+  }
+
+  const engineFlag = flags.engine ? String(flags.engine) : null;
+  if (engineFlag) {
+    try {
+      config.validateEngine(engineFlag);
+    } catch (err) {
+      fail(err.message, { json: asJson });
+    }
+  }
+
+  const timeoutSec = flags.timeout != null && flags.timeout !== true ? Number(flags.timeout) : 0;
+  if (flags.timeout && (Number.isNaN(timeoutSec) || timeoutSec < 0)) {
+    fail('--timeout must be a number of seconds', { json: asJson });
+  }
+
+  let summary;
+  try {
+    summary = await runDocsForProject(projectRoot, {
+      since: flags.since,
+      engine: engineFlag,
+      model: flags.model && flags.model !== true ? String(flags.model) : null,
+      flags,
+      anyway,
+      dryRun,
+      asJson,
+      quiet: false,
+      timeoutSec,
+    });
+  } catch (err) {
+    fail(err.message, { json: asJson });
+  }
+  if (!dryRun && summary && summary._exitCode != null) {
+    process.exitCode = summary._exitCode;
+  }
 }
 
 function cmdMsgEnableDisable(action, query, flags) {
@@ -3710,6 +4158,47 @@ function resolveWaitTargets(args, flags = {}) {
 }
 
 /**
+ * Resolve the master for an af wait --docs trigger.
+ */
+function resolveWaitDocsMaster(targets, flags = {}) {
+  if (flags.parent && flags.parent !== true) {
+    try {
+      const m = registry.find(String(flags.parent));
+      if (m) return m;
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  for (const t of targets || []) {
+    const s = registry.find(t.id) || t;
+    if (s.role === 'master') return s;
+    if (s.parent) {
+      const m = registry.find(s.parent);
+      if (m) return m;
+    }
+  }
+  return null;
+}
+
+const WAIT_DOCS_NO_MASTER =
+  'wait --docs: could not resolve a master (pass --parent <master>, or wait on workers that have a parent)';
+
+async function triggerDocsAfterWait(master, flags, { asJson } = {}) {
+  if (!master || master.role !== 'master') {
+    fail(WAIT_DOCS_NO_MASTER, { json: asJson });
+  }
+  const fresh = registry.find(master.id) || master;
+  return maybeTriggerDocsForMaster(fresh, {
+    runId: fresh.runId,
+    engine: fresh.engine || 'cursor',
+    flags,
+    asJson,
+    quiet: true,
+    trigger: 'wait',
+  });
+}
+
+/**
  * After a successful headless worker/master run, ensure a result handoff exists
  * (af writes a fallback from stdout when the agent did not).
  */
@@ -3864,6 +4353,13 @@ async function cmdWait(argv) {
       : doneCount === statuses.length;
     if (finished) {
       const code = orchestrate.waitExitCode(statuses, { timedOut: false });
+      let docsMaster = null;
+      if (code === 0 && flags.docs) {
+        docsMaster = resolveWaitDocsMaster(targets, flags);
+        if (!docsMaster || docsMaster.role !== 'master') {
+          fail(WAIT_DOCS_NO_MASTER, { json: asJson });
+        }
+      }
       if (asJson) {
         emitJson(rows);
       } else {
@@ -3875,6 +4371,9 @@ async function cmdWait(argv) {
             `${pad(r.title, 24)} ${pad(displayId(r.id, ID_COL), ID_COL)} ${pad(r.engine, 8)} ${pad(r.workerStatus || '-', 8)} ${pad(r.handoff || (r.resultExists ? 'yes' : 'no'), 7)} ${r.lastExit != null ? r.lastExit : '-'}\n`
           );
         }
+      }
+      if (code === 0 && flags.docs) {
+        await triggerDocsAfterWait(docsMaster, flags, { asJson });
       }
       process.exitCode = code;
       return;
