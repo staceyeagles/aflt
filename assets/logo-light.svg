@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="af AgentFleet">
+  <title>af / AgentFleet</title>
+  <!-- Light-theme mark: dark ink on transparent -->
+  <defs>
+    <linearGradient id="af-glow-l" x1="18" y1="20" x2="110" y2="108" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0B6E6E"/>
+      <stop offset="100%" stop-color="#1A3A5C"/>
+    </linearGradient>
+  </defs>
+  <!-- Orbit ring -->
+  <circle cx="64" cy="64" r="42" fill="none" stroke="#1A3A5C" stroke-width="2.5" opacity="0.35"/>
+  <!-- Link spokes -->
+  <g stroke="url(#af-glow-l)" stroke-width="3" stroke-linecap="round" fill="none">
+    <path d="M64 34 L64 52"/>
+    <path d="M38 78 L52 68"/>
+    <path d="M90 78 L76 68"/>
+  </g>
+  <!-- Hub -->
+  <circle cx="64" cy="64" r="14" fill="url(#af-glow-l)"/>
+  <circle cx="64" cy="64" r="6" fill="#F4F7FA"/>
+  <!-- Fleet nodes -->
+  <circle cx="64" cy="28" r="9" fill="#0B6E6E"/>
+  <circle cx="64" cy="28" r="3.5" fill="#F4F7FA"/>
+  <circle cx="30" cy="86" r="9" fill="#1A3A5C"/>
+  <circle cx="30" cy="86" r="3.5" fill="#F4F7FA"/>
+  <circle cx="98" cy="86" r="9" fill="#1A3A5C"/>
+  <circle cx="98" cy="86" r="3.5" fill="#F4F7FA"/>
+  <!-- Small accent node -->
+  <circle cx="100" cy="40" r="5" fill="#0B6E6E" opacity="0.85"/>
+</svg>
