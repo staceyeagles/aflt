@@ -7,7 +7,7 @@
 <p align="center">
   <img alt="Node 18+" src="https://img.shields.io/badge/node-%3E%3D18-brightgreen?logo=node.js&logoColor=white"/>
   <img alt="version 1.2.0" src="https://img.shields.io/badge/version-1.2.0-blue"/>
-  <img alt="335 tests passing, 1 skipped" src="https://img.shields.io/badge/tests-335%20passing%20%7C%201%20skipped-success"/>
+  <img alt="345 tests passing, 1 skipped" src="https://img.shields.io/badge/tests-345%20passing%20%7C%201%20skipped-success"/>
   <img alt="macOS | Linux untested" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20untested-lightgrey"/>
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-yellow"/>
 </p>
@@ -31,6 +31,7 @@ CLI coding agents are powerful but ephemeral: chat IDs live in engine-local stor
 | **Modes** | Interactive TUI (Herdr by default when `hc` is on PATH) vs headless `aflt run` / spawn |
 | **Herdr** | `hc` terminals + desktop app spaces/tabs + bundled `af-sessions` panel; shell-only reboot recovery via in-tab relaunch |
 | **Orchestration** | `aflt master`, `aflt spawn [--detach]`, `children`, `wait`, `result [--require-fresh]`, `tail`, `send`, `stop`, `rm --children` |
+| **Projects** | Optional `session.project` + `aflt ls --project` / `aflt timeline` (read-only session tree + commits) |
 | **Messaging** | Opt-in `aflt msg` / `inbox` / `thread` + stdio MCP (`aflt mcp`) for Copilot & Cursor |
 | **Documentarian** | Opt-in `aflt docs`; auto once after headless master / `aflt wait --docs` |
 | **Ops** | `aflt import`, `aflt doctor`, `--json` / `--dry-run` on mutating paths |
@@ -117,9 +118,11 @@ Home directory: **`$AGENTFLEET_HOME`** (default `~/.agentfleet`). Override regis
 | `messages/<masterId>.jsonl` | Team message log |
 | `docs/<hash>.json` | Documentarian since-tracking |
 
-Each session stores identity (`id`, `title`, `chatId`, `cwd`, `branch`, `model`, `engine`), lifecycle `status` (`active`\|`paused`\|`done`), `tags` / `notes` / `prompt`, optional `herdr` evidence from `aflt sync`, and orchestration fields (`parent`, `role`, `task`, `result`, `workerStatus`, run pid metadata, `messaging`, …).
+Each session stores identity (`id`, `title`, `chatId`, `cwd`, `branch`, `model`, `engine`), optional `project`, lifecycle `status` (`active`\|`paused`\|`done`), `tags` / `notes` / `prompt`, optional `herdr` evidence from `aflt sync`, and orchestration fields (`parent`, `role`, `task`, `result`, `workerStatus`, run pid metadata, `messaging`, …).
 
-**STATUS vs HERDR on `aflt ls`:** STATUS is saved lifecycle (a process exit does **not** mark the task done — use `aflt done`). HERDR is live runtime from `hc ls --all --json`: `running` \| `shell` \| `exited` \| `missing` \| `unknown` \| `-`. `aflt ls` never writes the registry; `aflt sync` persists `herdr` evidence without changing `status` / `lastUsed`.
+**Project name:** projects need **no git**. New sessions store: `--project` → parent → `AFLT_PROJECT` → `.agentfleet.json` `"project"` → `config.json` `"project"` → git basename → cwd basename (`adhoc` for `$HOME`/`tmpdir`/`/tmp`). Existing rows without `project`: derive at read with cwd rules only (never env/global; never rewrite the registry). Workers inherit the master's project.
+
+**STATUS vs HERDR on `aflt ls`:** STATUS is saved lifecycle (a process exit does **not** mark the task done — use `aflt done`). HERDR is live runtime from `hc ls --all --json`: `running` \| `shell` \| `exited` \| `missing` \| `unknown` \| `-`. `aflt ls --json` includes effective `project` + `parent`. `aflt ls` never writes the registry; `aflt sync` persists `herdr` evidence without changing `status` / `lastUsed`. `aflt timeline` is read-only (no registry/Herdr writes).
 
 ## Session lifecycle commands
 
@@ -127,7 +130,8 @@ Each session stores identity (`id`, `title`, `chatId`, `cwd`, `branch`, `model`,
 |---------|---------|
 | `aflt new` | Create engine session → register → interactive launch |
 | `aflt add` | Register an existing chat / Copilot UUID |
-| `aflt ls` / `aflt sync` | List; persist Herdr evidence |
+| `aflt ls` / `aflt sync` | List (optional `--project`); persist Herdr evidence |
+| `aflt timeline` | Read-only project session tree (+ best-effort commits) |
 | `aflt run` / `aflt log` | Headless create-or-resume; print last capture |
 | `aflt resume` / `aflt pick` | Resume one, interactive pick, or `--all` |
 | `aflt rename` / `aflt note` / `aflt done` | Metadata |
@@ -138,9 +142,10 @@ Each session stores identity (`id`, `title`, `chatId`, `cwd`, `branch`, `model`,
 <details>
 <summary><code>aflt new</code> / <code>aflt add</code> / <code>aflt resume</code> / <code>aflt run</code> options</summary>
 
-- **`aflt new "<title>"`** — `--cwd` `--prompt` `--model` `--engine cursor|copilot` `--force` `--messaging|--no-messaging` `--tag` `--dry-run` (plus Cursor `--no-trust` where applicable)
-- **`aflt add "<title>" --chat <id>`** — `--cwd` `--model` `--engine` `--tag` `--prompt`
-- **`aflt run`** — `--prompt` (required) `--cwd` `--model` `--engine` `--mode ask|plan` (Cursor) `--force` `--output-format text|json` `--timeout` `--messaging|--no-messaging` `--no-docs` `--dry-run` `--json`
+- **`aflt new "<title>"`** — `--cwd` `--prompt` `--model` `--engine cursor|copilot` `--project` `--force` `--messaging|--no-messaging` `--tag` `--dry-run` (plus Cursor `--no-trust` where applicable)
+- **`aflt add "<title>" --chat <id>`** — `--cwd` `--model` `--engine` `--project` `--tag` `--prompt`
+- **`aflt run`** — `--prompt` (required) `--cwd` `--model` `--engine` `--project` `--mode ask|plan` (Cursor) `--force` `--output-format text|json` `--timeout` `--messaging|--no-messaging` `--no-docs` `--dry-run` `--json`
+- **`aflt timeline [<project>]`** — `--all` `--json` `--since <date>` (ISO or YYYY-MM-DD); read-only. Default project: `<project>` arg → `AFLT_PROJECT` → cwd's derived project. Text shows local times (JSON keeps ISO UTC). Commits come from each session's own cwd (`commitsReason`: `not-git` / `missing-cwd`); an open-ended row that is not a live run is bounded at `lastUsed` (`open-ended` when it never ran).
 - **`aflt resume <title|id>`** — `--via herdr|plain` `--here` `--open|--no-open` `--prompt` `--force` `--dry-run` `--no-herdr-app`
 - **`aflt resume --all`** — `--tag` `--via tmux|iterm2|wezterm|herdr|plain` `--open|--no-open` `--force` `--dry-run` `--no-herdr-app`
 - **`aflt rm`** — `--keep-files` `--force` `--dry-run`; or `--children <master> [--with-master]`
@@ -255,6 +260,7 @@ aflt docs --status [--json] [--all] [<dir>...]
 - Snapshots the tree; **warns** on non-doc edits (including disallowed new `CHANGELOG.md`); does not revert.
 - State: `$AGENTFLEET_HOME/docs/<hash>.json` (`lastCommit`).
 - **`docsInstructions`:** readable files are injected as a “Project-specific documentation instructions” section (per-file / total size caps; missing files warn + skip). Dry-run / `--json` list used and skipped paths.
+- **Session timeline:** prompt may include a compact “Session timeline since last docs run” (same as `aflt timeline`, ~8KB cap). Dry-run / `--json` report `timelineBytes` (0 when skipped).
 - **`--status`:** read-only (no engine, no writes). Per project: `docsEnabled`, `docsPaths`, `docsInstructions`, `lastRun`, `commitsSince`, `dirtyDocs`, `needsDocs`, `skip` / `skipReason` / `skipFiles`, `ready`. **Doc Bot rule:** skip any repo with uncommitted docs edits — if a `docsPaths` file is dirty (`.DS_Store` ignored), status sets `skip: true`, `skipReason: "dirty-docs"`, and lists the files. `needsDocs` is unchanged; act only on `ready` (`needsDocs && !skip`). `aflt docs` itself does not enforce this. Exit 0 even when `needsDocs` is true. `--all` adds distinct registry project dirs.
 - **Auto-trigger:** after successful headless master (`aflt master --headless` or `aflt run` on `role=master`) when docs enabled; skip `--no-docs`. Docs failure → WARNING + JSON `docs:{ok:false}` but master exit 0. `aflt wait --docs` same after wait exit 0; **errors** if no master. Guard: `docsTriggeredRunId` (once per master run). `--anyway` runs once without enabling in config.
 
@@ -280,6 +286,7 @@ aflt import copilot <uuid|prefix>…   # register; --title (single id), --tag, -
 
 ```json
 {
+  "project": "my-app",
   "messaging": true,
   "docs": true,
   "docsPaths": ["README.md", "docs/"],
@@ -289,13 +296,15 @@ aflt import copilot <uuid|prefix>…   # register; --title (single id), --tag, -
 }
 ```
 
-Resolved by walking cwd → ancestors until the git root (or filesystem root).
+Resolved by walking cwd → ancestors until the git root (or filesystem root). Optional `"project"` names the group for `aflt ls --project` / `aflt timeline` when `--project` / `AFLT_PROJECT` are omitted on create.
 
 ### Fleet: `~/.agentfleet/config.json`
 
 ```json
-{ "defaultEngine": "cursor" }
+{ "defaultEngine": "cursor", "project": "ops" }
 ```
+
+Optional `"project"` is a create-time default for non-repo agent groups (after `AFLT_PROJECT`, before basename/`adhoc`).
 
 ### Environment
 
@@ -304,6 +313,7 @@ Resolved by walking cwd → ancestors until the git root (or filesystem root).
 | `AGENTFLEET_HOME` | Registry dir (default `~/.agentfleet`) |
 | `AGENTFLEET_REGISTRY` | Override `sessions.json` path |
 | `AGENTFLEET_ENGINE` | Default engine for **new** sessions |
+| `AFLT_PROJECT` | Default project for **new** sessions (after `--project` / parent; before `.agentfleet.json` / config / basename). No git required. |
 | `AGENTFLEET_CURSOR_BIN` | Override `cursor-agent` |
 | `AGENTFLEET_COPILOT_BIN` | Override `copilot` |
 | `AGENTFLEET_COPILOT_HOME` | Copilot home for import (else `COPILOT_HOME` / `~/.copilot`) |
@@ -333,6 +343,7 @@ Resolved by walking cwd → ancestors until the git root (or filesystem root).
 | `aflt add` | Register existing chat / Copilot UUID |
 | `aflt import` / `aflt import-file` | Discover local sessions / merge backup |
 | `aflt ls` / `aflt sync` | List sessions / persist Herdr evidence |
+| `aflt timeline` | Read-only project session tree |
 | `aflt run` / `aflt log` | Headless prompt / last capture |
 | `aflt spawn` / `aflt master` | Worker under master / bootstrap orchestrator |
 | `aflt children` | List workers or summarize masters |
@@ -381,7 +392,7 @@ See `af --help` / `aflt help` for the authoritative flag list. Long-form help co
 npm test
 ```
 
-336 tests (Node test runner): 335 passing, 1 skipped (a live `create-chat` smoke test that only runs with a real `cursor-agent`). Coverage includes registry, engines, Herdr backends, orchestration, messaging, MCP, docs, dry-run purity, and hermetic `AGENTFLEET_HOME` fixtures.
+346 tests (Node test runner): 345 passing, 1 skipped (a live `create-chat` smoke test that only runs with a real `cursor-agent`). Coverage includes registry, engines, Herdr backends, orchestration, messaging, MCP, docs, project/timeline, dry-run purity, and hermetic `AGENTFLEET_HOME` fixtures.
 
 ## License
 

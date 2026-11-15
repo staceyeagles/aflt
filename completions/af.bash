@@ -42,7 +42,7 @@ _af() {
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  cmds="version new add import ls list sync run log spawn master docs children result wait tail send stop resume pick adopt cursor copilot engine rename cwd set-cwd done rm remove note export import-file which-backend herdr-templates herdr-app doctor msg inbox thread mcp help"
+  cmds="version new add import ls list timeline sync run log spawn master docs children result wait tail send stop resume pick adopt cursor copilot engine rename cwd set-cwd done rm remove note export import-file which-backend herdr-templates herdr-app doctor msg inbox thread mcp help"
 
   if [[ ${COMP_CWORD} -eq 1 ]]; then
     COMPREPLY=( $(compgen -W "${cmds}" -- "${cur}") )
@@ -57,21 +57,21 @@ _af() {
       COMPREPLY=( $(compgen -W "--all --dry-run --json" -- "${cur}") )
       ;;
     new|add)
-      COMPREPLY=( $(compgen -W "--cwd --prompt --model --tag --chat --engine --force --messaging --no-messaging --dry-run --no-trust cursor copilot" -- "${cur}") )
+      COMPREPLY=( $(compgen -W "--cwd --prompt --model --tag --chat --engine --project --force --messaging --no-messaging --dry-run --no-trust cursor copilot" -- "${cur}") )
       ;;
     run)
-      COMPREPLY=( $(compgen -W "--prompt --cwd --model --engine --mode --force --output-format --timeout --messaging --no-messaging --no-docs --dry-run --json --no-trust --no-silent cursor copilot ask plan text json" -- "${cur}") )
+      COMPREPLY=( $(compgen -W "--prompt --cwd --model --engine --project --mode --force --output-format --timeout --messaging --no-messaging --no-docs --dry-run --json --no-trust --no-silent cursor copilot ask plan text json" -- "${cur}") )
       ;;
     spawn)
       if [[ "$prev" == "--parent" ]]; then
         titles="$(_af_session_titles)"
         COMPREPLY=( $(compgen -W "${titles}" -- "${cur}") )
       else
-        COMPREPLY=( $(compgen -W "--parent --prompt --engine --cwd --title --task --model --timeout --force --interactive --detach --messaging --no-messaging --dry-run --json --no-trust cursor copilot" -- "${cur}") )
+        COMPREPLY=( $(compgen -W "--parent --prompt --engine --cwd --project --title --task --model --timeout --force --interactive --detach --messaging --no-messaging --dry-run --json --no-trust cursor copilot" -- "${cur}") )
       fi
       ;;
     master)
-      COMPREPLY=( $(compgen -W "--goal --engine --cwd --title --model --worker-engine --headless --timeout --force --messaging --no-messaging --no-docs --dry-run --json --no-trust cursor copilot" -- "${cur}") )
+      COMPREPLY=( $(compgen -W "--goal --engine --cwd --title --model --project --worker-engine --headless --timeout --force --messaging --no-messaging --no-docs --dry-run --json --no-trust cursor copilot" -- "${cur}") )
       ;;
     docs)
       COMPREPLY=( $(compgen -W "--status --all --since --engine --model --force --no-force --anyway --dry-run --json --cwd --timeout cursor copilot" -- "${cur}") )
@@ -222,20 +222,23 @@ _af() {
       fi
       ;;
     ls|list)
-      COMPREPLY=( $(compgen -W "--status --tag --all --json" -- "${cur}") )
+      COMPREPLY=( $(compgen -W "--status --tag --project --all --json" -- "${cur}") )
+      ;;
+    timeline)
+      COMPREPLY=( $(compgen -W "--all --json --since --project" -- "${cur}") )
       ;;
     sync)
       COMPREPLY=( $(compgen -W "--dry-run --json" -- "${cur}") )
       ;;
     import)
       if [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "--engine --cwd --limit --json --title --tag --all --dry-run --allow-missing --pick -i cursor copilot" -- "${cur}") )
+        COMPREPLY=( $(compgen -W "--engine --cwd --limit --json --title --tag --project --all --dry-run --allow-missing --pick -i cursor copilot" -- "${cur}") )
       elif [[ "$prev" == "--engine" ]]; then
         COMPREPLY=( $(compgen -W "cursor copilot" -- "${cur}") )
       else
         local ids
         ids="$(_af_copilot_session_ids)"
-        COMPREPLY=( $(compgen -W "cursor copilot --engine --cwd --limit --json --title --tag --all --dry-run --allow-missing --pick -i ${ids}" -- "${cur}") )
+        COMPREPLY=( $(compgen -W "cursor copilot --engine --cwd --limit --json --title --tag --project --all --dry-run --allow-missing --pick -i ${ids}" -- "${cur}") )
       fi
       ;;
   esac

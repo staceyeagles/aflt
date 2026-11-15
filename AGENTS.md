@@ -77,12 +77,15 @@ Stdout is the engine's print-mode response. Stderr has progress plus `output: <p
 ### 2. Check status
 
 ```bash
-aflt ls --json                  # STATUS = lifecycle; HERDR = live runtime
+aflt ls --json                  # STATUS = lifecycle; HERDR = live runtime; includes project + parent
 aflt ls --status active
+aflt ls --project my-app --json # filter by stored or derived project name
+aflt timeline                   # read-only session tree for cwd's project
+aflt timeline --all --json      # every project, grouped
 aflt children --json            # workers of this master, or a summary of masters
 ```
 
-`STATUS` is saved lifecycle (`active` | `paused` | `done`). A process exit does **not** mark the task done — use `aflt done`. `HERDR` is live runtime from `hc ls`: `running` | `shell` | `exited` | `missing` | `unknown` | `-`. `aflt ls --json` also includes derived `workerStatus` (same rules as `aflt children --json`). `aflt ls` never writes the registry.
+`STATUS` is saved lifecycle (`active` | `paused` | `done`). A process exit does **not** mark the task done — use `aflt done`. `HERDR` is live runtime from `hc ls`: `running` | `shell` | `exited` | `missing` | `unknown` | `-`. `aflt ls --json` also includes derived `workerStatus` (same rules as `aflt children --json`) plus effective `project` and `parent`. `aflt ls` never writes the registry. `aflt timeline` is strictly read-only (no registry/Herdr writes).
 
 ### 3. Orchestrate workers from a master
 
@@ -146,11 +149,11 @@ aflt help
 
 ```bash
 aflt new "<title>" [--cwd DIR] [--prompt "..."] [--model X] [--engine cursor|copilot]
-                   [--force] [--messaging|--no-messaging] [--tag T]... [--dry-run]
+                   [--project NAME] [--force] [--messaging|--no-messaging] [--tag T]... [--dry-run]
 # create-chat / mint UUID → register → interactive launch
 
 aflt add "<title>" --chat <id> [--cwd DIR] [--model X] [--engine cursor|copilot]
-                   [--tag T]... [--prompt "..."]
+                   [--project NAME] [--tag T]... [--prompt "..."]
 # For --engine copilot, --chat is the Copilot session UUID
 
 aflt import [--engine cursor|copilot] [cursor|copilot]
@@ -162,17 +165,27 @@ aflt import --engine copilot [<id|prefix>...] [--title T] [--tag T]...
             [--allow-missing] [-i|--pick]
 # --title only with a single id. -i requires a TTY.
 
-aflt ls [--status S] [--tag T] [--all] [--json]
+aflt ls [--status S] [--tag T] [--project NAME] [--all] [--json]
+# --json includes effective project + parent on every row
+
+aflt timeline [<project>] [--all] [--json] [--since <date>]
+# Read-only project session tree (no registry/Herdr writes). Default project =
+# AFLT_PROJECT, else cwd project. Chronological roots + indented children; best-effort
+# git commits in each session window. --since ISO or YYYY-MM-DD. Exit 0 when empty.
+
 aflt sync [--dry-run] [--json]
 # Persist last-known Herdr runtime evidence (does not change status/lastUsed)
 ```
+
+`aflt timeline` is read-only. Default project: `<project>` arg → `AFLT_PROJECT` → cwd's derived project. Text shows local times (JSON keeps ISO UTC). Commits come from each session's own cwd (`commitsReason`: `not-git` / `missing-cwd`); an open-ended row that is not a live run is bounded at `lastUsed` (`open-ended` when it never ran).
 
 ### Headless run and logs
 
 ```bash
 aflt run "<title>" --prompt "..." [--cwd DIR] [--model X] [--engine cursor|copilot]
-                   [--mode ask|plan] [--force] [--output-format text|json]
-                   [--timeout SEC] [--messaging|--no-messaging] [--no-docs]
+                   [--project NAME] [--mode ask|plan] [--force]
+                   [--output-format text|json] [--timeout SEC]
+                   [--messaging|--no-messaging] [--no-docs]
                    [--dry-run] [--json]
 # Create or resume, capture output, exit. --mode is Cursor-only.
 # If the session is role=master and exits 0, may trigger aflt docs (skip with --no-docs).
@@ -186,7 +199,7 @@ Timeout on a headless run exits **124**.
 
 ```bash
 aflt master --goal TEXT [--engine cursor|copilot] [--cwd DIR] [--title T] [--model X]
-            [--worker-engine copilot|cursor] [--headless] [--timeout SEC]
+            [--project NAME] [--worker-engine copilot|cursor] [--headless] [--timeout SEC]
             [--force] [--messaging|--no-messaging] [--no-docs]
             [--dry-run] [--json]
 # Initial prompt is templates/orchestrator.md. Default: interactive via Herdr.
@@ -194,12 +207,13 @@ aflt master --goal TEXT [--engine cursor|copilot] [--cwd DIR] [--title T] [--mod
 # Successful headless exit may run aflt docs if the project has {"docs": true}.
 
 aflt spawn --parent <id|title> --prompt TEXT [--engine cursor|copilot] [--cwd DIR]
-           [--title T] [--task TEXT] [--model X] [--timeout SEC]
+           [--project NAME] [--title T] [--task TEXT] [--model X] [--timeout SEC]
            [--force] [--interactive] [--detach]
            [--messaging|--no-messaging] [--dry-run] [--json]
 # Headless by default. --interactive launches via Herdr.
 # --detach (headless only): return immediately; a supervisor records exit/handoff.
 # Messaging-enabled masters pass messaging:true to workers unless --no-messaging.
+# Workers inherit the master's project unless --project is set.
 
 aflt children [<id|title>] [--json] [--all]
 # No arg: resolve master from AGENTFLEET_ID / AGENTFLEET_PARENT, or summarize all masters.
@@ -350,7 +364,8 @@ aflt docs --status [--json] [--all] [<dir>...]
 - `--anyway` runs once without enabling docs in config.
 - Updates **only** configured docs paths. Warns on non-doc edits (including a new `CHANGELOG.md` when not allowed); does not revert.
 - Optional `.agentfleet.json` `docsInstructions`: file path(s) (string or array; `~` / repo-relative / absolute) injected into the prompt as project-specific instructions; edit restriction still applies. Missing/unreadable files warn + skip; size caps apply. Dry-run/`--json` report used and skipped files.
-- **`aflt docs --status`:** read-only status (no engine, no registry/state writes). Default cwd; `--all` adds distinct registry project dirs. Reports `needsDocs` (`docsEnabled && (no lastRun || commitsSince>0)`); also `skip` / `skipReason` / `skipFiles` and `ready`. **Doc Bot rule:** skip repos with uncommitted docs edits — any dirty `docsPaths` file (`.DS_Store` ignored) sets `skip: true`, `skipReason: "dirty-docs"`; `needsDocs` is unchanged. Only run `aflt docs` on projects where `ready` (`needsDocs && !skip`) is true. `aflt docs` itself does not check this. Exit 0 even when `needsDocs` is true.
+- Prompt may include a compact **Session timeline since last docs run** (same builder as `aflt timeline`, cap ~8KB with `[truncated]` marker). Dry-run/`--json` report `timelineBytes` (0 when skipped).
+- **`aflt docs --status`:** read-only status (no engine, no registry/state writes). Default cwd; `--all` adds distinct registry project dirs. Reports `needsDocs` (`docsEnabled && (no lastRun || commitsSince>0 || unknown lastCommit)`); also `skip` / `skipReason` / `skipFiles` and `ready`. **Doc Bot rule:** skip repos with uncommitted docs edits — any dirty `docsPaths` file (`.DS_Store` ignored) sets `skip: true`, `skipReason: "dirty-docs"`; `needsDocs` is unchanged. Only run `aflt docs` on projects where `ready` (`needsDocs && !skip`) is true. `aflt docs` itself does not check this. Exit 0 even when `needsDocs` is true.
 - Auto-runs once after a successful headless master (`aflt master --headless` or `aflt run` on `role=master`) when docs are enabled; skip with `--no-docs`. Docs failure → WARNING + JSON `docs:{ok:false}` but the master exit stays 0. `aflt wait --docs` is the same after wait exit 0, and **errors** if no master can be resolved. Guard: `docsTriggeredRunId` (once per master run).
 
 ### Doctor and Herdr helpers
@@ -410,7 +425,13 @@ Home: **`$AGENTFLEET_HOME`** (default `~/.agentfleet`). Override the registry fi
 | `messages/<masterId>.jsonl` | Team message log |
 | `docs/<hash>.json` | Documentarian since-tracking (`lastCommit`) |
 
-Each session stores identity (`id`, `title`, `chatId`, `cwd`, `branch`, `model`, `engine`), lifecycle `status` (`active` | `paused` | `done`), `tags` / `notes` / `prompt`, optional `herdr` evidence from `aflt sync`, and orchestration fields (`parent`, `role`, `task`, `result`, `workerStatus`, run pid metadata, `messaging`, …).
+Each session stores identity (`id`, `title`, `chatId`, `cwd`, `branch`, `model`, `engine`), optional `project`, lifecycle `status` (`active` | `paused` | `done`), `tags` / `notes` / `prompt`, optional `herdr` evidence from `aflt sync`, and orchestration fields (`parent`, `role`, `task`, `result`, `workerStatus`, run pid metadata, `messaging`, …).
+
+**Project name (`session.project`):** optional string for grouping. **Projects never require git** — one-off agents in `/tmp` or `$HOME` can share a name.
+
+**New sessions** store the resolved name (`--project` on `new`/`add`/`run`/`master`/`spawn`/import). Precedence: `--project` → parent/master project → `AFLT_PROJECT` → `.agentfleet.json` `"project"` → `$AGENTFLEET_HOME/config.json` `"project"` → git-root basename → cwd basename, except `$HOME` / `os.tmpdir()` (+ realpath) / `/tmp` / `/private/tmp` → `"adhoc"`. Workers inherit the master's project (unless `--project` overrides); docs sessions inherit when triggered from a master (and set `parent` when that path runs).
+
+**Existing rows** without `project`: derive at read time with cwd-based rules only (`.agentfleet.json` → git basename → cwd basename/`adhoc`) — never env/global config, and never rewrite the registry to backfill. Helper: `lib/project.js` (git-root lookups cached per command; missing cwd must not throw).
 
 ### Project: `.agentfleet.json`
 
@@ -418,6 +439,7 @@ Resolved by walking cwd → ancestors until the git root (or filesystem root).
 
 ```json
 {
+  "project": "my-app",
   "messaging": true,
   "docs": true,
   "docsPaths": ["README.md", "docs/"],
@@ -429,6 +451,7 @@ Resolved by walking cwd → ancestors until the git root (or filesystem root).
 
 | Key | Meaning |
 |-----|---------|
+| `project` | optional display/group name for sessions in this repo (stored on new rows when `--project` is omitted) |
 | `messaging` | `true` to opt in for sessions in this project (session `messaging: false` wins) |
 | `docs` | `true` to enable the documentarian |
 | `docsPaths` | default `README.md` + `docs/` (+ `CHANGELOG.md` only if it already exists) |
@@ -439,8 +462,10 @@ Resolved by walking cwd → ancestors until the git root (or filesystem root).
 ### Fleet: `~/.agentfleet/config.json`
 
 ```json
-{ "defaultEngine": "cursor" }
+{ "defaultEngine": "cursor", "project": "ops" }
 ```
+
+Optional `"project"` is a create-time default when `--project` / `AFLT_PROJECT` / `.agentfleet.json` are unset (useful for non-repo agent groups).
 
 ---
 
@@ -466,6 +491,7 @@ Set by the caller or the environment:
 | `AGENTFLEET_HOME` | Registry dir (default `~/.agentfleet`) |
 | `AGENTFLEET_REGISTRY` | Override `sessions.json` path |
 | `AGENTFLEET_ENGINE` | Default engine for **new** sessions |
+| `AFLT_PROJECT` | Default project name for **new** sessions (after `--project` / parent; before `.agentfleet.json` / config.json / basename). Projects need no git. |
 | `AGENTFLEET_CURSOR_BIN` | Override `cursor-agent` |
 | `AGENTFLEET_COPILOT_BIN` | Override `copilot` |
 | `AGENTFLEET_COPILOT_HOME` | Copilot home for import (else `COPILOT_HOME` / `~/.copilot`) |

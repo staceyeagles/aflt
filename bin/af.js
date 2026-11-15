@@ -20,6 +20,8 @@ const launch = require('../lib/launch');
 const messages = require('../lib/messages');
 const docs = require('../lib/docs');
 const mcp = require('../lib/mcp');
+const projectLib = require('../lib/project');
+const timeline = require('../lib/timeline');
 const {
   parseArgs,
   resolveCwd,
@@ -34,6 +36,20 @@ const {
   sleep,
   slugify,
 } = require('../lib/util');
+
+/** Resolve + attach `project` for a new session row (stores derived name). */
+function applyProjectField(entry, flags, { parent = null, cache = null } = {}) {
+  const c = cache || projectLib.createLookupCache();
+  const flag =
+    flags && flags.project != null && flags.project !== true ? flags.project : null;
+  entry.project = projectLib.resolveProjectForCreate({
+    flag,
+    parent,
+    cwd: entry.cwd,
+    cache: c,
+  });
+  return entry;
+}
 
 const ID_COL = 16;
 
@@ -52,9 +68,10 @@ Usage:
   aflt --version | -v | version [--json]
                             Print version (aflt ${PKG_VERSION})
   aflt new "<title>" [--cwd DIR] [--prompt "..."] [--model X] [--engine cursor|copilot]
-                            [--force] [--messaging|--no-messaging] [--tag T]... [--dry-run]
+                            [--project NAME] [--force] [--messaging|--no-messaging]
+                            [--tag T]... [--dry-run]
   aflt add "<title>" --chat <id> [--cwd DIR] [--model X] [--engine cursor|copilot]
-                            [--tag T]... [--prompt "..."]
+                            [--project NAME] [--tag T]... [--prompt "..."]
                             For --engine copilot, --chat is the Copilot session UUID
   aflt import [--engine cursor|copilot] [cursor|copilot]
                             List local chats/sessions to register. Default engine
@@ -66,14 +83,24 @@ Usage:
                             [--allow-missing] [-i|--pick]
                             Copilot: list (newest first) or register by UUID/prefix.
                             --title only with a single id. -i requires a TTY.
-  aflt ls [--status S] [--tag T] [--all] [--json]
+  aflt ls [--status S] [--tag T] [--project NAME] [--all] [--json]
                             STATUS is lifecycle; HERDR is live runtime
-                            (running|shell|exited|missing|unknown|-)
+                            (running|shell|exited|missing|unknown|-).
+                            --project filters by stored or derived project name.
+                            --json includes effective project + parent on every row.
+  aflt timeline [<project>] [--all] [--json] [--since <date>]
+                            Read-only project session tree (no registry/Herdr writes).
+                            Default project = AFLT_PROJECT, else cwd's project. --all groups
+                            every project. Chronological roots + indented children;
+                            best-effort git commits per session cwd (skipped when
+                            missing/not-git; projects need no repo). --since ISO or
+                            YYYY-MM-DD. Exit 0 when empty.
   aflt sync [--dry-run] [--json]
                             Persist last-known Herdr runtime evidence (does not change status/lastUsed)
   aflt run "<title>" --prompt "..." [--cwd DIR] [--model X] [--engine cursor|copilot]
-                            [--mode ask|plan] [--force] [--output-format text|json]
-                            [--timeout SEC] [--messaging|--no-messaging] [--no-docs]
+                            [--project NAME] [--mode ask|plan] [--force]
+                            [--output-format text|json] [--timeout SEC]
+                            [--messaging|--no-messaging] [--no-docs]
                             [--dry-run] [--json]
                             Headless one-shot: create or resume, capture output, exit.
                             If the session is role=master and exits 0, may trigger
@@ -82,17 +109,19 @@ Usage:
                             Same, resuming an existing tracked session
   aflt log <title|id> [--path]  Print last captured run output (or its path)
   aflt spawn --parent <id|title> --prompt TEXT [--engine cursor|copilot] [--cwd DIR]
-                            [--title T] [--task TEXT] [--model X] [--timeout SEC]
-                            [--force] [--interactive] [--detach]
+                            [--project NAME] [--title T] [--task TEXT] [--model X]
+                            [--timeout SEC] [--force] [--interactive] [--detach]
                             [--messaging|--no-messaging] [--dry-run] [--json]
                             Create a worker under a master; headless by default
                             (same machinery as aflt run). --interactive launches via Herdr.
                             --detach (headless only): return immediately; a supervisor
                             records exit/handoff. Prefer --detach over shell &.
                             Messaging-enabled masters pass messaging:true to workers
-                            unless --no-messaging.
+                            unless --no-messaging. Workers inherit the master's project
+                            unless --project is set.
   aflt master --goal TEXT [--engine cursor|copilot] [--cwd DIR] [--title T] [--model X]
-                            [--worker-engine copilot|cursor] [--headless] [--timeout SEC]
+                            [--project NAME] [--worker-engine copilot|cursor]
+                            [--headless] [--timeout SEC]
                             [--force] [--messaging|--no-messaging] [--no-docs]
                             [--dry-run] [--json]
                             Create a master session with the orchestrator template as
@@ -107,6 +136,8 @@ Usage:
                             .agentfleet.json {"docs": true}. Optional
                             docsInstructions: file path(s) whose contents are
                             injected into the prompt (still only edit docsPaths).
+                            Prompt may include a compact session timeline since the
+                            last docs run (cap ~8KB; dry-run/json report timelineBytes).
                             --anyway runs once without enabling. Force/write grant
                             is ON by default (Cursor --force / Copilot
                             --allow-all-tools); opt out with --no-force or
@@ -227,6 +258,9 @@ Environment:
   AGENTFLEET_REGISTRY     Override sessions.json path
   AGENTFLEET_ENGINE       Default engine for NEW sessions (cursor|copilot);
                             after --engine flag, before config.json / builtin
+  AFLT_PROJECT            Default project name for NEW sessions (after --project
+                            and parent inheritance; before .agentfleet.json /
+                            config.json project / basename). Projects need no git.
   AGENTFLEET_CURSOR_BIN   Override cursor-agent binary
   AGENTFLEET_COPILOT_BIN  Override copilot binary
   AGENTFLEET_VIA          Default --via backend (resume --all; also overrides
@@ -348,6 +382,9 @@ async function main() {
     case 'list':
       cmdLs(rest);
       break;
+    case 'timeline':
+      cmdTimeline(rest);
+      break;
     case 'sync':
       cmdSync(rest);
       break;
@@ -454,6 +491,7 @@ async function cmdNew(argv) {
     engine: engineName,
   };
   if (messagingFlag !== null) entry.messaging = messagingFlag;
+  applyProjectField(entry, flags);
 
   const launchOpts = {
     prompt: prompt || undefined,
@@ -508,7 +546,7 @@ function cmdAdd(argv) {
   }
 
   const cwd = resolveCwd(flags.cwd || flags.C);
-  const saved = registry.add({
+  const entry = {
     title,
     chatId: String(chatId),
     cwd,
@@ -518,7 +556,9 @@ function cmdAdd(argv) {
     tags: collectTags(flags),
     status: 'active',
     engine: engineName,
-  });
+  };
+  applyProjectField(entry, flags);
+  const saved = registry.add(entry);
   printSession(saved, 'added');
 }
 
@@ -759,6 +799,7 @@ async function cmdImportCopilot(argv, flags) {
         status: 'active',
         engine: 'copilot',
       };
+      applyProjectField(entry, flags);
       if (dryRun) {
         process.stdout.write(`[dry-run] would import ${fullId} as ${title} cwd=${cwd}\n`);
         imported++;
@@ -804,6 +845,7 @@ async function cmdImportCopilot(argv, flags) {
       status: 'active',
       engine: 'copilot',
     };
+    applyProjectField(entry, flags);
 
     if (dryRun) {
       process.stdout.write(
@@ -867,7 +909,14 @@ function cmdLs(argv) {
   if (flags.tag) opts.tag = flags.tag;
   if (!flags.all && !flags.status) opts.includeDone = false;
 
-  const sessions = registry.list(opts);
+  let sessions = registry.list(opts);
+  const projectFilter = projectLib.normalizeProjectFilter(flags.project);
+  const projectCache = projectLib.createLookupCache();
+  if (projectFilter) {
+    sessions = sessions.filter(
+      (s) => projectLib.resolveProjectName(s, { cache: projectCache }) === projectFilter
+    );
+  }
   if (sessions.length === 0 && !flags.json) {
     process.stdout.write('(no sessions)\n');
     return;
@@ -899,6 +948,8 @@ function cmdLs(argv) {
         engine: e.session.engine || 'cursor',
         cwd: e.session.cwd,
         branch: e.session.branch || null,
+        project: projectLib.resolveProjectName(e.session, { cache: projectCache }),
+        parent: e.session.parent || null,
         status: e.session.status,
         lastUsed: e.session.lastUsed || null,
         role: e.session.role || null,
@@ -938,6 +989,7 @@ function cmdLs(argv) {
     return;
   }
 
+  // Text table stays unchanged (already wide; project is in --json).
   process.stdout.write(
     `${pad('TITLE', 24)} ${pad('ID', ID_COL)} ${pad('CHAT', 10)} ${pad('ENGINE', 8)} ${pad('FOLDER', 24)} ${pad('BRANCH', 12)} ${pad('STATUS', 8)} ${pad('HERDR', 8)} LAST USED\n`
   );
@@ -948,6 +1000,62 @@ function cmdLs(argv) {
       `${pad(s.title, 24)} ${pad(displayId(s.id, ID_COL), ID_COL)} ${pad(shortId(s.chatId), 10)} ${pad(s.engine || 'cursor', 8)} ${pad(folder, 24)} ${pad(s.branch || '', 12)} ${pad(s.status, 8)} ${pad(herdr.displayRuntime(e.runtime), 8)} ${s.lastUsed || ''}\n`
     );
   }
+}
+
+/**
+ * Read-only project timeline. Never writes registry/state; no Herdr calls.
+ */
+function cmdTimeline(argv) {
+  const { args: rawArgs, flags } = parseArgs(argv);
+  const args = rawArgs.slice();
+  // parseArgs may bind `--json ops` / `--all ops` as values; recover the project.
+  const asJson = docsRecoverBoolFlag(flags, 'json', args);
+  const all = docsRecoverBoolFlag(flags, 'all', args);
+  const projectArg =
+    args[0] && String(args[0]).trim() !== ''
+      ? String(args[0]).trim()
+      : flags.project != null && flags.project !== true
+        ? String(flags.project).trim()
+        : projectLib.projectFromEnv(process.env);
+
+  let since = null;
+  if (flags.since != null && flags.since !== true) {
+    try {
+      since = timeline.parseSinceDate(String(flags.since));
+    } catch (err) {
+      fail(err.message, { json: asJson });
+    }
+  }
+
+  // Read-only load (same as list); do not touch mtime via save.
+  const sessions = registry.list({ includeDone: true });
+  const cache = projectLib.createLookupCache();
+  const payload = timeline.buildTimeline(sessions, {
+    project: all ? null : projectArg,
+    all,
+    since,
+    cwd: process.cwd(),
+    cache,
+  });
+
+  if (asJson) {
+    emitJson(payload);
+    return;
+  }
+
+  const total = (payload.projects || []).reduce(
+    (n, p) => n + timeline.flattenTree(p.sessions || []).length,
+    0
+  );
+  if (total === 0) {
+    process.stdout.write(
+      all
+        ? '(no sessions)\n'
+        : `(no sessions for project ${payload.projects[0] ? payload.projects[0].project : projectArg || 'cwd'})\n`
+    );
+    return;
+  }
+  process.stdout.write(timeline.formatTimelineText(payload));
 }
 
 function backupRegistryPath() {
@@ -2216,6 +2324,7 @@ async function cmdRun(argv) {
       engine: engineName,
     };
     if (messagingFlag !== null) entry.messaging = messagingFlag;
+    applyProjectField(entry, flags);
     if (dryRun) {
       session = { ...entry, id: 'dry-run' };
     } else {
@@ -2387,6 +2496,7 @@ async function cmdSpawn(argv) {
       workerStatus: interactive ? 'running' : 'queued',
       messaging: messagingFlag,
     };
+    applyProjectField(previewEntry, flags, { parent });
     const previewMessaging = messages.isMessagingEnabled({
       ...previewEntry,
       messaging: messagingFlag,
@@ -2470,6 +2580,7 @@ async function cmdSpawn(argv) {
       workerStatus: 'queued',
     };
     if (messagingFlag !== null) addPartial.messaging = messagingFlag;
+    applyProjectField(addPartial, flags, { parent });
     worker = registry.add(addPartial, addOpts);
   } catch (err) {
     fail(err.message);
@@ -2862,6 +2973,7 @@ async function cmdMaster(argv) {
       messaging: messagingFlag,
       prompt,
     };
+    applyProjectField(previewEntry, flags);
     if (asJson) {
       emitJson({
             dryRun: true,
@@ -2929,6 +3041,7 @@ async function cmdMaster(argv) {
       stopRequested: false,
     };
     if (messagingFlag !== null) masterPartial.messaging = messagingFlag;
+    applyProjectField(masterPartial, flags);
     master = registry.add(masterPartial);
   } catch (err) {
     fail(err.message);
@@ -3172,6 +3285,8 @@ async function maybeTriggerDocsForMaster(master, opts = {}) {
       asJson: Boolean(opts.asJson),
       quiet: opts.quiet !== false,
       trigger: opts.trigger || 'master',
+      parentSession: master,
+      project: master.project || null,
     });
     if (summary.ok === false) {
       const errMsg =
@@ -3232,7 +3347,8 @@ async function runDocsForProject(projectRoot, opts = {}) {
     state,
   });
   const title = docs.docsTitleFor(projectRoot);
-  const sessions = dryRun ? [] : registry.list({ includeDone: true });
+  // Always load sessions for timeline (read-only); dry-run still includes timeline.
+  const sessions = registry.list({ includeDone: true });
   const previewId = 'dry-run-docs';
   const previewResult = orchestrate.defaultResultPath(previewId);
 
@@ -3252,6 +3368,20 @@ async function runDocsForProject(projectRoot, opts = {}) {
     })),
   };
 
+  const projectCache = projectLib.createLookupCache();
+  const docsProjectName = projectLib.resolveProjectForCreate({
+    flag: opts.project,
+    parent: opts.parentSession || null,
+    cwd: projectRoot,
+    cache: projectCache,
+  });
+  const timelineInfo = timeline.buildDocsTimelineSection(sessions, {
+    projectRoot,
+    project: docsProjectName,
+    sinceIso: state && state.lastRunAt ? state.lastRunAt : null,
+    cache: projectCache,
+  });
+
   if (dryRun) {
     const built = docs.buildPrompt(projectRoot, {
       docsPaths: project.docsPaths,
@@ -3259,8 +3389,9 @@ async function runDocsForProject(projectRoot, opts = {}) {
       changelogAllowed: project.changelogAllowed,
       sinceInfo,
       state,
-      sessions: opts.sessions || [],
+      sessions: opts.sessions || sessions,
       resultPath: previewResult,
+      timeline: timelineInfo,
     });
     const plan = {
       ok: true,
@@ -3277,6 +3408,7 @@ async function runDocsForProject(projectRoot, opts = {}) {
       model: opts.model || null,
       title,
       promptBytes: built.promptBytes,
+      timelineBytes: built.timelineBytes || 0,
       force,
       anyway,
     };
@@ -3287,7 +3419,7 @@ async function runDocsForProject(projectRoot, opts = {}) {
         `[dry-run] docs for ${projectRoot}\n` +
           `[dry-run] since=${sinceInfo.since || '-'} (${sinceInfo.source}) engine=${engineName} force=${force}\n` +
           `[dry-run] docsPaths=${project.docsPaths.join(', ')} changelog=${project.changelogAllowed}\n` +
-          `[dry-run] promptBytes=${built.promptBytes} title=${title}\n`
+          `[dry-run] promptBytes=${built.promptBytes} timelineBytes=${built.timelineBytes || 0} title=${title}\n`
       );
       if (instructionFiles.used.length || instructionFiles.skipped.length) {
         for (const u of instructionFiles.used) {
@@ -3328,7 +3460,7 @@ async function runDocsForProject(projectRoot, opts = {}) {
       chatId = copilot.newSessionId();
     }
     fs.mkdirSync(path.join(fleetDir(), 'results'), { recursive: true, mode: 0o700 });
-    session = registry.add({
+    const docsEntry = {
       title,
       chatId,
       cwd: projectRoot,
@@ -3343,7 +3475,13 @@ async function runDocsForProject(projectRoot, opts = {}) {
       workerStatus: 'queued',
       force,
       stopRequested: false,
-    });
+      project: docsProjectName,
+    };
+    // When triggered from a master, set parent so the docs session joins the tree.
+    if (opts.parentSession && opts.parentSession.id) {
+      docsEntry.parent = opts.parentSession.id;
+    }
+    session = registry.add(docsEntry);
   } else {
     const patch = {
       cwd: projectRoot,
@@ -3354,7 +3492,11 @@ async function runDocsForProject(projectRoot, opts = {}) {
       force,
       stopRequested: false,
       status: 'active',
+      project: docsProjectName,
     };
+    if (opts.parentSession && opts.parentSession.id && !session.parent) {
+      patch.parent = opts.parentSession.id;
+    }
     if (opts.model) patch.model = opts.model;
     if (engineName && (session.engine || 'cursor') !== engineName) {
       // Keep existing engine unless caller overrides via --engine
@@ -3375,6 +3517,7 @@ async function runDocsForProject(projectRoot, opts = {}) {
     state,
     sessions,
     resultPath: finalResult,
+    timeline: timelineInfo,
   });
   session = registry.update(session.id, {
     prompt: rebuilt.prompt,
@@ -3455,6 +3598,8 @@ async function runDocsForProject(projectRoot, opts = {}) {
     force,
     docFilesChanged: docFiles,
     warnings,
+    promptBytes: rebuilt.promptBytes,
+    timelineBytes: rebuilt.timelineBytes || 0,
     session: {
       id: session.id,
       title: session.title,
@@ -3462,6 +3607,8 @@ async function runDocsForProject(projectRoot, opts = {}) {
       result: finalResult,
       workerStatus,
       role: 'docs',
+      project: session.project || docsProjectName,
+      parent: session.parent || null,
     },
     handoff: finalResult,
     outputPath: outPath,

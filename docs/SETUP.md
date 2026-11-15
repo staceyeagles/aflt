@@ -300,7 +300,9 @@ aflt import copilot --all --cwd ~/src/app
 
 Override without changing config: `aflt new "…" --engine cursor` / `AGENTFLEET_ENGINE=cursor`. Resume always uses the session's recorded engine. Import follows the same default-engine rules; `aflt import cursor` always scans `~/.cursor/chats/`.
 
-**Documentarian (optional):** docs updates are **off by default**. Add `{"docs": true}` to `.agentfleet.json` (optional `"docsPaths"`, `"docsInstructions"`, `"docsEngine"`, `"docsForce": false`). Default paths are `README.md` + `docs/` (+ `CHANGELOG.md` only if it already exists). `docsInstructions` is an optional file path or array (`~` / repo-relative / absolute) whose contents are injected into the documentarian prompt (still only edit `docsPaths`). `aflt docs` grants write tools by default (`--no-force` to opt out). `aflt docs --status [--json] [--all]` is read-only (reports `needsDocs`, `commitsSince`, `dirtyDocs`, `skip`, `ready`). **Doc Bot rule:** skip repos with uncommitted docs edits — a dirty `docsPaths` file (`.DS_Store` ignored) sets `skip: true` / `skipReason: "dirty-docs"`; run docs only where `ready` (`needsDocs && !skip`) is true. Auto-trigger after headless master / `aflt wait --docs`; docs failure warns but does not fail the master; `aflt wait --docs` errors if no master. State: `$AGENTFLEET_HOME/docs/<hash>.json`. See README “Documentarian”.
+**Project grouping (optional):** projects **need no git**. New sessions store `project` from `--project` → parent → `AFLT_PROJECT` → `.agentfleet.json` `"project"` → `$AGENTFLEET_HOME/config.json` `"project"` → git-root / cwd basename (`adhoc` for `$HOME`/`tmpdir`/`/tmp`). Existing rows derive at read with cwd rules only (never env/global; never backfill). `aflt ls --project NAME` filters; `aflt ls --json` includes effective `project` + `parent`. `aflt timeline [<project>] [--all] [--json] [--since <date>]` is **read-only**: chronological tree; commits per session cwd (skipped when missing/not-git).
+
+**Documentarian (optional):** docs updates are **off by default**. Add `{"docs": true}` to `.agentfleet.json` (optional `"project"`, `"docsPaths"`, `"docsInstructions"`, `"docsEngine"`, `"docsForce": false`). Default paths are `README.md` + `docs/` (+ `CHANGELOG.md` only if it already exists). `docsInstructions` is an optional file path or array (`~` / repo-relative / absolute) whose contents are injected into the documentarian prompt (still only edit `docsPaths`). The prompt may also include a compact session timeline since the last docs run (`timelineBytes` in dry-run/`--json`). `aflt docs` grants write tools by default (`--no-force` to opt out). `aflt docs --status [--json] [--all]` is read-only (reports `needsDocs`, `commitsSince`, `dirtyDocs`, `skip`, `ready`). **Doc Bot rule:** skip repos with uncommitted docs edits — a dirty `docsPaths` file (`.DS_Store` ignored) sets `skip: true` / `skipReason: "dirty-docs"`; run docs only where `ready` (`needsDocs && !skip`) is true. Auto-trigger after headless master / `aflt wait --docs`; docs failure warns but does not fail the master; `aflt wait --docs` errors if no master. State: `$AGENTFLEET_HOME/docs/<hash>.json`. See README “Documentarian”.
 
 **Task-scoped messaging MCP (optional):** messaging is **off by default**. After `aflt msg enable <session>` (or project `.agentfleet.json` with `{"messaging": true}`), Copilot can use af’s MCP tools when the session was launched by aflt (identity via inherited `AGENTFLEET_SESSION` / `AGENTFLEET_ID` — no per-session env in the MCP config):
 
@@ -434,7 +436,10 @@ List / annotate:
 
 ```bash
 aflt ls                         # STATUS = lifecycle; HERDR = running|exited|missing|unknown|-
-aflt ls --json
+aflt ls --json                  # includes effective project + parent
+aflt ls --project my-app
+aflt timeline                   # read-only session tree for cwd project
+aflt timeline --all --json
 aflt sync --dry-run             # preview Herdr runtime that would be persisted
 aflt sync                       # persist herdr evidence only (not status / lastUsed)
 aflt note "$TASK" "dev server: npm run dev on :5173"
