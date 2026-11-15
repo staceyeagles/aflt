@@ -548,4 +548,214 @@ exit 0
     assert.ok(docsRow);
     assert.match(docsRow.title, /^docs-/);
   });
+
+  it('docsInstructions: ~ expansion, repo-relative, missing warn+skip, truncation, dry-run/json', () => {
+    const prevHome = process.env.HOME;
+    const prevAfHome = process.env.AGENTFLEET_HOME;
+    try {
+      const homeInstr = path.join(home, 'home-instr.md');
+      fs.writeFileSync(homeInstr, 'HOME_INSTR_RULE: use present tense.\n');
+      fs.writeFileSync(
+        path.join(project, 'docs', 'STYLE.md'),
+        'REPO_INSTR_RULE: keep README short.\n'
+      );
+      const big = 'X'.repeat(20 * 1024);
+      fs.writeFileSync(path.join(project, 'docs', 'BIG.md'), big);
+
+      enableDocs({
+        docsInstructions: ['~/home-instr.md', 'docs/STYLE.md', 'docs/missing.md', 'docs/BIG.md'],
+      });
+
+      process.env.AGENTFLEET_HOME = home;
+      process.env.HOME = home;
+      delete require.cache[require.resolve('../lib/docs')];
+      const docsLib = require('../lib/docs');
+      const projectCfg = docsLib.readProjectDocs(project);
+      assert.deepEqual(projectCfg.docsInstructions, [
+        '~/home-instr.md',
+        'docs/STYLE.md',
+        'docs/missing.md',
+        'docs/BIG.md',
+      ]);
+
+      const resolved = docsLib.resolveDocsInstructions(project, projectCfg.docsInstructions, {
+        warn: () => {},
+      });
+      assert.equal(resolved.used.length, 3);
+      assert.ok(resolved.used.some((u) => u.path === path.resolve(homeInstr)));
+      assert.ok(resolved.used.some((u) => u.path === path.join(project, 'docs', 'STYLE.md')));
+      const bigUsed = resolved.used.find((u) => u.path === path.join(project, 'docs', 'BIG.md'));
+      assert.ok(bigUsed);
+      assert.equal(bigUsed.truncated, true);
+      assert.ok(bigUsed.content.includes('[truncated]'));
+      assert.ok(resolved.skipped.some((s) => /missing/i.test(s.reason) || /missing\.md/.test(s.path)));
+
+      const dry = af(['docs', project, '--dry-run', '--json']);
+      assert.equal(dry.status, 0, dry.stderr);
+      assert.match(dry.stderr, /WARNING:.*docsInstructions skipped.*missing/i);
+      assert.match(dry.stderr, /WARNING:.*truncated/i);
+      const dryBody = JSON.parse(dry.stdout);
+      assert.ok(Array.isArray(dryBody.docsInstructions));
+      assert.ok(dryBody.instructionFiles);
+      assert.ok(dryBody.instructionFiles.used.length >= 3);
+      assert.ok(dryBody.instructionFiles.skipped.some((s) => /missing/i.test(s.reason)));
+      assert.ok(dryBody.instructionFiles.used.some((u) => u.truncated === true));
+
+      const dryText = af(['docs', project, '--dry-run']);
+      assert.equal(dryText.status, 0, dryText.stderr);
+      assert.match(dryText.stderr, /docsInstructions used/);
+      assert.match(dryText.stderr, /docsInstructions skipped/);
+
+      const run = af(['docs', project, '--force']);
+      assert.equal(run.status, 0, run.stderr);
+      const prompt = fs.readFileSync(promptFile, 'utf8');
+      assert.match(prompt, /Project-specific documentation instructions/);
+      assert.match(prompt, /HOME_INSTR_RULE/);
+      assert.match(prompt, /REPO_INSTR_RULE/);
+      assert.match(prompt, /must still only edit files under docsPaths/i);
+    } finally {
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      if (prevAfHome === undefined) delete process.env.AGENTFLEET_HOME;
+      else process.env.AGENTFLEET_HOME = prevAfHome;
+    }
+  });
+
+  it('docs --status: no last run, last run + new commits, dirty docs, read-only, --all', () => {
+    enableDocs();
+
+    // No last run → needsDocs true; commitsSince counts all commits on HEAD.
+    const st0 = af(['docs', '--status', '--json', project]);
+    assert.equal(st0.status, 0, st0.stderr);
+    const body0 = JSON.parse(st0.stdout);
+    assert.equal(body0.ok, true);
+    assert.equal(body0.projects.length, 1);
+    const p0 = body0.projects[0];
+    assert.equal(p0.docsEnabled, true);
+    assert.equal(p0.needsDocs, true);
+    assert.equal(p0.lastRun, null);
+    assert.ok(p0.commitsSince);
+    assert.equal(p0.commitsSince.source, 'all');
+    assert.ok(p0.commitsSince.count >= 2);
+    assert.ok(Array.isArray(p0.dirtyDocs));
+    assert.equal(p0.dirtyDocs.length, 0);
+    assert.equal(p0.skip, false);
+    assert.equal(p0.ready, true);
+
+    // Read-only: no docs state dir, registry mtime unchanged.
+    const regPath = path.join(home, 'sessions.json');
+    const beforeRegMtime = fs.existsSync(regPath) ? fs.statSync(regPath).mtimeMs : null;
+    assert.ok(!fs.existsSync(path.join(home, 'docs')));
+    const stRo = af(['docs', '--status', project]);
+    assert.equal(stRo.status, 0, stRo.stderr);
+    assert.ok(!fs.existsSync(path.join(home, 'docs')), 'status must not create docs state dir');
+    if (beforeRegMtime != null) {
+      assert.equal(fs.statSync(regPath).mtimeMs, beforeRegMtime);
+    } else {
+      assert.ok(!fs.existsSync(regPath));
+    }
+
+    // Run docs once to create lastRun state.
+    const run = af(['docs', project, '--force']);
+    assert.equal(run.status, 0, run.stderr);
+    const afterRunHead = headSha();
+
+    const st1 = af(['docs', '--status', '--json', project]);
+    assert.equal(st1.status, 0, st1.stderr);
+    const p1 = JSON.parse(st1.stdout).projects[0];
+    assert.ok(p1.lastRun);
+    assert.equal(p1.lastRun.commit, afterRunHead);
+    assert.equal(p1.needsDocs, false);
+    assert.equal(p1.commitsSince.count, 0);
+    assert.equal(p1.commitsSince.unknown, false);
+
+    assert.equal(p1.skip, false);
+    assert.equal(p1.skipReason, null);
+    assert.equal(p1.ready, false);
+
+    // .DS_Store under docs/ is ignored for dirty docs.
+    fs.writeFileSync(path.join(project, 'docs', '.DS_Store'), 'finder\n');
+    const stDs = af(['docs', '--status', '--json', project]);
+    assert.equal(stDs.status, 0, stDs.stderr);
+    const pDs = JSON.parse(stDs.stdout).projects[0];
+    assert.deepEqual(pDs.dirtyDocs, []);
+    assert.equal(pDs.skip, false);
+
+    // Dirty docs: needsDocs unchanged, but skip=dirty-docs and ready=false (Doc Bot rule).
+    fs.writeFileSync(path.join(project, 'docs', 'NOTES.md'), 'dirty notes\n');
+    const stDirty = af(['docs', '--status', '--json', project]);
+    assert.equal(stDirty.status, 0, stDirty.stderr);
+    const pDirty = JSON.parse(stDirty.stdout).projects[0];
+    assert.ok(pDirty.dirtyDocs.some((d) => /NOTES\.md/.test(d)));
+    assert.equal(pDirty.needsDocs, false);
+    assert.equal(pDirty.skip, true);
+    assert.equal(pDirty.skipReason, 'dirty-docs');
+    assert.ok(pDirty.skipFiles.some((d) => /NOTES\.md/.test(d)));
+    assert.equal(pDirty.ready, false);
+    const stDirtyText = af(['docs', '--status', project]);
+    assert.equal(stDirtyText.status, 0, stDirtyText.stderr);
+    assert.match(stDirtyText.stdout, /ready: false/);
+    assert.match(stDirtyText.stdout, /skip:\s+dirty-docs/);
+
+    // New commit → needsDocs true (dirty still reported).
+    fs.writeFileSync(path.join(project, 'lib', 'app.js'), 'module.exports = 99;\n');
+    git(project, ['add', 'lib/app.js']);
+    const cNew = git(project, ['commit', '-m', 'post-docs bump']);
+    assert.equal(cNew.status, 0, cNew.stderr);
+
+    const st2 = af(['docs', '--status', '--json', project]);
+    assert.equal(st2.status, 0, st2.stderr);
+    const p2 = JSON.parse(st2.stdout).projects[0];
+    assert.equal(p2.needsDocs, true);
+    assert.ok(p2.commitsSince.count >= 1);
+    assert.ok(p2.commitsSince.commits.some((c) => /post-docs bump/.test(c)));
+    assert.ok(p2.dirtyDocs.some((d) => /NOTES\.md/.test(d)));
+    assert.equal(p2.skip, true);
+    assert.equal(p2.ready, false, 'needsDocs but dirty docs → not ready');
+
+    // Second project + --all from registry sessions' cwd.
+    const project2 = fs.mkdtempSync(path.join(os.tmpdir(), 'af-docs-proj2-'));
+    try {
+      const init2 = git(project2, ['init']);
+      assert.equal(init2.status, 0, init2.stderr);
+      git(project2, ['config', 'user.email', 'af-test@example.com']);
+      git(project2, ['config', 'user.name', 'af-test']);
+      fs.writeFileSync(path.join(project2, 'README.md'), '# p2\n');
+      fs.writeFileSync(
+        path.join(project2, '.agentfleet.json'),
+        JSON.stringify({ docs: true }) + '\n'
+      );
+      git(project2, ['add', '.']);
+      assert.equal(git(project2, ['commit', '-m', 'p2']).status, 0);
+
+      const registry = loadRegistry();
+      registry.add({
+        title: 'OtherProjSession',
+        chatId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeee9999',
+        cwd: project2,
+        engine: 'cursor',
+        status: 'active',
+      });
+
+      const beforeAllHome = snapshotTree(home);
+      const stAll = af(['docs', '--status', '--all', '--json']);
+      assert.equal(stAll.status, 0, stAll.stderr);
+      const allBody = JSON.parse(stAll.stdout);
+      assert.equal(allBody.ok, true);
+      const roots = allBody.projects.map((p) => p.root);
+      assert.ok(
+        roots.some((r) => path.resolve(r) === fs.realpathSync(project)),
+        `expected project in --all: ${JSON.stringify(roots)}`
+      );
+      assert.ok(
+        roots.some((r) => path.resolve(r) === fs.realpathSync(project2)),
+        `expected project2 in --all: ${JSON.stringify(roots)}`
+      );
+      // --all status must not mutate registry/state (docs state may already exist from run above;
+      // compare only that status itself did not create new files beyond what existed).
+      assert.deepEqual(snapshotTree(home), beforeAllHome);
+    } finally {
+      fs.rmSync(project2, { recursive: true, force: true });
+    }
+  });
 });

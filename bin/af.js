@@ -104,11 +104,22 @@ Usage:
                             [--force|--no-force] [--anyway] [--dry-run] [--json]
                             Documentarian: one headless docs worker (role=docs) that
                             updates only configured docs paths. Opt-in via
-                            .agentfleet.json {"docs": true}. --anyway runs once
-                            without enabling. Force/write grant is ON by default
-                            (Cursor --force / Copilot --allow-all-tools); opt out
-                            with --no-force or {"docsForce": false}. Dry-run prints
-                            the plan only.
+                            .agentfleet.json {"docs": true}. Optional
+                            docsInstructions: file path(s) whose contents are
+                            injected into the prompt (still only edit docsPaths).
+                            --anyway runs once without enabling. Force/write grant
+                            is ON by default (Cursor --force / Copilot
+                            --allow-all-tools); opt out with --no-force or
+                            {"docsForce": false}. Dry-run prints the plan only.
+  aflt docs --status [--json] [--all] [<dir>...]
+                            Read-only docs status per project (no engine, no
+                            writes). Default: cwd. --all adds distinct registry
+                            project dirs. Reports docsEnabled, docsPaths,
+                            docsInstructions, lastRun, commitsSince, dirtyDocs,
+                            needsDocs, skip/skipReason (dirty-docs: uncommitted
+                            docsPaths edits, .DS_Store ignored), and ready
+                            (needsDocs && !skip; act only on ready). Exit 0
+                            even when needsDocs is true.
   aflt msg <to> <text...> [--type T] [--reply <msgId>] [--from S] [--json] [--dry-run]
                             Task-scoped message (off by default; see Messaging).
                             With --reply and no <to>, defaults to=reply sender.
@@ -3225,16 +3236,32 @@ async function runDocsForProject(projectRoot, opts = {}) {
   const previewId = 'dry-run-docs';
   const previewResult = orchestrate.defaultResultPath(previewId);
 
-  const built = docs.buildPrompt(projectRoot, {
-    docsPaths: project.docsPaths,
-    changelogAllowed: project.changelogAllowed,
-    sinceInfo,
-    state,
-    sessions: dryRun ? opts.sessions || [] : sessions,
-    resultPath: dryRun ? previewResult : '',
-  });
+  const resolvedInstructions = docs.resolveDocsInstructions(
+    projectRoot,
+    project.docsInstructions
+  );
+  const instructionFiles = {
+    used: resolvedInstructions.used.map((u) => ({
+      path: u.path,
+      bytes: u.bytes,
+      truncated: u.truncated,
+    })),
+    skipped: resolvedInstructions.skipped.map((s) => ({
+      path: s.path,
+      reason: s.reason,
+    })),
+  };
 
   if (dryRun) {
+    const built = docs.buildPrompt(projectRoot, {
+      docsPaths: project.docsPaths,
+      instructions: resolvedInstructions,
+      changelogAllowed: project.changelogAllowed,
+      sinceInfo,
+      state,
+      sessions: opts.sessions || [],
+      resultPath: previewResult,
+    });
     const plan = {
       ok: true,
       dryRun: true,
@@ -3243,6 +3270,8 @@ async function runDocsForProject(projectRoot, opts = {}) {
       sinceSource: sinceInfo.source,
       head: sinceInfo.head,
       docsPaths: project.docsPaths,
+      docsInstructions: project.docsInstructions.slice(),
+      instructionFiles,
       changelogAllowed: project.changelogAllowed,
       engine: engineName,
       model: opts.model || null,
@@ -3260,6 +3289,18 @@ async function runDocsForProject(projectRoot, opts = {}) {
           `[dry-run] docsPaths=${project.docsPaths.join(', ')} changelog=${project.changelogAllowed}\n` +
           `[dry-run] promptBytes=${built.promptBytes} title=${title}\n`
       );
+      if (instructionFiles.used.length || instructionFiles.skipped.length) {
+        for (const u of instructionFiles.used) {
+          process.stderr.write(
+            `[dry-run] docsInstructions used ${u.path} (${u.bytes} bytes${u.truncated ? ', truncated' : ''})\n`
+          );
+        }
+        for (const s of instructionFiles.skipped) {
+          process.stderr.write(
+            `[dry-run] docsInstructions skipped ${s.path}: ${s.reason}\n`
+          );
+        }
+      }
       process.stdout.write(built.prompt.slice(0, 500) + (built.prompt.length > 500 ? '\n…\n' : '\n'));
     }
     return plan;
@@ -3328,6 +3369,7 @@ async function runDocsForProject(projectRoot, opts = {}) {
   const finalResult = session.result || orchestrate.defaultResultPath(session.id);
   const rebuilt = docs.buildPrompt(projectRoot, {
     docsPaths: project.docsPaths,
+    instructions: resolvedInstructions,
     changelogAllowed: project.changelogAllowed,
     sinceInfo,
     state,
@@ -3452,8 +3494,133 @@ async function runDocsForProject(projectRoot, opts = {}) {
   return summary;
 }
 
+/**
+ * parseArgs treats `--flag value` as a valued flag. For boolean docs flags
+ * (`--status`, `--all`, `--json`, …), recover a consumed path as a dir arg.
+ */
+function docsRecoverBoolFlag(flags, key, dirArgs) {
+  const v = flags[key];
+  if (v == null || v === false) return false;
+  if (v === true) return true;
+  dirArgs.unshift(String(v));
+  return true;
+}
+
+function cmdDocsStatus({ asJson, wantAll }, dirArgsIn) {
+  const dirArgs = Array.isArray(dirArgsIn) ? dirArgsIn.slice() : [];
+
+  /** @type {string[]} */
+  const targets = [];
+  const seen = new Set();
+  const addTarget = (dir) => {
+    let abs;
+    try {
+      abs = path.resolve(dir);
+    } catch (_) {
+      abs = String(dir);
+    }
+    if (seen.has(abs)) return;
+    seen.add(abs);
+    targets.push(abs);
+  };
+
+  for (const d of dirArgs) {
+    if (d == null || d === '') continue;
+    addTarget(d);
+  }
+
+  if (wantAll) {
+    let sessions = [];
+    try {
+      sessions = registry.list({ includeDone: true });
+    } catch (err) {
+      fail(err.message || String(err), { json: asJson });
+    }
+    for (const root of docs.projectDirsFromSessions(sessions)) {
+      addTarget(root);
+    }
+  }
+
+  if (!targets.length) {
+    addTarget(process.cwd());
+  }
+
+  const projects = targets.map((dir) =>
+    docs.collectProjectDocsStatus(dir, {
+      warn: (msg) => {
+        try {
+          process.stderr.write(`WARNING: ${msg}\n`);
+        } catch (_) {
+          /* ignore */
+        }
+      },
+    })
+  );
+
+  if (asJson) {
+    emitJson({ ok: true, projects });
+  } else {
+    for (const p of projects) {
+      if (p.error) {
+        process.stdout.write(`docs-status  ${p.root}\n`);
+        process.stdout.write(`  error:     ${p.error}\n`);
+        continue;
+      }
+      const last =
+        p.lastRun && (p.lastRun.commit || p.lastRun.at)
+          ? `${p.lastRun.commit || '-'} @ ${p.lastRun.at || '-'}`
+          : '(none)';
+      const cs = p.commitsSince || {};
+      let sinceLine;
+      if (cs.unknown) {
+        sinceLine = `unknown lastCommit (${(p.lastRun && p.lastRun.commit) || '?'})`;
+      } else if (cs.count == null) {
+        sinceLine = '-';
+      } else {
+        const sample =
+          Array.isArray(cs.commits) && cs.commits.length
+            ? `; ${cs.commits.slice(0, 3).join(' | ')}${cs.commits.length > 3 ? ' …' : ''}`
+            : '';
+        sinceLine = `${cs.count}${cs.source === 'all' ? ' (all)' : ''}${sample}`;
+      }
+      const usedN =
+        p.docsInstructions && p.docsInstructions.used ? p.docsInstructions.used.length : 0;
+      const skipN =
+        p.docsInstructions && p.docsInstructions.skipped
+          ? p.docsInstructions.skipped.length
+          : 0;
+      process.stdout.write(`docs-status  ${p.root}\n`);
+      process.stdout.write(
+        `  enabled:   ${p.docsEnabled}  needsDocs: ${p.needsDocs}  ready: ${p.ready}  head: ${p.headCommit || '-'}\n`
+      );
+      process.stdout.write(`  docsPaths: ${(p.docsPaths || []).join(', ') || '-'}\n`);
+      process.stdout.write(`  lastRun:   ${last}\n`);
+      process.stdout.write(`  since:     ${sinceLine}\n`);
+      process.stdout.write(
+        `  dirtyDocs: ${(p.dirtyDocs && p.dirtyDocs.length ? p.dirtyDocs.join(', ') : '(none)')}` +
+          `\n`
+      );
+      if (p.skip) {
+        process.stdout.write(`  skip:      ${p.skipReason} (commit or discard docs edits first)\n`);
+      }
+      process.stdout.write(`  instr:     used=${usedN} skipped=${skipN}\n`);
+    }
+  }
+  process.exitCode = 0;
+}
+
 async function cmdDocs(argv) {
   const { args, flags } = parseArgs(argv);
+  const dirArgs = args.slice();
+  const wantStatus = docsRecoverBoolFlag(flags, 'status', dirArgs);
+
+  if (wantStatus) {
+    const wantAll = docsRecoverBoolFlag(flags, 'all', dirArgs);
+    const statusJson = docsRecoverBoolFlag(flags, 'json', dirArgs);
+    cmdDocsStatus({ asJson: statusJson, wantAll }, dirArgs);
+    return;
+  }
+
   const asJson = Boolean(flags.json);
   const dryRun = Boolean(flags['dry-run']);
   const anyway = Boolean(flags.anyway);

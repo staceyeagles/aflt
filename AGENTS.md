@@ -342,12 +342,15 @@ Off by default. Enable with `.agentfleet.json` `{"docs": true}`.
 ```bash
 aflt docs [<project dir>] [--since <commit>] [--engine cursor|copilot] [--model X]
           [--force|--no-force] [--anyway] [--dry-run] [--json]
+aflt docs --status [--json] [--all] [<dir>...]
 ```
 
 - One headless worker (`role=docs`, title `docs-<folder>`, reused). Template: `templates/documentarian.md`.
 - Force/write is **on by default** (Cursor `--force` / Copilot `--allow-all-tools`); opt out with `--no-force` or `{"docsForce": false}`.
 - `--anyway` runs once without enabling docs in config.
 - Updates **only** configured docs paths. Warns on non-doc edits (including a new `CHANGELOG.md` when not allowed); does not revert.
+- Optional `.agentfleet.json` `docsInstructions`: file path(s) (string or array; `~` / repo-relative / absolute) injected into the prompt as project-specific instructions; edit restriction still applies. Missing/unreadable files warn + skip; size caps apply. Dry-run/`--json` report used and skipped files.
+- **`aflt docs --status`:** read-only status (no engine, no registry/state writes). Default cwd; `--all` adds distinct registry project dirs. Reports `needsDocs` (`docsEnabled && (no lastRun || commitsSince>0)`); also `skip` / `skipReason` / `skipFiles` and `ready`. **Doc Bot rule:** skip repos with uncommitted docs edits — any dirty `docsPaths` file (`.DS_Store` ignored) sets `skip: true`, `skipReason: "dirty-docs"`; `needsDocs` is unchanged. Only run `aflt docs` on projects where `ready` (`needsDocs && !skip`) is true. `aflt docs` itself does not check this. Exit 0 even when `needsDocs` is true.
 - Auto-runs once after a successful headless master (`aflt master --headless` or `aflt run` on `role=master`) when docs are enabled; skip with `--no-docs`. Docs failure → WARNING + JSON `docs:{ok:false}` but the master exit stays 0. `aflt wait --docs` is the same after wait exit 0, and **errors** if no master can be resolved. Guard: `docsTriggeredRunId` (once per master run).
 
 ### Doctor and Herdr helpers
@@ -418,6 +421,7 @@ Resolved by walking cwd → ancestors until the git root (or filesystem root).
   "messaging": true,
   "docs": true,
   "docsPaths": ["README.md", "docs/"],
+  "docsInstructions": ["docs/DOCS_STYLE.md"],
   "docsEngine": "cursor",
   "docsForce": false
 }
@@ -428,6 +432,7 @@ Resolved by walking cwd → ancestors until the git root (or filesystem root).
 | `messaging` | `true` to opt in for sessions in this project (session `messaging: false` wins) |
 | `docs` | `true` to enable the documentarian |
 | `docsPaths` | default `README.md` + `docs/` (+ `CHANGELOG.md` only if it already exists) |
+| `docsInstructions` | optional file path(s) injected into the documentarian prompt (`~` / repo-relative / absolute; still only edit `docsPaths`) |
 | `docsEngine` | `cursor` \| `copilot` |
 | `docsForce` | `false` to opt out of the default write grant |
 

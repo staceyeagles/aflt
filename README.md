@@ -7,7 +7,7 @@
 <p align="center">
   <img alt="Node 18+" src="https://img.shields.io/badge/node-%3E%3D18-brightgreen?logo=node.js&logoColor=white"/>
   <img alt="version 1.2.0" src="https://img.shields.io/badge/version-1.2.0-blue"/>
-  <img alt="333 tests passing, 1 skipped" src="https://img.shields.io/badge/tests-333%20passing%20%7C%201%20skipped-success"/>
+  <img alt="335 tests passing, 1 skipped" src="https://img.shields.io/badge/tests-335%20passing%20%7C%201%20skipped-success"/>
   <img alt="macOS | Linux untested" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20untested-lightgrey"/>
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-yellow"/>
 </p>
@@ -240,18 +240,22 @@ aflt mcp install --engine cursor --write     # ~/.cursor/mcp.json
 |-----|---------|
 | `docs` | `true` to enable |
 | `docsPaths` | default `README.md` + `docs/` (+ `CHANGELOG.md` only if it already exists) |
+| `docsInstructions` | optional file path(s) (string or array; `~` / repo-relative / absolute) whose contents are injected into the documentarian prompt; still only edit `docsPaths` |
 | `docsEngine` | `cursor` \| `copilot` |
 | `docsForce` | `false` to opt out of default write grant |
 
 ```bash
 aflt docs [<project dir>] [--since <commit>] [--engine …] [--model …]
         [--force|--no-force] [--anyway] [--dry-run] [--json]
+aflt docs --status [--json] [--all] [<dir>...]
 ```
 
 - One headless worker (`role=docs`, title `docs-<folder>`, reused). Template: `templates/documentarian.md`.
 - Force/write **ON by default** (Cursor `--force` / Copilot `--allow-all-tools`); opt out `--no-force` or `docsForce: false`.
 - Snapshots the tree; **warns** on non-doc edits (including disallowed new `CHANGELOG.md`); does not revert.
 - State: `$AGENTFLEET_HOME/docs/<hash>.json` (`lastCommit`).
+- **`docsInstructions`:** readable files are injected as a “Project-specific documentation instructions” section (per-file / total size caps; missing files warn + skip). Dry-run / `--json` list used and skipped paths.
+- **`--status`:** read-only (no engine, no writes). Per project: `docsEnabled`, `docsPaths`, `docsInstructions`, `lastRun`, `commitsSince`, `dirtyDocs`, `needsDocs`, `skip` / `skipReason` / `skipFiles`, `ready`. **Doc Bot rule:** skip any repo with uncommitted docs edits — if a `docsPaths` file is dirty (`.DS_Store` ignored), status sets `skip: true`, `skipReason: "dirty-docs"`, and lists the files. `needsDocs` is unchanged; act only on `ready` (`needsDocs && !skip`). `aflt docs` itself does not enforce this. Exit 0 even when `needsDocs` is true. `--all` adds distinct registry project dirs.
 - **Auto-trigger:** after successful headless master (`aflt master --headless` or `aflt run` on `role=master`) when docs enabled; skip `--no-docs`. Docs failure → WARNING + JSON `docs:{ok:false}` but master exit 0. `aflt wait --docs` same after wait exit 0; **errors** if no master. Guard: `docsTriggeredRunId` (once per master run). `--anyway` runs once without enabling in config.
 
 ## Import
@@ -279,6 +283,7 @@ aflt import copilot <uuid|prefix>…   # register; --title (single id), --tag, -
   "messaging": true,
   "docs": true,
   "docsPaths": ["README.md", "docs/"],
+  "docsInstructions": ["docs/DOCS_STYLE.md", "~/notes/af-docs.md"],
   "docsEngine": "cursor",
   "docsForce": false
 }
@@ -376,7 +381,7 @@ See `af --help` / `aflt help` for the authoritative flag list. Long-form help co
 npm test
 ```
 
-334 tests (Node test runner): 333 passing, 1 skipped (a live `create-chat` smoke test that only runs with a real `cursor-agent`). Coverage includes registry, engines, Herdr backends, orchestration, messaging, MCP, docs, dry-run purity, and hermetic `AGENTFLEET_HOME` fixtures.
+336 tests (Node test runner): 335 passing, 1 skipped (a live `create-chat` smoke test that only runs with a real `cursor-agent`). Coverage includes registry, engines, Herdr backends, orchestration, messaging, MCP, docs, dry-run purity, and hermetic `AGENTFLEET_HOME` fixtures.
 
 ## License
 

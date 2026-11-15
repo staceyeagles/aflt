@@ -74,7 +74,7 @@ _af() {
       COMPREPLY=( $(compgen -W "--goal --engine --cwd --title --model --worker-engine --headless --timeout --force --messaging --no-messaging --no-docs --dry-run --json --no-trust cursor copilot" -- "${cur}") )
       ;;
     docs)
-      COMPREPLY=( $(compgen -W "--since --engine --model --force --no-force --anyway --dry-run --json --cwd --timeout cursor copilot" -- "${cur}") )
+      COMPREPLY=( $(compgen -W "--status --all --since --engine --model --force --no-force --anyway --dry-run --json --cwd --timeout cursor copilot" -- "${cur}") )
       ;;
     msg)
       if [[ "$prev" == "--from" || "$prev" == "--reply" || "$prev" == "--type" ]]; then
