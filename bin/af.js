@@ -22,6 +22,7 @@ const docs = require('../lib/docs');
 const mcp = require('../lib/mcp');
 const projectLib = require('../lib/project');
 const timeline = require('../lib/timeline');
+const memory = require('../lib/memory');
 const resolveSession = require('../lib/resolve-session');
 const {
   parseArgs,
@@ -96,6 +97,26 @@ Usage:
                             best-effort git commits per session cwd (skipped when
                             missing/not-git; projects need no repo). --since ISO or
                             YYYY-MM-DD. Exit 0 when empty.
+  aflt memory                 Show resolved project-memory repo path (or hint to init)
+  aflt memory where [--json]  Same as aflt memory (path + source: env|config)
+  aflt memory init <path> [--force] [--json]
+                            Create/register an aflt project-memory git repo (local only;
+                            never adds a remote, never commits). Writes README/.gitignore/
+                            .aflt-memory.json when missing; registers realpath as
+                            memoryRepo in $AGENTFLEET_HOME/config.json. Idempotent on an
+                            existing memory repo. Refuses a non-empty foreign dir unless
+                            --force (then adds files; never overwrites README/.gitignore).
+  aflt memory sync [<project>...] [--all] [--include-adhoc] [--dry-run] [--json] [--no-redact]
+                            Write <repo>/<project>/_aflt/timeline.md + sessions.jsonl from
+                            the registry (read-only). Default: cwd / AFLT_PROJECT project.
+                            --all: every registry project except adhoc (one-off home/tmp
+                            prompts are often personal; pass --include-adhoc or name adhoc
+                            explicitly). Creates <project>/README.md + status-notes/.gitkeep
+                            only if missing; never overwrites human notes. Writes only when
+                            content differs. Redaction ON by default (--no-redact to disable).
+  aflt memory status [--json]
+                            Read-only: repo path/source, git dirty count, per-project
+                            folder/lastSync/sessions/stale (stale = sync would change files).
   aflt sync [--dry-run] [--json]
                             Persist last-known Herdr runtime evidence (does not change status/lastUsed)
   aflt run "<title>" --prompt "..." [--cwd DIR] [--model X] [--engine cursor|copilot]
@@ -271,6 +292,8 @@ Environment:
   AFLT_PROJECT            Default project name for NEW sessions (after --project
                             and parent inheritance; before .agentfleet.json /
                             config.json project / basename). Projects need no git.
+  AFLT_MEMORY_REPO        Override project-memory repo path (else config.json
+                            memoryRepo from aflt memory init)
   AGENTFLEET_CURSOR_BIN   Override cursor-agent binary
   AGENTFLEET_COPILOT_BIN  Override copilot binary
   AGENTFLEET_VIA          Default --via backend (resume --all; also overrides
@@ -394,6 +417,9 @@ async function main() {
       break;
     case 'timeline':
       cmdTimeline(rest);
+      break;
+    case 'memory':
+      cmdMemory(rest);
       break;
     case 'sync':
       cmdSync(rest);
@@ -1066,6 +1092,149 @@ function cmdTimeline(argv) {
     return;
   }
   process.stdout.write(timeline.formatTimelineText(payload));
+}
+
+/**
+ * Opt-in project memory repo: init / where / sync / status.
+ * Never commits; never writes the af registry (sync is read-only on sessions).
+ */
+function cmdMemory(argv) {
+  const { args: rawArgs, flags } = parseArgs(argv);
+  const MEMORY_SUBS = new Set(['where', 'init', 'sync', 'status']);
+  const args = rawArgs.slice();
+  // Take subcommand first so --json/--force before a path do not reorder it
+  // (e.g. `memory init --json /path` → flags.json="/path", args=["init"]).
+  let sub = null;
+  if (args[0] && MEMORY_SUBS.has(String(args[0]))) {
+    sub = args.shift();
+  }
+  const restArgs = args;
+  const asJson = recoverBoolFlag(flags, 'json', restArgs);
+
+  if (!sub || sub === 'where') {
+    const resolved = memory.resolveMemoryRepo();
+    if (!resolved) {
+      fail(
+        'no memory repo configured. Run `aflt memory init <path>` or set AFLT_MEMORY_REPO.',
+        { json: asJson }
+      );
+    }
+    if (asJson) {
+      emitJson({ ok: true, repo: resolved.path, source: resolved.source });
+      return;
+    }
+    process.stdout.write(`${resolved.path} (${resolved.source})\n`);
+    return;
+  }
+
+  if (sub === 'init') {
+    const force = recoverBoolFlag(flags, 'force', restArgs);
+    const target = restArgs[0];
+    if (!target) {
+      fail('usage: aflt memory init <path> [--force] [--json]', { json: asJson });
+    }
+    try {
+      const result = memory.initMemoryRepo(target, { force });
+      if (asJson) {
+        emitJson(result);
+        return;
+      }
+      process.stdout.write(
+        result.created
+          ? `initialized memory repo: ${result.repo}\n`
+          : `registered memory repo: ${result.repo}\n`
+      );
+    } catch (err) {
+      fail(err.message || String(err), { json: asJson });
+    }
+    return;
+  }
+
+  if (sub === 'sync') {
+    const dryRun = recoverBoolFlag(flags, 'dry-run', restArgs);
+    const all = recoverBoolFlag(flags, 'all', restArgs);
+    const includeAdhoc = recoverBoolFlag(flags, 'include-adhoc', restArgs);
+    const noRedact = recoverBoolFlag(flags, 'no-redact', restArgs);
+    const projects = restArgs.filter((a) => a && !String(a).startsWith('-'));
+    const sessions = registry.list({ includeDone: true });
+    try {
+      const result = memory.syncMemory(sessions, {
+        projects,
+        all,
+        includeAdhoc,
+        dryRun,
+        redact: !noRedact,
+        cwd: process.cwd(),
+      });
+      if (asJson) {
+        emitJson({
+          ok: true,
+          repo: result.repo,
+          projects: result.projects.map((p) => ({
+            project: p.project,
+            folder: p.folder,
+            sessions: p.sessions,
+            files: p.files.map((f) => ({ path: f.path, changed: f.changed })),
+          })),
+        });
+        return;
+      }
+      if (dryRun) {
+        for (const p of result.projects) {
+          process.stdout.write(`# ${p.project} → ${p.folder}/ (${p.sessions} sessions)\n`);
+          for (const f of p.files) {
+            const mark = f.changed ? 'write' : 'skip';
+            process.stdout.write(
+              `  [${mark}] ${f.path}${f.bytes != null ? ` (${f.bytes} bytes)` : ''}\n`
+            );
+          }
+        }
+        return;
+      }
+      let changed = 0;
+      for (const p of result.projects) {
+        for (const f of p.files) {
+          if (f.changed) changed++;
+        }
+      }
+      process.stdout.write(
+        `memory sync: ${result.projects.length} project(s), ${changed} file(s) updated → ${result.repo}\n`
+      );
+    } catch (err) {
+      fail(err.message || String(err), { json: asJson });
+    }
+    return;
+  }
+
+  if (sub === 'status') {
+    const sessions = registry.list({ includeDone: true });
+    try {
+      const result = memory.memoryStatus(sessions, { cwd: process.cwd() });
+      if (asJson) {
+        emitJson(result);
+        return;
+      }
+      process.stdout.write(`repo: ${result.repo} (${result.source})\n`);
+      process.stdout.write(
+        `git: ${result.isGit ? 'yes' : 'no'}` +
+          (result.dirtyCount != null ? `  dirty: ${result.dirtyCount}` : '') +
+          '\n'
+      );
+      for (const p of result.projects) {
+        process.stdout.write(
+          `${p.project}  folder=${p.folderExists ? 'yes' : 'no'}  sessions=${p.sessions}  stale=${p.stale ? 'yes' : 'no'}  lastSync=${p.lastSync || '-'}\n`
+        );
+      }
+    } catch (err) {
+      fail(err.message || String(err), { json: asJson });
+    }
+    return;
+  }
+
+  fail(
+    `unknown memory subcommand: ${sub}\nusage: aflt memory [where|init|sync|status] …`,
+    { json: asJson }
+  );
 }
 
 function backupRegistryPath() {

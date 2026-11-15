@@ -302,6 +302,8 @@ Override without changing config: `aflt new "…" --engine cursor` / `AGENTFLEET
 
 **Project grouping (optional):** projects **need no git**. New sessions store `project` from `--project` → parent → `AFLT_PROJECT` → `.agentfleet.json` `"project"` → `$AGENTFLEET_HOME/config.json` `"project"` → git-root / cwd basename (`adhoc` for `$HOME`/`tmpdir`/`/tmp`). Existing rows derive at read with cwd rules only (never env/global; never backfill). `aflt ls --project NAME` filters; `aflt ls --json` includes effective `project` + `parent`. `aflt timeline [<project>] [--all] [--json] [--since <date>]` is **read-only**: chronological tree; commits per session cwd (skipped when missing/not-git).
 
+**Project memory (optional):** `aflt memory init <path>` creates a local git working tree (never adds a remote, never commits) and registers its realpath as `memoryRepo` in `$AGENTFLEET_HOME/config.json` (override with `AFLT_MEMORY_REPO`). `aflt memory sync` writes per-project `<folder>/_aflt/timeline.md` + `sessions.jsonl` from the registry (read-only); `--all` skips `adhoc` unless `--include-adhoc` (home/tmp one-offs are often personal). Human `README.md` / `status-notes/` are create-if-missing only. Redaction is ON by default (`--no-redact` to disable). `aflt memory status` / `where` are read-only. No auto-sync hooks.
+
 **Documentarian (optional):** docs updates are **off by default**. Add `{"docs": true}` to `.agentfleet.json` (optional `"project"`, `"docsPaths"`, `"docsInstructions"`, `"docsEngine"`, `"docsForce": false`). Default paths are `README.md` + `docs/` (+ `CHANGELOG.md` only if it already exists). `docsInstructions` is an optional file path or array (`~` / repo-relative / absolute) whose contents are injected into the documentarian prompt (still only edit `docsPaths`). The prompt may also include a compact session timeline since the last docs run (`timelineBytes` in dry-run/`--json`). `aflt docs` grants write tools by default (`--no-force` to opt out). `aflt docs --status [--json] [--all]` is read-only (reports `needsDocs`, `commitsSince`, `dirtyDocs`, `skip`, `ready`). **Doc Bot rule:** skip repos with uncommitted docs edits — a dirty `docsPaths` file (`.DS_Store` ignored) sets `skip: true` / `skipReason: "dirty-docs"`; run docs only where `ready` (`needsDocs && !skip`) is true. Auto-trigger after headless master / `aflt wait --docs`; docs failure warns but does not fail the master; `aflt wait --docs` errors if no master. State: `$AGENTFLEET_HOME/docs/<hash>.json`. See README “Documentarian”.
 
 **Task-scoped messaging MCP (optional):** messaging is **off by default**. After `aflt msg enable <session>` (or project `.agentfleet.json` with `{"messaging": true}`), Copilot can use af’s MCP tools when the session was launched by aflt (identity via inherited `AGENTFLEET_SESSION` / `AGENTFLEET_ID` — no per-session env in the MCP config):
@@ -365,7 +367,7 @@ export AGENTFLEET_CURSOR_BIN="$HOME/.local/bin/cursor-agent"
 | Variable / path | Purpose |
 |-----------------|---------|
 | `~/.agentfleet/sessions.json` | Session registry (atomic write). Mode `0600`. |
-| `~/.agentfleet/config.json` | Default engine (`defaultEngine`: `cursor`\|`copilot`). Separate from sessions. |
+| `~/.agentfleet/config.json` | Default engine (`defaultEngine`: `cursor`\|`copilot`), optional `project`, optional `memoryRepo` from `aflt memory init`. Separate from sessions. |
 | `AGENTFLEET_HOME` | Override registry directory. |
 | `AGENTFLEET_REGISTRY` | Override full path to `sessions.json`. |
 | `AGENTFLEET_ENGINE` | Default engine for **new** sessions (`cursor`\|`copilot`); after `--engine`, before config. |
@@ -440,6 +442,8 @@ aflt ls --json                  # includes effective project + parent
 aflt ls --project my-app
 aflt timeline                   # read-only session tree for cwd project
 aflt timeline --all --json
+aflt memory init ~/aflt-memory  # opt-in project memory repo (never auto-commits)
+aflt memory sync                # write cwd project into memory repo
 aflt sync --dry-run             # preview Herdr runtime that would be persisted
 aflt sync                       # persist herdr evidence only (not status / lastUsed)
 aflt note "$TASK" "dev server: npm run dev on :5173"

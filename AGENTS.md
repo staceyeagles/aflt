@@ -82,6 +82,7 @@ aflt ls --status active
 aflt ls --project my-app --json # filter by stored or derived project name
 aflt timeline                   # read-only session tree for cwd's project
 aflt timeline --all --json      # every project, grouped
+aflt memory sync                # opt-in: write cwd project timeline into memory repo
 aflt children --json            # workers of this master, or a summary of masters
 ```
 
@@ -173,11 +174,28 @@ aflt timeline [<project>] [--all] [--json] [--since <date>]
 # AFLT_PROJECT, else cwd project. Chronological roots + indented children; best-effort
 # git commits in each session window. --since ISO or YYYY-MM-DD. Exit 0 when empty.
 
+aflt memory | aflt memory where [--json]
+# Resolved memory repo path + source (env|config), or hint to run init (exit 1).
+
+aflt memory init <path> [--force] [--json]
+# Create/register a local project-memory git repo (never remote, never commit).
+# Writes README/.gitignore/.aflt-memory.json when missing; sets config memoryRepo.
+
+aflt memory sync [<project>...] [--all] [--include-adhoc] [--dry-run] [--json] [--no-redact]
+# Write <repo>/<project>/_aflt/timeline.md + sessions.jsonl (registry read-only).
+# Default: cwd / AFLT_PROJECT. --all skips adhoc unless --include-adhoc or named.
+# Human README/status-notes created only if missing; never overwritten. Redaction ON.
+
+aflt memory status [--json]
+# Read-only: repo + git dirty count + per-project folder/lastSync/sessions/stale.
+
 aflt sync [--dry-run] [--json]
 # Persist last-known Herdr runtime evidence (does not change status/lastUsed)
 ```
 
 `aflt timeline` is read-only. Default project: `<project>` arg → `AFLT_PROJECT` → cwd's derived project. Text shows local times (JSON keeps ISO UTC). Commits come from each session's own cwd (`commitsReason`: `not-git` / `missing-cwd`); an open-ended row that is not a live run is bounded at `lastUsed` (`open-ended` when it never ran).
+
+`aflt memory` is opt-in and never auto-syncs or commits. Resolution: `AFLT_MEMORY_REPO` → `config.json` `memoryRepo`.
 
 ### Headless run and logs
 
@@ -422,7 +440,7 @@ Home: **`$AGENTFLEET_HOME`** (default `~/.agentfleet`). Override the registry fi
 | Path | Role |
 |------|------|
 | `sessions.json` | Atomic registry (temp + rename; cross-process `.lock` for RMW). Mode `0600`. |
-| `config.json` | Fleet defaults (`defaultEngine`) |
+| `config.json` | Fleet defaults (`defaultEngine`, optional `memoryRepo`, `project`) |
 | `runs/<id>/` | Captured headless stdout |
 | `results/` | Worker/master handoffs (`$AGENTFLEET_RESULT`) |
 | `plans/` | Master plans (`$AGENTFLEET_PLAN`) |
@@ -466,10 +484,10 @@ Resolved by walking cwd → ancestors until the git root (or filesystem root).
 ### Fleet: `~/.agentfleet/config.json`
 
 ```json
-{ "defaultEngine": "cursor", "project": "ops" }
+{ "defaultEngine": "cursor", "project": "ops", "memoryRepo": "/path/to/aflt-memory" }
 ```
 
-Optional `"project"` is a create-time default when `--project` / `AFLT_PROJECT` / `.agentfleet.json` are unset (useful for non-repo agent groups).
+Optional `"project"` is a create-time default when `--project` / `AFLT_PROJECT` / `.agentfleet.json` are unset (useful for non-repo agent groups). Optional `"memoryRepo"` comes from `aflt memory init` (override with `AFLT_MEMORY_REPO`).
 
 ---
 
@@ -496,6 +514,7 @@ Set by the caller or the environment:
 | `AGENTFLEET_REGISTRY` | Override `sessions.json` path |
 | `AGENTFLEET_ENGINE` | Default engine for **new** sessions |
 | `AFLT_PROJECT` | Default project name for **new** sessions (after `--project` / parent; before `.agentfleet.json` / config.json / basename). Projects need no git. |
+| `AFLT_MEMORY_REPO` | Override project-memory repo path (else `config.json` `memoryRepo` from `aflt memory init`) |
 | `AGENTFLEET_CURSOR_BIN` | Override `cursor-agent` |
 | `AGENTFLEET_COPILOT_BIN` | Override `copilot` |
 | `AGENTFLEET_COPILOT_HOME` | Copilot home for import (else `COPILOT_HOME` / `~/.copilot`) |

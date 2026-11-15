@@ -42,7 +42,7 @@ _af() {
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  cmds="version new add import ls list timeline sync run log spawn master docs children result wait tail send stop resume pick adopt cursor copilot engine rename cwd set-cwd done rm remove note export import-file which-backend herdr-templates herdr-app doctor msg inbox thread mcp help"
+  cmds="version new add import ls list timeline memory sync run log spawn master docs children result wait tail send stop resume pick adopt cursor copilot engine rename cwd set-cwd done rm remove note export import-file which-backend herdr-templates herdr-app doctor msg inbox thread mcp help"
 
   if [[ ${COMP_CWORD} -eq 1 ]]; then
     COMPREPLY=( $(compgen -W "${cmds}" -- "${cur}") )
@@ -226,6 +226,19 @@ _af() {
       ;;
     timeline)
       COMPREPLY=( $(compgen -W "--all --json --since --project" -- "${cur}") )
+      ;;
+    memory)
+      if [[ ${COMP_CWORD} -eq 2 ]]; then
+        COMPREPLY=( $(compgen -W "where init sync status" -- "${cur}") )
+      elif [[ "${COMP_WORDS[2]}" == "init" ]]; then
+        COMPREPLY=( $(compgen -W "--force --json" -- "${cur}") )
+      elif [[ "${COMP_WORDS[2]}" == "sync" ]]; then
+        COMPREPLY=( $(compgen -W "--all --include-adhoc --dry-run --json --no-redact" -- "${cur}") )
+      elif [[ "${COMP_WORDS[2]}" == "status" || "${COMP_WORDS[2]}" == "where" ]]; then
+        COMPREPLY=( $(compgen -W "--json" -- "${cur}") )
+      else
+        COMPREPLY=( $(compgen -W "where init sync status --json" -- "${cur}") )
+      fi
       ;;
     sync)
       COMPREPLY=( $(compgen -W "--dry-run --json" -- "${cur}") )
