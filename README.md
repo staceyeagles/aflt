@@ -5,7 +5,7 @@
 <p align="center"><strong>aflt</strong> / AgentFleet — track, resume, and orchestrate Cursor &amp; Copilot CLI agents</p>
 
 <p align="center">
-  <img alt="Node >=18" src="https://img.shields.io/badge/node-%3E%3D18-brightgreen?logo=node.js&logoColor=white"/>
+  <img alt="Node 18+" src="https://img.shields.io/badge/node-%3E%3D18-brightgreen?logo=node.js&logoColor=white"/>
   <img alt="version 1.2.0" src="https://img.shields.io/badge/version-1.2.0-blue"/>
   <img alt="332 tests passing, 1 skipped" src="https://img.shields.io/badge/tests-332%20passing%20%7C%201%20skipped-success"/>
   <img alt="macOS | Linux untested" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20untested-lightgrey"/>
