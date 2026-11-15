@@ -502,4 +502,260 @@ describe('aflt memory', () => {
     assert.throws(() => mem.sanitizeFolderName('...'), /empty/);
     assert.throws(() => mem.sanitizeFolderName('///'), /empty/);
   });
+
+  function git(repo, args) {
+    return spawnSync('git', ['-C', repo, ...args], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: 'aflt-test',
+        GIT_AUTHOR_EMAIL: 'aflt-test@example.com',
+        GIT_COMMITTER_NAME: 'aflt-test',
+        GIT_COMMITTER_EMAIL: 'aflt-test@example.com',
+      },
+    });
+  }
+
+  function configureGitIdentity(repo) {
+    assert.equal(git(repo, ['config', 'user.name', 'aflt-test']).status, 0);
+    assert.equal(git(repo, ['config', 'user.email', 'aflt-test@example.com']).status, 0);
+  }
+
+  function seedProjAndInit() {
+    assert.equal(af(['memory', 'init', memRepo], env()).status, 0);
+    configureGitIdentity(memRepo);
+    const projDir = path.join(home, 'workspace', 'commit-app');
+    fs.mkdirSync(projDir, { recursive: true });
+    seedSession(home, {
+      title: 'commit-session',
+      project: 'commit-app',
+      cwd: projDir,
+      created: '2024-06-01T00:00:00.000Z',
+      runStartedAt: '2024-06-01T00:00:00.000Z',
+      lastUsed: '2024-06-01T12:00:00.000Z',
+      lastRunAt: '2024-06-01T12:00:00.000Z',
+      lastExit: 0,
+      workerStatus: 'done',
+      status: 'done',
+      prompt: 'do work',
+    });
+    return projDir;
+  }
+
+  it('--push without --commit errors', () => {
+    assert.equal(af(['memory', 'init', memRepo], env()).status, 0);
+    const r = af(['memory', 'sync', '--push'], env());
+    assert.equal(r.status, 1);
+    assert.match(r.stderr + r.stdout, /--push requires --commit/);
+  });
+
+  it('--commit --dry-run errors', () => {
+    assert.equal(af(['memory', 'init', memRepo], env()).status, 0);
+    const r = af(['memory', 'sync', '--commit', '--dry-run'], env());
+    assert.equal(r.status, 1);
+    assert.match(r.stderr + r.stdout, /--commit cannot be used with --dry-run/);
+  });
+
+  it('--commit stages only _aflt paths; leaves dirty human files unstaged', () => {
+    seedProjAndInit();
+    const sync1 = af(['memory', 'sync', 'commit-app', '--commit', '--json'], env());
+    assert.equal(sync1.status, 0, sync1.stderr + sync1.stdout);
+    const j1 = JSON.parse(sync1.stdout);
+    assert.equal(j1.ok, true);
+    assert.equal(j1.commit.committed, true);
+    assert.ok(j1.commit.hash);
+    assert.ok(j1.commit.files >= 2);
+    assert.match(j1.commit.message, /^memory: sync \d{4}-\d{2}-\d{2}$/);
+
+    const show = git(memRepo, ['show', '--name-only', '--pretty=format:', 'HEAD']);
+    assert.equal(show.status, 0, show.stderr);
+    const committed = show.stdout
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    assert.ok(committed.every((p) => /^[^/]+\/_aflt\//.test(p)));
+    assert.ok(committed.some((p) => p.endsWith('_aflt/timeline.md')));
+    assert.ok(committed.some((p) => p.endsWith('_aflt/sessions.jsonl')));
+    assert.ok(!committed.some((p) => p.endsWith('README.md')));
+    assert.ok(!committed.some((p) => p.includes('status-notes')));
+
+    // Dirty human files must stay unstaged / uncommitted on next sync --commit
+    const readme = path.join(memRepo, 'commit-app', 'README.md');
+    const dash = path.join(memRepo, 'commit-app', 'dashboard.md');
+    const note = path.join(memRepo, 'commit-app', 'status-notes', '2024-06-01.md');
+    fs.writeFileSync(readme, '# commit-app\n\nhuman edit\n');
+    fs.writeFileSync(dash, '# dashboard dirty\n');
+    fs.writeFileSync(note, 'untracked note\n');
+
+    // Change generated content so there is something to commit
+    seedSession(home, {
+      title: 'commit-session-2',
+      project: 'commit-app',
+      cwd: path.join(home, 'workspace', 'commit-app'),
+      created: '2024-06-02T00:00:00.000Z',
+      runStartedAt: '2024-06-02T00:00:00.000Z',
+      lastUsed: '2024-06-02T12:00:00.000Z',
+      lastRunAt: '2024-06-02T12:00:00.000Z',
+      lastExit: 0,
+      workerStatus: 'done',
+      status: 'done',
+      prompt: 'more work',
+    });
+
+    const head1 = String(git(memRepo, ['rev-parse', 'HEAD']).stdout).trim();
+    const sync2 = af(['memory', 'sync', 'commit-app', '--commit', '--json'], env());
+    assert.equal(sync2.status, 0, sync2.stderr + sync2.stdout);
+    const j2 = JSON.parse(sync2.stdout);
+    assert.equal(j2.commit.committed, true);
+    const head2 = String(git(memRepo, ['rev-parse', 'HEAD']).stdout).trim();
+    assert.notEqual(head1, head2);
+
+    const staged = git(memRepo, ['diff', '--cached', '--name-only']);
+    assert.equal(String(staged.stdout).trim(), '');
+    const porcelain = git(memRepo, ['status', '--porcelain', '-uall']);
+    assert.match(porcelain.stdout, /README\.md/);
+    assert.match(porcelain.stdout, /dashboard\.md/);
+    assert.match(porcelain.stdout, /status-notes\/2024-06-01\.md/);
+    // Human files must not be in the new commit
+    const show2 = git(memRepo, ['show', '--name-only', '--pretty=format:', 'HEAD']);
+    const committed2 = show2.stdout
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    assert.ok(committed2.every((p) => /^[^/]+\/_aflt\//.test(p)));
+    assert.equal(fs.readFileSync(readme, 'utf8'), '# commit-app\n\nhuman edit\n');
+    assert.equal(fs.readFileSync(dash, 'utf8'), '# dashboard dirty\n');
+    assert.equal(fs.readFileSync(note, 'utf8'), 'untracked note\n');
+  });
+
+  it('--commit with no changes reports committed:false', () => {
+    seedProjAndInit();
+    assert.equal(af(['memory', 'sync', 'commit-app', '--commit'], env()).status, 0);
+    const head1 = String(git(memRepo, ['rev-parse', 'HEAD']).stdout).trim();
+    const r = af(['memory', 'sync', 'commit-app', '--commit', '--json'], env());
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    const j = JSON.parse(r.stdout);
+    assert.equal(j.commit.committed, false);
+    assert.equal(j.commit.reason, 'no changes');
+    assert.equal(j.commit.hash, null);
+    const text = af(['memory', 'sync', 'commit-app', '--commit'], env());
+    assert.equal(text.status, 0);
+    assert.match(text.stdout, /memory commit: no changes/);
+    const head2 = String(git(memRepo, ['rev-parse', 'HEAD']).stdout).trim();
+    assert.equal(head1, head2);
+  });
+
+  it('pre-staged human file refuses commit', () => {
+    seedProjAndInit();
+    assert.equal(af(['memory', 'sync', 'commit-app'], env()).status, 0);
+    // Make an initial commit of generated files so repo has history, then stage a human file
+    configureGitIdentity(memRepo);
+    assert.equal(
+      git(memRepo, ['add', '-A', '--', ':(glob)*/_aflt/**']).status,
+      0
+    );
+    assert.equal(git(memRepo, ['commit', '-m', 'seed']).status, 0);
+
+    fs.writeFileSync(path.join(memRepo, 'commit-app', 'README.md'), '# staged human\n');
+    assert.equal(git(memRepo, ['add', '--', 'commit-app/README.md']).status, 0);
+    const stagedBefore = git(memRepo, ['diff', '--cached', '--name-only']);
+    assert.match(stagedBefore.stdout, /README\.md/);
+
+    seedSession(home, {
+      title: 'commit-session-3',
+      project: 'commit-app',
+      cwd: path.join(home, 'workspace', 'commit-app'),
+      created: '2024-06-03T00:00:00.000Z',
+      runStartedAt: '2024-06-03T00:00:00.000Z',
+      lastUsed: '2024-06-03T12:00:00.000Z',
+      lastRunAt: '2024-06-03T12:00:00.000Z',
+      lastExit: 0,
+      workerStatus: 'done',
+      status: 'done',
+    });
+
+    const head1 = String(git(memRepo, ['rev-parse', 'HEAD']).stdout).trim();
+    const r = af(['memory', 'sync', 'commit-app', '--commit', '--json'], env());
+    assert.equal(r.status, 1);
+    const out = r.stderr + r.stdout;
+    assert.match(out, /refusing to commit|staged changes/i);
+    assert.match(out, /README\.md/);
+    const head2 = String(git(memRepo, ['rev-parse', 'HEAD']).stdout).trim();
+    assert.equal(head1, head2);
+    // Still staged (we refused before touching the index)
+    const stagedAfter = git(memRepo, ['diff', '--cached', '--name-only']);
+    assert.match(stagedAfter.stdout, /README\.md/);
+  });
+
+  it('--push pushes to bare upstream', () => {
+    seedProjAndInit();
+    const bare = path.join(home, 'memory-bare.git');
+    assert.equal(
+      spawnSync('git', ['init', '--bare', bare], { encoding: 'utf8' }).status,
+      0
+    );
+    configureGitIdentity(memRepo);
+    assert.equal(git(memRepo, ['remote', 'add', 'origin', bare]).status, 0);
+    // First sync+commit so we have a branch tip, then set upstream via push -u once… but
+    // aflt never passes remote/branch args. Establish upstream with a seed commit + push -u.
+    assert.equal(af(['memory', 'sync', 'commit-app'], env()).status, 0);
+    assert.equal(git(memRepo, ['add', '-A', '--', ':(glob)*/_aflt/**']).status, 0);
+    assert.equal(git(memRepo, ['commit', '-m', 'seed']).status, 0);
+    const branch = String(git(memRepo, ['branch', '--show-current']).stdout).trim() || 'main';
+    assert.equal(git(memRepo, ['push', '-u', 'origin', branch]).status, 0);
+
+    seedSession(home, {
+      title: 'push-session-2',
+      project: 'commit-app',
+      cwd: path.join(home, 'workspace', 'commit-app'),
+      created: '2024-07-01T00:00:00.000Z',
+      runStartedAt: '2024-07-01T00:00:00.000Z',
+      lastUsed: '2024-07-01T12:00:00.000Z',
+      lastRunAt: '2024-07-01T12:00:00.000Z',
+      lastExit: 0,
+      workerStatus: 'done',
+      status: 'done',
+    });
+
+    const r = af(['memory', 'sync', 'commit-app', '--commit', '--push', '--json'], env());
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    const j = JSON.parse(r.stdout);
+    assert.equal(j.commit.committed, true);
+    assert.equal(j.push.pushed, true);
+    assert.ok(j.push.upstream);
+    const local = String(git(memRepo, ['rev-parse', 'HEAD']).stdout).trim();
+    const remote = String(
+      spawnSync('git', ['-C', bare, 'rev-parse', branch], { encoding: 'utf8' }).stdout
+    ).trim();
+    assert.equal(local, remote);
+  });
+
+  it('--push without upstream keeps commit and exits non-zero', () => {
+    seedProjAndInit();
+    const r = af(['memory', 'sync', 'commit-app', '--commit', '--push', '--json'], env());
+    assert.equal(r.status, 1, r.stderr + r.stdout);
+    const j = JSON.parse(r.stdout);
+    assert.equal(j.ok, false);
+    assert.equal(j.commit.committed, true);
+    assert.ok(j.commit.hash);
+    assert.equal(j.push.pushed, false);
+    assert.equal(j.push.reason, 'no upstream');
+    const head = String(git(memRepo, ['rev-parse', 'HEAD']).stdout).trim();
+    assert.ok(head);
+    assert.ok(head.startsWith(j.commit.hash) || j.commit.hash === head.slice(0, j.commit.hash.length));
+  });
+
+  it('commit message uses local date format', () => {
+    seedProjAndInit();
+    const mem = loadMemory(home);
+    const fixed = new Date(2026, 10, 15, 12, 0, 0); // local Nov 15, 2026
+    assert.equal(mem.localDateYmd(fixed), '2026-11-15');
+    // CLI uses Date.now(); assert message pattern from a real commit
+    const r = af(['memory', 'sync', 'commit-app', '--commit', '--json'], env());
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    const j = JSON.parse(r.stdout);
+    assert.match(j.commit.message, /^memory: sync \d{4}-\d{2}-\d{2}$/);
+    const log = git(memRepo, ['log', '-1', '--pretty=%s']);
+    assert.equal(String(log.stdout).trim(), j.commit.message);
+  });
 });

@@ -233,7 +233,7 @@ _af() {
       elif [[ "${COMP_WORDS[2]}" == "init" ]]; then
         COMPREPLY=( $(compgen -W "--force --json" -- "${cur}") )
       elif [[ "${COMP_WORDS[2]}" == "sync" ]]; then
-        COMPREPLY=( $(compgen -W "--all --include-adhoc --dry-run --json --no-redact" -- "${cur}") )
+        COMPREPLY=( $(compgen -W "--all --include-adhoc --dry-run --json --no-redact --commit --push" -- "${cur}") )
       elif [[ "${COMP_WORDS[2]}" == "status" || "${COMP_WORDS[2]}" == "where" ]]; then
         COMPREPLY=( $(compgen -W "--json" -- "${cur}") )
       else

@@ -83,6 +83,7 @@ aflt ls --project my-app --json # filter by stored or derived project name
 aflt timeline                   # read-only session tree for cwd's project
 aflt timeline --all --json      # every project, grouped
 aflt memory sync                # opt-in: write cwd project timeline into memory repo
+aflt memory sync --all --commit --push  # nightly: sync + commit generated + push
 aflt children --json            # workers of this master, or a summary of masters
 ```
 
@@ -182,9 +183,14 @@ aflt memory init <path> [--force] [--json]
 # Writes README/.gitignore/.aflt-memory.json when missing; sets config memoryRepo.
 
 aflt memory sync [<project>...] [--all] [--include-adhoc] [--dry-run] [--json] [--no-redact]
+ [--commit] [--push]
 # Write <repo>/<project>/_aflt/timeline.md + sessions.jsonl (registry read-only).
 # Default: cwd / AFLT_PROJECT. --all skips adhoc unless --include-adhoc or named.
 # Human README/status-notes created only if missing; never overwritten. Redaction ON.
+# --commit: stage only */_aflt/** and commit ("memory: sync YYYY-MM-DD"); refuses if
+# the index already has staged changes. --commit --dry-run is an error. --push requires
+# --commit; pushes to @{u} when a commit was made or the branch is ahead (never force /
+# never add remotes). Nightly: aflt memory sync --all --commit --push.
 
 aflt memory status [--json]
 # Read-only: repo + git dirty count + per-project folder/lastSync/sessions/stale.
@@ -195,7 +201,7 @@ aflt sync [--dry-run] [--json]
 
 `aflt timeline` is read-only. Default project: `<project>` arg → `AFLT_PROJECT` → cwd's derived project. Text shows local times (JSON keeps ISO UTC). Commits come from each session's own cwd (`commitsReason`: `not-git` / `missing-cwd`); an open-ended row that is not a live run is bounded at `lastUsed` (`open-ended` when it never ran).
 
-`aflt memory` is opt-in and never auto-syncs or commits. Resolution: `AFLT_MEMORY_REPO` → `config.json` `memoryRepo`.
+`aflt memory` is opt-in and never auto-syncs. Resolution: `AFLT_MEMORY_REPO` → `config.json` `memoryRepo`. Optional `--commit` / `--push` on `sync` records only generated `*/_aflt/**` (human files stay unstaged). Layout: `<repo>/<project>/_aflt/` is generated (never hand-edit); `<project>/README.md`, `dashboard.md`, `status-notes/` are human/Doc Bot files that aflt creates only if missing and never commits. Redaction (default on) covers generated files only: home → `~`, private IPs, `*.local`, emails, token-like strings, long hex/base64. `adhoc` (home/tmp one-offs) is excluded from `--all` unless `--include-adhoc`. Nightly flow on the Mini: `aflt memory sync --all --commit --push` (commits `memory: sync YYYY-MM-DD` only when something changed; exits non-zero if push fails or there is no upstream).
 
 ### Headless run and logs
 

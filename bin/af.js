@@ -107,6 +107,7 @@ Usage:
                             existing memory repo. Refuses a non-empty foreign dir unless
                             --force (then adds files; never overwrites README/.gitignore).
   aflt memory sync [<project>...] [--all] [--include-adhoc] [--dry-run] [--json] [--no-redact]
+                            [--commit] [--push]
                             Write <repo>/<project>/_aflt/timeline.md + sessions.jsonl from
                             the registry (read-only). Default: cwd / AFLT_PROJECT project.
                             --all: every registry project except adhoc (one-off home/tmp
@@ -114,6 +115,12 @@ Usage:
                             explicitly). Creates <project>/README.md + status-notes/.gitkeep
                             only if missing; never overwrites human notes. Writes only when
                             content differs. Redaction ON by default (--no-redact to disable).
+                            --commit: after sync, stage only */_aflt/** and commit
+                            (message "memory: sync YYYY-MM-DD"); refuses if the index already
+                            has staged changes or anything outside */_aflt/ would be included;
+                            --commit --dry-run is an error. --push requires --commit; pushes
+                            to the current branch upstream when a commit was made or the
+                            branch is ahead (never adds remotes / never force).
   aflt memory status [--json]
                             Read-only: repo path/source, git dirty count, per-project
                             folder/lastSync/sessions/stale (stale = sync would change files).
@@ -1096,7 +1103,8 @@ function cmdTimeline(argv) {
 
 /**
  * Opt-in project memory repo: init / where / sync / status.
- * Never commits; never writes the af registry (sync is read-only on sessions).
+ * Sync is read-only on the af registry; optional --commit/--push touches only
+ * the memory git repo (generated paths).
  */
 function cmdMemory(argv) {
   const { args: rawArgs, flags } = parseArgs(argv);
@@ -1155,7 +1163,17 @@ function cmdMemory(argv) {
     const all = recoverBoolFlag(flags, 'all', restArgs);
     const includeAdhoc = recoverBoolFlag(flags, 'include-adhoc', restArgs);
     const noRedact = recoverBoolFlag(flags, 'no-redact', restArgs);
+    const doCommit = recoverBoolFlag(flags, 'commit', restArgs);
+    const doPush = recoverBoolFlag(flags, 'push', restArgs);
     const projects = restArgs.filter((a) => a && !String(a).startsWith('-'));
+
+    if (doPush && !doCommit) {
+      fail('--push requires --commit', { json: asJson });
+    }
+    if (doCommit && dryRun) {
+      fail('--commit cannot be used with --dry-run', { json: asJson });
+    }
+
     const sessions = registry.list({ includeDone: true });
     try {
       const result = memory.syncMemory(sessions, {
@@ -1166,9 +1184,39 @@ function cmdMemory(argv) {
         redact: !noRedact,
         cwd: process.cwd(),
       });
+
+      let commitInfo = null;
+      if (doCommit) {
+        commitInfo = memory.commitGenerated(result.repo, { push: doPush });
+      }
+
+      const commitJson = commitInfo
+        ? {
+            committed: commitInfo.committed,
+            hash: commitInfo.hash,
+            files: commitInfo.files,
+            message: commitInfo.message,
+            reason: commitInfo.reason,
+          }
+        : undefined;
+      const pushJson = commitInfo && commitInfo.push
+        ? {
+            pushed: commitInfo.push.pushed,
+            upstream: commitInfo.push.upstream,
+            reason: commitInfo.push.reason,
+          }
+        : undefined;
+
+      const pushFailed =
+        Boolean(doPush) &&
+        commitInfo &&
+        commitInfo.push &&
+        commitInfo.push.pushed === false &&
+        commitInfo.push.reason !== 'nothing to push';
+
       if (asJson) {
-        emitJson({
-          ok: true,
+        const payload = {
+          ok: !pushFailed,
           repo: result.repo,
           projects: result.projects.map((p) => ({
             project: p.project,
@@ -1176,7 +1224,11 @@ function cmdMemory(argv) {
             sessions: p.sessions,
             files: p.files.map((f) => ({ path: f.path, changed: f.changed })),
           })),
-        });
+        };
+        if (commitJson) payload.commit = commitJson;
+        if (pushJson) payload.push = pushJson;
+        emitJson(payload);
+        if (pushFailed) process.exit(1);
         return;
       }
       if (dryRun) {
@@ -1200,6 +1252,39 @@ function cmdMemory(argv) {
       process.stdout.write(
         `memory sync: ${result.projects.length} project(s), ${changed} file(s) updated → ${result.repo}\n`
       );
+      if (commitInfo) {
+        if (commitInfo.committed) {
+          process.stdout.write(
+            `memory commit: ${commitInfo.hash} (${commitInfo.files} file(s)) "${commitInfo.message}"\n`
+          );
+        } else {
+          process.stdout.write(`memory commit: no changes\n`);
+        }
+        if (commitInfo.push) {
+          if (commitInfo.push.pushed) {
+            process.stdout.write(`memory push: ok (${commitInfo.push.upstream})\n`);
+          } else if (commitInfo.push.reason === 'nothing to push') {
+            process.stdout.write(`memory push: nothing to push\n`);
+          } else if (commitInfo.push.reason === 'no upstream') {
+            process.stderr.write(
+              `memory push: failed (no upstream)` +
+                (commitInfo.committed && commitInfo.hash
+                  ? `; commit ${commitInfo.hash} kept`
+                  : '') +
+                '\n'
+            );
+          } else {
+            process.stderr.write(
+              `memory push: failed (${commitInfo.push.reason})` +
+                (commitInfo.committed && commitInfo.hash
+                  ? `; commit ${commitInfo.hash} kept`
+                  : '') +
+                '\n'
+            );
+          }
+        }
+      }
+      if (pushFailed) process.exit(1);
     } catch (err) {
       fail(err.message || String(err), { json: asJson });
     }
