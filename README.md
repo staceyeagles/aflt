@@ -7,7 +7,7 @@
 <p align="center">
   <img alt="Node 18+" src="https://img.shields.io/badge/node-%3E%3D18-brightgreen?logo=node.js&logoColor=white"/>
   <img alt="version 1.2.0" src="https://img.shields.io/badge/version-1.2.0-blue"/>
-  <img alt="332 tests passing, 1 skipped" src="https://img.shields.io/badge/tests-332%20passing%20%7C%201%20skipped-success"/>
+  <img alt="333 tests passing, 1 skipped" src="https://img.shields.io/badge/tests-333%20passing%20%7C%201%20skipped-success"/>
   <img alt="macOS | Linux untested" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20untested-lightgrey"/>
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-yellow"/>
 </p>
@@ -376,7 +376,7 @@ See `af --help` / `aflt help` for the authoritative flag list. Long-form help co
 npm test
 ```
 
-333 tests (Node test runner): 332 passing, 1 skipped (a live `create-chat` smoke test that only runs with a real `cursor-agent`). Coverage includes registry, engines, Herdr backends, orchestration, messaging, MCP, docs, dry-run purity, and hermetic `AGENTFLEET_HOME` fixtures.
+334 tests (Node test runner): 333 passing, 1 skipped (a live `create-chat` smoke test that only runs with a real `cursor-agent`). Coverage includes registry, engines, Herdr backends, orchestration, messaging, MCP, docs, dry-run purity, and hermetic `AGENTFLEET_HOME` fixtures.
 
 ## License
 

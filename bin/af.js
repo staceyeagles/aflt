@@ -872,6 +872,15 @@ function cmdLs(argv) {
     const unreadMap = messages.unreadBySessionId(sessions);
     const rows = enriched.map((e) => {
       const eff = messages.isMessagingEnabled(e.session);
+      // Display-only: do not persist reconcile patches. `aflt ls` never writes the registry.
+      const derived = orchestrate.deriveWorkerStatus(
+        e.session,
+        {
+          runtime: e.runtime,
+          exitCode: e.exitCode,
+        },
+        { isAlive: orchestrate.defaultIsAlive, hostname: os.hostname() }
+      );
       return {
         id: e.session.id,
         title: e.session.title,
@@ -882,6 +891,7 @@ function cmdLs(argv) {
         status: e.session.status,
         lastUsed: e.session.lastUsed || null,
         role: e.session.role || null,
+        workerStatus: derived || null,
         messaging: eff.enabled,
         messagingSource: eff.source,
         unread: unreadMap[e.session.id] || 0,

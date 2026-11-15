@@ -82,7 +82,7 @@ aflt ls --status active
 aflt children --json            # workers of this master, or a summary of masters
 ```
 
-`STATUS` is saved lifecycle (`active` | `paused` | `done`). A process exit does **not** mark the task done — use `aflt done`. `HERDR` is live runtime from `hc ls`: `running` | `shell` | `exited` | `missing` | `unknown` | `-`. `aflt ls` never writes the registry.
+`STATUS` is saved lifecycle (`active` | `paused` | `done`). A process exit does **not** mark the task done — use `aflt done`. `HERDR` is live runtime from `hc ls`: `running` | `shell` | `exited` | `missing` | `unknown` | `-`. `aflt ls --json` also includes derived `workerStatus` (same rules as `aflt children --json`). `aflt ls` never writes the registry.
 
 ### 3. Orchestrate workers from a master
 

@@ -492,6 +492,76 @@ describe('aflt sync / aflt ls CLI', () => {
     assert.equal(out.queryOk, true);
   });
 
+  it('aflt ls --json reports derived workerStatus like children --json', () => {
+    const storedId = 'ls-worker-stored-done';
+    const derivedId = 'ls-worker-herdr-exited';
+    const masterId = 'ls-worker-status-master';
+    const hcPayload = JSON.stringify({
+      hidden_finished: 0,
+      terminals: [
+        {
+          address: 't20',
+          agent: 'cursor-agent',
+          cwd: tmp,
+          exit_code: 0,
+          name: 'ls-herdr-exited',
+          reason: 'exited',
+          state: 'finished',
+          turn: 0,
+          labels: { af_id: derivedId, title: 'ls-herdr-exited' },
+        },
+      ],
+    });
+    stubHc(`
+      if (process.argv[2] === 'ls') {
+        process.stdout.write(${JSON.stringify(hcPayload)});
+        process.exit(0);
+      }
+      process.exit(1);
+    `);
+    registry.add({
+      title: 'ls-status-master',
+      chatId: '11111111-bbbb-cccc-dddd-eeeeeeeeeeee',
+      cwd: tmp,
+      id: masterId,
+      role: 'master',
+    });
+    registry.add({
+      title: 'ls-stored-done',
+      chatId: '22222222-bbbb-cccc-dddd-eeeeeeeeeeee',
+      cwd: tmp,
+      id: storedId,
+      role: 'worker',
+      parent: masterId,
+      workerStatus: 'done',
+    });
+    registry.add({
+      title: 'ls-herdr-exited',
+      chatId: '33333333-bbbb-cccc-dddd-eeeeeeeeeeee',
+      cwd: tmp,
+      id: derivedId,
+      role: 'worker',
+      parent: masterId,
+    });
+
+    const ls = runAf(['ls', '--json', '--all']);
+    assert.equal(ls.status, 0, ls.stderr);
+    const lsBody = JSON.parse(ls.stdout);
+    const byId = Object.fromEntries(lsBody.sessions.map((s) => [s.id, s]));
+    assert.equal(byId[storedId].workerStatus, 'done');
+    assert.equal(byId[derivedId].workerStatus, 'done');
+    assert.equal(byId[masterId].workerStatus, null);
+
+    const kids = runAf(['children', 'ls-status-master', '--json']);
+    assert.equal(kids.status, 0, kids.stderr);
+    const kidRows = JSON.parse(kids.stdout);
+    const kidsById = Object.fromEntries(kidRows.map((s) => [s.id, s]));
+    assert.equal(kidsById[storedId].workerStatus, 'done');
+    assert.equal(kidsById[derivedId].workerStatus, 'done');
+    assert.equal(byId[storedId].workerStatus, kidsById[storedId].workerStatus);
+    assert.equal(byId[derivedId].workerStatus, kidsById[derivedId].workerStatus);
+  });
+
   it('aflt resume --via herdr --dry-run prints Attach line and does not spawn hc run', () => {
     const marker = path.join(tmp, 'hc-run-count');
     stubHc(`
