@@ -7,7 +7,7 @@
 <p align="center">
   <img alt="Node 18+" src="https://img.shields.io/badge/node-%3E%3D18-brightgreen?logo=node.js&logoColor=white"/>
   <img alt="version 1.2.0" src="https://img.shields.io/badge/version-1.2.0-blue"/>
-  <img alt="345 tests passing, 1 skipped" src="https://img.shields.io/badge/tests-345%20passing%20%7C%201%20skipped-success"/>
+  <img alt="363 tests passing, 1 skipped" src="https://img.shields.io/badge/tests-363%20passing%20%7C%201%20skipped-success"/>
   <img alt="macOS | Linux untested" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20untested-lightgrey"/>
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-yellow"/>
 </p>
@@ -136,7 +136,7 @@ Each session stores identity (`id`, `title`, `chatId`, `cwd`, `branch`, `model`,
 | `aflt resume` / `aflt pick` | Resume one, interactive pick, or `--all` |
 | `aflt rename` / `aflt note` / `aflt done` | Metadata |
 | `aflt cwd` / `aflt set-cwd` | Show or change folder (refreshes branch; live tab not moved) |
-| `aflt rm` | Drop registry row + af-owned files under `$AGENTFLEET_HOME` |
+| `aflt rm` | Drop registry row(s) + af-owned files under `$AGENTFLEET_HOME` (exact id/title; TTY fuzzy pick; multi-arg) |
 | `aflt export` / `aflt import-file` | Backup / merge registry JSON |
 
 <details>
@@ -148,7 +148,7 @@ Each session stores identity (`id`, `title`, `chatId`, `cwd`, `branch`, `model`,
 - **`aflt timeline [<project>]`** — `--all` `--json` `--since <date>` (ISO or YYYY-MM-DD); read-only. Default project: `<project>` arg → `AFLT_PROJECT` → cwd's derived project. Text shows local times (JSON keeps ISO UTC). Commits come from each session's own cwd (`commitsReason`: `not-git` / `missing-cwd`); an open-ended row that is not a live run is bounded at `lastUsed` (`open-ended` when it never ran).
 - **`aflt resume <title|id>`** — `--via herdr|plain` `--here` `--open|--no-open` `--prompt` `--force` `--dry-run` `--no-herdr-app`
 - **`aflt resume --all`** — `--tag` `--via tmux|iterm2|wezterm|herdr|plain` `--open|--no-open` `--force` `--dry-run` `--no-herdr-app`
-- **`aflt rm`** — `--keep-files` `--force` `--dry-run`; or `--children <master> [--with-master]`
+- **`aflt rm`** — exact id/title preferred (multi-arg); TTY confirms/picks fuzzy matches (agents: exact only); `--keep-files` `--force` `--dry-run`; or `--children <master> [--with-master]`
 
 </details>
 
@@ -358,7 +358,7 @@ Optional `"project"` is a create-time default for non-repo agent groups (after `
 | `aflt cwd` / `aflt set-cwd` | Show or change session folder |
 | `aflt cursor` / `aflt copilot` / `aflt engine` | Default engine get/set |
 | `aflt rename` / `aflt done` / `aflt note` | Metadata |
-| `aflt rm` | Remove session (+ af-owned files) |
+| `aflt rm` | Remove session(s) by exact id/title or TTY fuzzy pick (+ af-owned files) |
 | `aflt export` | Write registry JSON |
 | `aflt which-backend` | Show auto-detected `resume --all` backend |
 | `aflt herdr-templates` | Install hc templates |
@@ -392,7 +392,7 @@ See `af --help` / `aflt help` for the authoritative flag list. Long-form help co
 npm test
 ```
 
-346 tests (Node test runner): 345 passing, 1 skipped (a live `create-chat` smoke test that only runs with a real `cursor-agent`). Coverage includes registry, engines, Herdr backends, orchestration, messaging, MCP, docs, project/timeline, dry-run purity, and hermetic `AGENTFLEET_HOME` fixtures.
+364 tests (Node test runner): 363 passing, 1 skipped (a live `create-chat` smoke test that only runs with a real `cursor-agent`). Coverage includes registry, engines, Herdr backends, orchestration, messaging, MCP, docs, project/timeline, dry-run purity, interactive rm/stop pickers, and hermetic `AGENTFLEET_HOME` fixtures.
 
 ## License
 

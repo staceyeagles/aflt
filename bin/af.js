@@ -22,6 +22,7 @@ const docs = require('../lib/docs');
 const mcp = require('../lib/mcp');
 const projectLib = require('../lib/project');
 const timeline = require('../lib/timeline');
+const resolveSession = require('../lib/resolve-session');
 const {
   parseArgs,
   resolveCwd,
@@ -197,6 +198,9 @@ Usage:
                             reminder. Refuses if headless runPid live.
   aflt stop <id|title> | aflt stop --all-children <master> [--json]
                             Stop a running worker (SIGTERM process group / hc interrupt+kill).
+                            Exact id/title preferred. On a TTY (not --json), no exact match
+                            with fuzzy candidates prompts to confirm/pick; Enter/n cancels.
+                            Non-TTY / --json / agents: exact-only + did-you-mean hint.
   aflt resume <title|id> [--via herdr|plain] [--here] [--open|--no-open]
                             [--prompt "..."] [--force] [--dry-run] [--no-herdr-app]
                             Resume one session (argv from session.engine). Default:
@@ -227,15 +231,21 @@ Usage:
                             Path must exist; refreshes branch. Live Herdr tab is
                             not moved — resume (and optionally adopt) after.
   aflt done <title|id>
-  aflt rm <title|id> [--keep-files] [--force] [--dry-run]
-                            Remove a session and its af-owned files under
+  aflt rm <title|id> [<title|id>...] [--keep-files] [--force] [--dry-run]
+                            Remove session(s) and af-owned files under
                             $AGENTFLEET_HOME (results/, runs/<id>/, plans/).
-                            Prefer --dry-run first. --keep-files: registry only
-                            (keeps handoffs/logs). Refuses if running unless
-                            --force (does not stop the process — aflt stop first).
+                            Exact id/title preferred. On a TTY, no exact match with
+                            fuzzy candidates prompts to confirm/pick (same as stop);
+                            cancel aborts before any removal. Multiple ids: resolve
+                            all first. Prefer --dry-run first (--dry-run still prompts
+                            on a TTY for resolution only). Non-TTY / agents: exact-only
+                            + did-you-mean. --keep-files: registry only (keeps
+                            handoffs/logs). Refuses if running unless --force (does
+                            not stop the process — aflt stop first).
   aflt rm --children <master> [--with-master] [--keep-files] [--force] [--dry-run]
                             Remove all workers of a master; --with-master also
-                            removes the master. --dry-run lists actions only.
+                            removes the master. Master resolution matches rm/stop
+                            (TTY picker when no exact match). --dry-run lists actions.
   aflt note <title|id> "<text>"
   aflt export [file]          Write registry JSON (default: stdout)
   aflt import-file <file>     Merge sessions from a backup file
@@ -416,7 +426,7 @@ async function main() {
       break;
     case 'rm':
     case 'remove':
-      cmdRm(rest);
+      await cmdRm(rest);
       break;
     case 'note':
       cmdNote(rest);
@@ -1883,11 +1893,15 @@ function sessionLooksRunning(session) {
   return { running: false, via: null };
 }
 
-function collectRmTargets(argvFlags, args) {
+async function collectRmTargets(argvFlags, args, resolveOpts = {}) {
   const childrenFlag = argvFlags.children;
   const withMaster = Boolean(argvFlags['with-master']);
   if (childrenFlag && childrenFlag !== true) {
-    const master = requireSession(String(childrenFlag));
+    const master = await requireSessionExact(String(childrenFlag), {
+      command: 'rm',
+      verb: 'Remove',
+      ...resolveOpts,
+    });
     const kids = listChildrenOf(master.id);
     const targets = kids.slice();
     if (withMaster) targets.push(master);
@@ -1898,22 +1912,39 @@ function collectRmTargets(argvFlags, args) {
   }
   if (!args[0]) {
     fail(
-      'usage: aflt rm <title|id> [--keep-files] [--force] [--dry-run]\n' +
+      'usage: aflt rm <title|id> [<title|id>...] [--keep-files] [--force] [--dry-run]\n' +
         '       aflt rm --children <master> [--with-master] [--keep-files] [--force] [--dry-run]'
     );
   }
   if (withMaster) {
     fail('--with-master requires --children <master>');
   }
-  return { targets: [requireSession(args[0])], master: null };
+  // Resolve every target first (exact or TTY picker); fail/cancel before removing any.
+  const targets = [];
+  const seen = new Set();
+  for (const q of args) {
+    const s = await requireSessionExact(q, {
+      command: 'rm',
+      verb: 'Remove',
+      ...resolveOpts,
+    });
+    if (seen.has(s.id)) continue;
+    seen.add(s.id);
+    targets.push(s);
+  }
+  return { targets, master: null };
 }
 
-function cmdRm(argv) {
+async function cmdRm(argv) {
   const { args, flags } = parseArgs(argv);
-  const keepFiles = Boolean(flags['keep-files']);
-  const force = Boolean(flags.force || flags.f);
-  const dryRun = Boolean(flags['dry-run']);
-  const { targets } = collectRmTargets(flags, args);
+  // Boolean flags must not swallow following ids (`rm --keep-files a b`).
+  const keepFiles = recoverBoolFlag(flags, 'keep-files', args);
+  const force =
+    recoverBoolFlag(flags, 'force', args) || recoverBoolFlag(flags, 'f', args);
+  const dryRun = recoverBoolFlag(flags, 'dry-run', args);
+  const asJson = recoverBoolFlag(flags, 'json', args);
+  flags['with-master'] = recoverBoolFlag(flags, 'with-master', args);
+  const { targets } = await collectRmTargets(flags, args, { json: asJson });
 
   const home = fleetDir();
   const plan = [];
@@ -3642,15 +3673,19 @@ async function runDocsForProject(projectRoot, opts = {}) {
 }
 
 /**
- * parseArgs treats `--flag value` as a valued flag. For boolean docs flags
- * (`--status`, `--all`, `--json`, …), recover a consumed path as a dir arg.
+ * parseArgs treats `--flag value` as a valued flag. For boolean flags
+ * (`--status`, `--keep-files`, `--json`, …), recover a consumed positional.
  */
-function docsRecoverBoolFlag(flags, key, dirArgs) {
+function recoverBoolFlag(flags, key, positionalArgs) {
   const v = flags[key];
   if (v == null || v === false) return false;
   if (v === true) return true;
-  dirArgs.unshift(String(v));
+  positionalArgs.unshift(String(v));
   return true;
+}
+
+function docsRecoverBoolFlag(flags, key, dirArgs) {
+  return recoverBoolFlag(flags, key, dirArgs);
 }
 
 function cmdDocsStatus({ asJson, wantAll }, dirArgsIn) {
@@ -4389,6 +4424,33 @@ function requireSession(query) {
   }
   if (!session) fail(`session not found: ${query}`);
   return session;
+}
+
+/**
+ * Resolve a session for destructive commands (rm, stop).
+ * Exact id/chatId/title first; on a TTY (not --json) offers a confirm/pick for
+ * fuzzy candidates. Non-TTY / --json stay exact-only with a did-you-mean hint.
+ * @param {string} query
+ * @param {{ command?: string, verb?: string, json?: boolean, io?: object }} [opts]
+ */
+async function requireSessionExact(query, opts = {}) {
+  const command = opts.command || 'this command';
+  const verb =
+    opts.verb || (command === 'rm' ? 'Remove' : command === 'stop' ? 'Stop' : 'Select');
+  try {
+    return await resolveSession.resolveSessionInteractive(query, {
+      verb,
+      command,
+      json: opts.json,
+      io: opts.io,
+    });
+  } catch (err) {
+    if (err && err.code === 'CANCELLED') {
+      process.stderr.write('cancelled\n');
+      process.exit(1);
+    }
+    fail(err.message, { json: opts.json });
+  }
 }
 
 function runHcCli(argv, { timeoutMs } = {}) {
@@ -5142,7 +5204,7 @@ async function stopOneSession(session, { asJson } = {}) {
 
 async function cmdStop(argv) {
   const { args, flags } = parseArgs(argv);
-  const asJson = Boolean(flags.json);
+  const asJson = recoverBoolFlag(flags, 'json', args);
   const allChildren = Boolean(flags['all-children']);
 
   let targets = [];
@@ -5151,14 +5213,20 @@ async function cmdStop(argv) {
     if (!masterQuery || masterQuery === true) {
       fail('usage: aflt stop --all-children <master>');
     }
-    const master = requireSession(String(masterQuery));
+    const master = await requireSessionExact(String(masterQuery), {
+      command: 'stop',
+      verb: 'Stop',
+      json: asJson,
+    });
     targets = listChildrenOf(master.id);
     if (targets.length === 0) {
       fail(`no workers under "${master.title}"`);
     }
   } else {
     if (!args[0]) fail('usage: aflt stop <id|title> | aflt stop --all-children <master>');
-    targets = [requireSession(args[0])];
+    targets = [
+      await requireSessionExact(args[0], { command: 'stop', verb: 'Stop', json: asJson }),
+    ];
   }
 
   const results = [];

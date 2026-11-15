@@ -395,7 +395,7 @@ export AGENTFLEET_CURSOR_BIN="$HOME/.local/bin/cursor-agent"
 | Copilot `--allow-tool=write(<result>)` | Pre-approves the handoff/plan path without `--force`; af falls back from stdout if the file is still missing. |
 | `~/.agentfleet/plans/<id>.md` | Master plan file (not in the project cwd). |
 | Headless SIGINT/SIGTERM/SIGHUP | `af` forwards SIGTERM to the engine process group; exits 130/143 (does not orphan the CLI). |
-| `aflt rm` / `--keep-files` / `--children` | Removes registry row + af-owned files under `$AGENTFLEET_HOME` only (never project/`~/.cursor`/`~/.copilot`). |
+| `aflt rm` / `--keep-files` / `--children` | Removes registry row(s) + af-owned files under `$AGENTFLEET_HOME` only (never project/`~/.cursor`/`~/.copilot`). Exact id/title preferred; on a TTY, fuzzy candidates get a confirm/pick prompt (agents/scripts never prompted — use exact ids). Multiple ids as separate args. `aflt stop` uses the same resolution rules. |
 
 Backend auto-detect order in `af` (`lib/backends.js`):  
 `$AGENTFLEET_VIA` → inside Herdr (`HERDR` / `HC_TERMINAL` / … and `hc` on PATH) → inside tmux → `TERM_PROGRAM` WezTerm / iTerm → `tmux` on PATH → `wezterm` → `plain`.

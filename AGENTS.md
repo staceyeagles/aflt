@@ -119,7 +119,7 @@ If you *are* the master (launched via `aflt master`), your env already has `AGEN
 - **Parse `--json`**, not table text. Confirm flags with `aflt help` or `--dry-run`.
 - **`--force` is an explicit tool/write grant**, not “skip the prompt.” Cursor: `--force` auto-approves tools/shell. Copilot: `--force` maps to `--allow-all-tools`. Interactive Cursor `new`/`resume` does **not** change Cursor `--force` behavior. Omit `--force` for text-only / read-only prompts.
 - **`--trust` is not `--force`.** `aflt run` / `aflt resume` pass Cursor `--trust` by default (skips the workspace-trust dialog). Use `--no-trust` to keep the dialog.
-- **Do not commit, push, stash, reset, switch branches, or delete files** unless the user explicitly authorized that exact action. `aflt rm` removes registry rows and af-owned files under `$AGENTFLEET_HOME` only — never the project, `~/.cursor`, or `~/.copilot`. Prefer `aflt rm --dry-run` first. If a session is running, `aflt stop` first; `--force` on `rm` does **not** stop the process.
+- **Do not commit, push, stash, reset, switch branches, or delete files** unless the user explicitly authorized that exact action. `aflt rm` removes registry rows and af-owned files under `$AGENTFLEET_HOME` only — never the project, `~/.cursor`, or `~/.copilot`. Prefer `aflt rm --dry-run` first. If a session is running, `aflt stop` first; `--force` on `rm` does **not** stop the process. **`aflt rm` and `aflt stop` prefer an exact id or title.** On a human TTY, a fuzzy-only query may prompt to confirm/pick; **agents and scripts never get prompts** (non-TTY / `--json` stay exact-only with a did-you-mean hint) — always pass exact ids/titles. Pass multiple `rm` targets as separate args.
 - **Never print secrets** (tokens, `CURSOR_API_KEY`, MCP auth, `.env`).
 - **Keep tests hermetic** if you work in this repo: use a temp `AGENTFLEET_HOME`. Never point tests at the real `~/.agentfleet` or the live Herdr.
 - **Resume with the same cwd/workspace** the chat was created in. `aflt cwd` updates the registry folder/branch but does **not** move a live Herdr tab — `aflt resume` (and optionally `aflt adopt`) after.
@@ -239,7 +239,8 @@ aflt send <id|title> "text" [--timeout SEC] [--force] [--json]
 # Refuses if a headless runPid is still live.
 
 aflt stop <id|title> | aflt stop --all-children <master> [--json]
-# SIGTERM process group / hc interrupt+kill
+# SIGTERM process group / hc interrupt+kill.
+# Exact id/title preferred. TTY + fuzzy candidates → confirm/pick; agents use exact ids.
 ```
 
 `workerStatus`: `queued` | `running` | `waiting` | `done` | `failed` | `stopped`.
@@ -277,13 +278,16 @@ aflt set-cwd <title|id> [path] [--dry-run] [--json]   # alias
 ### Remove and metadata
 
 ```bash
-aflt rm <title|id> [--keep-files] [--force] [--dry-run]
-# Removes the session and af-owned files under $AGENTFLEET_HOME (results/, runs/<id>/, plans/).
+aflt rm <title|id> [<title|id>...] [--keep-files] [--force] [--dry-run]
+# Exact id/title preferred; TTY may confirm/pick fuzzy matches (agents: use exact ids).
+# Multiple ids: resolve all first; cancel/fail before removing any. Removes the session
+# and af-owned files under $AGENTFLEET_HOME (results/, runs/<id>/, plans/).
 # --keep-files: registry row only (keeps handoffs/logs).
 # Refuses if running unless --force (does not stop the process).
 
 aflt rm --children <master> [--with-master] [--keep-files] [--force] [--dry-run]
-# --with-master also removes the master.
+# Master resolution matches rm/stop (TTY picker when no exact match). --with-master
+# also removes the master.
 
 aflt rename <title|id> "<new title>"
 aflt note <title|id> "<text>"

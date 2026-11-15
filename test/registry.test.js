@@ -76,6 +76,36 @@ describe('registry', () => {
     assert.equal(registry.find('nope'), null);
   });
 
+  it('findExact matches only id, chatId, or title', () => {
+    const s = registry.add({
+      title: 'Exact Only',
+      chatId: '22222222-aaaa-4aaa-8aaa-222222222222',
+      cwd: tmp,
+      id: 'exact-only-abcdef',
+    });
+    assert.equal(registry.findExact(s.id).id, s.id);
+    assert.equal(registry.findExact(s.chatId).id, s.id);
+    assert.equal(registry.findExact('Exact Only').id, s.id);
+    assert.equal(registry.findExact('exact only').id, s.id);
+    assert.equal(registry.findExact('abcdef'), null);
+    assert.equal(registry.findExact(s.id.slice(0, 8)), null);
+    assert.equal(registry.findExact('Exact'), null);
+  });
+
+  it('findInSessions refuses fuzzy match when query has whitespace', () => {
+    registry.add({
+      title: 'docs-live',
+      chatId: '33333333-bbbb-4bbb-8bbb-333333333333',
+      cwd: tmp,
+      id: 'docs-live-94d940',
+    });
+    const joined = 'orch-52e80e master-940fc7 docs-live-94d940';
+    assert.equal(registry.find(joined), null);
+    assert.equal(registry.findExact(joined), null);
+    // Without spaces, hex suffix still works for non-destructive find.
+    assert.equal(registry.find('94d940').id, 'docs-live-94d940');
+  });
+
   it('renames, notes, done, remove', () => {
     const s = registry.add({
       title: 'Old',

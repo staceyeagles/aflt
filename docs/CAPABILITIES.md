@@ -34,3 +34,14 @@ Stderr (once per worker): `no agent state from Herdr for <id>; cannot detect com
 ## Handoff freshness (summary)
 
 See README “Handoff freshness”. A file is **fresh** iff it exists and `mtime` is after `runStartedAt` or `resultMtimeAtStart`. Tables show HANDOFF as `yes` / `af` / `stale` / `no`.
+
+## Session lookup (destructive vs fuzzy)
+
+Most commands resolve sessions with fuzzy matching (exact id/chatId/title → unique id/chatId prefix ≥4 → trailing hex6 → unique title substring). Queries that contain whitespace skip the fuzzy fallbacks (exact title with spaces still works).
+
+**`aflt rm` and `aflt stop` prefer an exact id, chatId, or title.** When there is no exact match but fuzzy candidates exist:
+
+- **Interactive TTY** (stdin and stdout are TTYs, and not `--json`): prompt to confirm a single candidate (`Stop|Remove <title> (<id>)? [y/N]`) or pick among several (`Stop|Remove which? [1-N, Enter to cancel]`). Enter / `n` / invalid / EOF prints `cancelled` and exits 1 with nothing changed. There is no `--yes` auto-pick.
+- **Non-TTY, `--json`, or agents/scripts:** exact-only — exit 1 with a “did you mean …?” hint listing all candidates. Never prompts.
+
+`aflt rm` accepts multiple ids as separate args and resolves all (prompting as needed) before removing any; a cancel aborts everything. `--dry-run` still prompts on a TTY for resolution only. The same picker applies to `rm --children <master>` and `stop --all-children <master>` master resolution.
