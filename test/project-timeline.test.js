@@ -124,6 +124,21 @@ exit 0
   }
 
   describe('resolveProjectName', () => {
+    it('aliases legacy project af → aflt without rewriting the session record', () => {
+      delete require.cache[require.resolve('../lib/util')];
+      delete require.cache[require.resolve('../lib/config')];
+      delete require.cache[require.resolve('../lib/project')];
+      process.env.AGENTFLEET_HOME = home;
+      process.env.HOME = home;
+      const project = require('../lib/project');
+      const session = { project: 'af', cwd: repoA };
+      assert.equal(project.canonicalProjectName('af'), 'aflt');
+      assert.equal(project.resolveProjectName(session), 'aflt');
+      assert.equal(session.project, 'af');
+      assert.equal(project.normalizeProjectFilter('af'), 'aflt');
+      assert.equal(project.resolveProjectForCreate({ flag: 'af' }), 'aflt');
+    });
+
     it('derives: explicit → .agentfleet.json → git basename → non-git / missing cwd / adhoc', () => {
       delete require.cache[require.resolve('../lib/util')];
       delete require.cache[require.resolve('../lib/config')];

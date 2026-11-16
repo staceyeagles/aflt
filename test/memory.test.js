@@ -914,25 +914,27 @@ describe('aflt memory', () => {
       );
     });
 
-    it('session counts open/idle/total from active/paused/done', () => {
+    it('session counts open/idle/total from display-state (not bare registry active)', () => {
       initDash();
       const cwd = path.join(home, 'workspace', 'counts');
       fs.mkdirSync(cwd, { recursive: true });
-      seedSession(home, {
+      const live = seedSession(home, {
         title: 'o1',
         project: 'counts',
         cwd,
         status: 'active',
         created: '2026-11-01T00:00:00.000Z',
         lastUsed: '2026-11-14T00:00:00.000Z',
+        runPid: process.pid,
       });
-      seedSession(home, {
+      const exited = seedSession(home, {
         title: 'o2',
         project: 'counts',
         cwd,
         status: 'active',
         created: '2026-11-01T00:00:00.000Z',
         lastUsed: '2026-11-14T01:00:00.000Z',
+        herdr: { runtime: 'exited', checkedAt: '2026-11-14T01:00:00.000Z' },
       });
       seedSession(home, {
         title: 'idle',
@@ -951,16 +953,70 @@ describe('aflt memory', () => {
         lastUsed: '2026-11-14T03:00:00.000Z',
       });
       const mem = loadMemory(home);
-      const built = mem.buildDashboard(loadRegistry(home).list({ includeDone: true }), {
+      const sessions = loadRegistry(home).list({ includeDone: true });
+      const built = mem.buildDashboard(sessions, {
         now: NOW,
         redact: false,
+        herdrFetch: { ok: false, error: 'stub', terminals: [], checkedAt: '2026-11-14T00:00:00.000Z' },
+        isAlive: (pid) => Number(pid) === process.pid,
       });
       const row = built.active.find((r) => r.project === 'counts');
       assert.ok(row);
-      assert.equal(row.open, 2);
-      assert.equal(row.idle, 1);
+      assert.equal(row.open, 1);
+      assert.equal(row.idle, 2);
       assert.equal(row.total, 4);
-      assert.match(built.md, /\| \[counts\]\(counts\/\) \| 2026-11-1[34] \| 2\/1\/4 \|/);
+      assert.match(built.md, /\| \[counts\]\(counts\/\) \| 2026-11-1[34] \| 1\/2\/4 \|/);
+      const raw = sessions.find((s) => s.id === exited.id);
+      assert.equal(raw.status, 'active');
+      assert.equal(sessions.find((s) => s.id === live.id).status, 'active');
+    });
+
+    it('active + Herdr exited counts as idle; af aliases to aflt folder', () => {
+      initDash();
+      const cwd = path.join(home, 'workspace', 'aflt');
+      fs.mkdirSync(cwd, { recursive: true });
+      fs.mkdirSync(path.join(memRepo, 'af'), { recursive: true });
+      fs.mkdirSync(path.join(memRepo, 'aflt'), { recursive: true });
+      const sess = seedSession(home, {
+        title: 'legacy-af',
+        project: 'af',
+        cwd,
+        status: 'active',
+        created: '2026-11-01T00:00:00.000Z',
+        lastUsed: '2026-11-14T12:00:00.000Z',
+        herdr: { runtime: 'exited', checkedAt: '2026-11-14T12:00:00.000Z' },
+      });
+      const mem = loadMemory(home);
+      const sessions = loadRegistry(home).list({ includeDone: true });
+      assert.equal(sessions.find((s) => s.id === sess.id).project, 'af');
+
+      const counts = mem.projectSessionCounts(sessions, 'aflt', {
+        enrichmentById: {
+          [sess.id]: { runtime: 'exited', checkedAt: '2026-11-14T12:00:00.000Z' },
+        },
+      });
+      assert.equal(counts.open, 0);
+      assert.equal(counts.idle, 1);
+      assert.equal(counts.total, 1);
+
+      const syncProjects = mem.resolveSyncProjects(sessions, { all: true });
+      assert.ok(syncProjects.includes('aflt'));
+      assert.ok(!syncProjects.includes('af'));
+
+      const built = mem.buildDashboard(sessions, {
+        now: NOW,
+        redact: false,
+        enrichmentById: {
+          [sess.id]: { runtime: 'exited', checkedAt: '2026-11-14T12:00:00.000Z' },
+        },
+      });
+      const afltRow = built.rows.find((r) => r.project === 'aflt');
+      assert.ok(afltRow);
+      assert.equal(afltRow.open, 0);
+      assert.equal(afltRow.idle, 1);
+      // Legacy af/ folder may still appear from the repo listing; do not delete it
+      assert.ok(fs.existsSync(path.join(memRepo, 'af')));
+      assert.equal(sessions.find((s) => s.id === sess.id).project, 'af');
     });
 
     it('status-note title+date from filename/heading; archive ignored; newest wins', () => {

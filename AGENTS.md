@@ -91,7 +91,7 @@ aflt memory sync --all --commit --push  # nightly: sync + commit generated + pus
 aflt children --json            # workers of this master, or a summary of masters
 ```
 
-`STATUS` is saved lifecycle (`active` | `paused` | `done`). A process exit does **not** mark the task done — use `aflt done`. `HERDR` is live runtime from `hc ls`: `running` | `shell` | `exited` | `missing` | `unknown` | `-`. `aflt ls --json` also includes derived `workerStatus` (same rules as `aflt children --json`) plus effective `project` and `parent`. `aflt ls` never writes the registry. `aflt timeline` is strictly read-only (no registry/Herdr writes). `aflt dashboard` is also read-only (local UI / snapshot; not `aflt memory dashboard`).
+`STATUS` is saved lifecycle (`active` | `paused` | `done`). A process exit does **not** mark the task done — use `aflt done`. `HERDR` is live runtime from `hc ls`: `running` | `shell` | `exited` | `missing` | `unknown` | `-`. `aflt ls --json` also includes derived `workerStatus` (same rules as `aflt children --json`) plus effective `project` and `parent`. `aflt ls` never writes the registry. `aflt timeline` is strictly read-only (no registry/Herdr writes). `aflt dashboard` is also read-only (local UI / snapshot; not `aflt memory dashboard`). Live graph positions persist across SSE updates and settle; **open** counts are live/running only (Herdr-exited/`missing` registry-active sessions are **idle**, not open — registry `status` unchanged). Legacy project `af` aliases to `aflt` for dashboard hubs and memory sync/dashboard folders.
 
 ### 3. Orchestrate workers from a master
 
@@ -197,8 +197,9 @@ aflt memory sync [<project>...] [--all] [--include-adhoc] [--dry-run] [--json] [
  [--active-days N] [--commit] [--push]
 # Write <repo>/<project>/_aflt/timeline.md + sessions.jsonl (registry read-only), then
 # regenerate root DASHBOARD.md (complete Active/Dormant table for all memory-repo +
-# registry projects — a one-project sync does not wipe other rows). Default: cwd /
-# AFLT_PROJECT. --all skips adhoc unless --include-adhoc or named.
+# registry projects — a one-project sync does not wipe other rows). Sessions
+# (open/idle/total): open=running only; Herdr-exited active → idle. Legacy af→aflt.
+# Default: cwd / AFLT_PROJECT. --all skips adhoc unless --include-adhoc or named.
 # Human README/dashboard.md/status-notes created only if missing; never overwritten.
 # Redaction ON for generated files. --active-days N (ET calendar days; default 14;
 # else config.json memoryActiveDays; flag > config > 14). Doc-bot summary block in
@@ -227,7 +228,7 @@ aflt sync [--dry-run] [--json]
 
 `aflt timeline` is read-only. Default project: `<project>` arg → `AFLT_PROJECT` → cwd's derived project. Text shows local times (JSON keeps ISO UTC). Commits come from each session's own cwd (`commitsReason`: `not-git` / `missing-cwd`); an open-ended row that is not a live run is bounded at `lastUsed` (`open-ended` when it never ran).
 
-`aflt dashboard` is a separate top-level command from `aflt memory dashboard`. It serves a local read-only activity UI (`--serve`, default `127.0.0.1:8787`) or writes an SVG/HTML snapshot (`--snapshot`). It never mutates the registry, memory repo, or Herdr.
+`aflt dashboard` is a separate top-level command from `aflt memory dashboard`. It serves a local read-only activity UI (`--serve`, default `127.0.0.1:8787`) or writes an SVG/HTML snapshot (`--snapshot`). It never mutates the registry, memory repo, or Herdr. The graph keeps node positions across SSE ticks and cools the force layout until it settles (reheat on node add/remove or resize). Stats `open` / `idle` / `done` / `failed` follow display-state (running vs idle), not bare registry `active`.
 
 `aflt memory` is opt-in and never auto-syncs. Resolution: `AFLT_MEMORY_REPO` → `config.json` `memoryRepo`. Optional `--commit` / `--push` on `sync` stages root `DASHBOARD.md` and `*/_aflt/**` (human files stay unstaged). Layout: root `DASHBOARD.md` is generated (Active/Dormant; default 14-day ET window via `--active-days` / `memoryActiveDays`; doc-bot summary markers preserved verbatim); `<repo>/<project>/_aflt/` is generated (never hand-edit); `<project>/README.md`, `dashboard.md`, `status-notes/` are human/Doc Bot files that aflt creates only if missing and never commits (never write `DASHBOARD.md` inside a project folder — that name is root-only). Redaction (default on) covers generated files only: home → `~`, private IPs, `*.local`, emails, token-like strings, long hex/base64 (not the preserved doc-bot block). `adhoc` (home/tmp one-offs) is excluded from `--all` unless `--include-adhoc`. Nightly flow on the Mini: `aflt memory sync --all --commit --push` (commits `memory: sync YYYY-MM-DD` only when something changed; exits non-zero if push fails or there is no upstream), then optionally `aflt memory doc` to update the Doc Bot summary in `DASHBOARD.md` (separate commit, only when instructed). `DOC-AGENT.md` in the memory repo is the portable documentarian prompt; `aflt memory init` writes it when missing. `aflt memory doc --engine copilot` is the same role on a work laptop that has Copilot CLI instead of Cursor.
 
@@ -484,7 +485,7 @@ Home: **`$AGENTFLEET_HOME`** (default `~/.agentfleet`). Override the registry fi
 
 Each session stores identity (`id`, `title`, `chatId`, `cwd`, `branch`, `model`, `engine`), optional `project`, lifecycle `status` (`active` | `paused` | `done`), `tags` / `notes` / `prompt`, optional `herdr` evidence from `aflt sync`, and orchestration fields (`parent`, `role`, `task`, `result`, `workerStatus`, run pid metadata, `messaging`, …).
 
-**Project name (`session.project`):** optional string for grouping. **Projects never require git** — one-off agents in `/tmp` or `$HOME` can share a name.
+**Project name (`session.project`):** optional string for grouping. **Projects never require git** — one-off agents in `/tmp` or `$HOME` can share a name. Legacy alias map (`lib/project.js` `PROJECT_ALIASES` / `canonicalProjectName`): `af` → `aflt` for grouping, live dashboard hubs, and memory sync/dashboard folders (registry `project` is not rewritten; existing `af/` memory folders are left alone).
 
 **New sessions** store the resolved name (`--project` on `new`/`add`/`run`/`master`/`spawn`/import). Precedence: `--project` → parent/master project → `AFLT_PROJECT` → `.agentfleet.json` `"project"` → `$AGENTFLEET_HOME/config.json` `"project"` → git-root basename → cwd basename, except `$HOME` / `os.tmpdir()` (+ realpath) / `/tmp` / `/private/tmp` → `"adhoc"`. Workers inherit the master's project (unless `--project` overrides); docs sessions inherit when triggered from a master (and set `parent` when that path runs).
 

@@ -23,6 +23,7 @@ function clearDashboardModules() {
     '../lib/util',
     '../lib/config',
     '../lib/project',
+    '../lib/display-state',
     '../lib/registry',
     '../lib/memory',
     '../lib/herdr',
@@ -234,6 +235,8 @@ describe('aflt dashboard', () => {
 
     assert.equal(payload.stats.sessions, 4);
     assert.equal(payload.stats.runningSessions, 1);
+    assert.equal(payload.stats.open, 1);
+    assert.equal(payload.stats.idle, 1);
     assert.equal(payload.stats.engines.cursor, 3);
     assert.equal(payload.stats.engines.copilot, 1);
     assert.equal(payload.stats.failed, 1);
@@ -257,6 +260,123 @@ describe('aflt dashboard', () => {
     assert.ok(payload.sparkline24h.some((n) => n > 0) || payload.sparkline7d.some((n) => n > 0));
     assert.ok(payload.events.length > 0);
     assert.ok(payload.events[0].at >= payload.events[payload.events.length - 1].at);
+  });
+
+  it('active + Herdr exited is idle (not open); registry status stays active; af→aflt', () => {
+    const dash = loadDashboard(home);
+    const exited = {
+      id: 'exited-aaaaaaaaaaaa',
+      title: 'was-live',
+      project: 'af',
+      engine: 'cursor',
+      status: 'active',
+      created: '2024-06-10T10:00:00.000Z',
+      lastUsed: '2024-06-10T11:00:00.000Z',
+      cwd: path.join(home, 'proj'),
+    };
+    const live = {
+      id: 'live-bbbbbbbbbbbb',
+      title: 'still-running',
+      project: 'aflt',
+      engine: 'cursor',
+      status: 'active',
+      created: '2024-06-10T10:00:00.000Z',
+      lastUsed: '2024-06-10T11:30:00.000Z',
+      runPid: process.pid,
+      cwd: path.join(home, 'proj'),
+    };
+    const payload = dash.aggregateDashboard({
+      sessions: [exited, live],
+      enrichmentById: {
+        [exited.id]: { runtime: 'exited', checkedAt: '2024-06-10T11:01:00.000Z' },
+        [live.id]: { runtime: 'running', checkedAt: '2024-06-10T11:31:00.000Z' },
+      },
+      now: '2024-06-10T12:00:00.000Z',
+      isAlive: (pid) => Number(pid) === process.pid,
+    });
+    const byId = Object.fromEntries(payload.sessions.map((s) => [s.id, s]));
+    assert.equal(byId[exited.id].displayState, 'idle');
+    assert.equal(byId[live.id].displayState, 'running');
+    assert.equal(byId[exited.id].status, 'active');
+    assert.equal(byId[exited.id].project, 'aflt');
+    assert.equal(byId[live.id].project, 'aflt');
+    assert.equal(payload.stats.open, 1);
+    assert.equal(payload.stats.idle, 1);
+    assert.equal(payload.stats.runningSessions, 1);
+    assert.equal(payload.projects.length, 1);
+    assert.equal(payload.projects[0].name, 'aflt');
+    assert.equal(exited.project, 'af');
+  });
+
+  it('mergeSimPreserve keeps positions when node ids are unchanged', () => {
+    const dash = loadDashboard(home);
+    const prev = {
+      nodes: [
+        { id: 'project:a', kind: 'project', label: 'a', x: 10, y: 20, vx: 0.5, vy: -0.2, r: 20 },
+        { id: 's1', kind: 'session', label: 'one', x: 40, y: 50, vx: 0.1, vy: 0.1, r: 8 },
+      ],
+      links: [],
+      w: 800,
+      h: 600,
+      cx: 400,
+      cy: 300,
+      alpha: 0.3,
+    };
+    const nextBuilt = {
+      nodes: [
+        {
+          id: 'project:a',
+          kind: 'project',
+          label: 'a',
+          displayState: 'idle',
+          x: 100,
+          y: 200,
+          vx: 0,
+          vy: 0,
+          r: 20,
+        },
+        {
+          id: 's1',
+          kind: 'session',
+          label: 'one-renamed',
+          displayState: 'running',
+          x: 300,
+          y: 400,
+          vx: 0,
+          vy: 0,
+          r: 8,
+          recent: true,
+        },
+      ],
+      links: [{ source: 'project:a', target: 's1', kind: 'project', recent: true }],
+      w: 800,
+      h: 600,
+      cx: 400,
+      cy: 300,
+    };
+    const merged = dash.mergeSimPreserve(prev, nextBuilt, { preserveAlpha: true });
+    assert.equal(merged.nodeSetChanged, false);
+    assert.equal(merged.alpha, 0.3);
+    const byId = Object.fromEntries(merged.nodes.map((n) => [n.id, n]));
+    assert.equal(byId['project:a'].x, 10);
+    assert.equal(byId['project:a'].y, 20);
+    assert.equal(byId['project:a'].vx, 0.5);
+    assert.equal(byId.s1.x, 40);
+    assert.equal(byId.s1.label, 'one-renamed');
+    assert.equal(byId.s1.displayState, 'running');
+    assert.equal(byId.s1.recent, true);
+    assert.equal(merged.links.length, 1);
+    assert.equal(merged.links[0].source.x, 10);
+
+    const withNew = dash.mergeSimPreserve(prev, {
+      ...nextBuilt,
+      nodes: [
+        ...nextBuilt.nodes,
+        { id: 's2', kind: 'session', label: 'two', x: 1, y: 2, vx: 0, vy: 0, r: 8 },
+      ],
+    });
+    assert.equal(withNew.nodeSetChanged, true);
+    assert.equal(withNew.alpha, 1);
   });
 
   it('merges optional memory sessions.jsonl and ignores when absent', () => {
