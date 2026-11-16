@@ -82,6 +82,8 @@ aflt ls --status active
 aflt ls --project my-app --json # filter by stored or derived project name
 aflt timeline                   # read-only session tree for cwd's project
 aflt timeline --all --json      # every project, grouped
+aflt dashboard --serve          # live local activity UI (default http://127.0.0.1:8787/)
+aflt dashboard --snapshot /tmp/aflt.svg  # read-only SVG/HTML snapshot (≠ memory dashboard)
 aflt memory sync                # opt-in: write cwd project timeline + root DASHBOARD.md
 aflt memory dashboard           # regenerate root DASHBOARD.md only
 aflt memory doc [--engine cursor|copilot]  # Doc Bot session (DOC-AGENT.md)
@@ -89,7 +91,7 @@ aflt memory sync --all --commit --push  # nightly: sync + commit generated + pus
 aflt children --json            # workers of this master, or a summary of masters
 ```
 
-`STATUS` is saved lifecycle (`active` | `paused` | `done`). A process exit does **not** mark the task done — use `aflt done`. `HERDR` is live runtime from `hc ls`: `running` | `shell` | `exited` | `missing` | `unknown` | `-`. `aflt ls --json` also includes derived `workerStatus` (same rules as `aflt children --json`) plus effective `project` and `parent`. `aflt ls` never writes the registry. `aflt timeline` is strictly read-only (no registry/Herdr writes).
+`STATUS` is saved lifecycle (`active` | `paused` | `done`). A process exit does **not** mark the task done — use `aflt done`. `HERDR` is live runtime from `hc ls`: `running` | `shell` | `exited` | `missing` | `unknown` | `-`. `aflt ls --json` also includes derived `workerStatus` (same rules as `aflt children --json`) plus effective `project` and `parent`. `aflt ls` never writes the registry. `aflt timeline` is strictly read-only (no registry/Herdr writes). `aflt dashboard` is also read-only (local UI / snapshot; not `aflt memory dashboard`).
 
 ### 3. Orchestrate workers from a master
 
@@ -177,6 +179,13 @@ aflt timeline [<project>] [--all] [--json] [--since <date>]
 # AFLT_PROJECT, else cwd project. Chronological roots + indented children; best-effort
 # git commits in each session window. --since ISO or YYYY-MM-DD. Exit 0 when empty.
 
+aflt dashboard --serve [--port 8787] [--host 127.0.0.1] [--json]
+# Live local activity dashboard (read-only). Default bind 127.0.0.1:8787.
+# Blocks until SIGINT/SIGTERM. Not the same as aflt memory dashboard.
+
+aflt dashboard --snapshot <file.svg|html>
+# Standalone SVG or self-contained HTML snapshot of the activity graph (no server).
+
 aflt memory | aflt memory where [--json]
 # Resolved memory repo path + source (env|config), or hint to run init (exit 1).
 
@@ -217,6 +226,8 @@ aflt sync [--dry-run] [--json]
 ```
 
 `aflt timeline` is read-only. Default project: `<project>` arg → `AFLT_PROJECT` → cwd's derived project. Text shows local times (JSON keeps ISO UTC). Commits come from each session's own cwd (`commitsReason`: `not-git` / `missing-cwd`); an open-ended row that is not a live run is bounded at `lastUsed` (`open-ended` when it never ran).
+
+`aflt dashboard` is a separate top-level command from `aflt memory dashboard`. It serves a local read-only activity UI (`--serve`, default `127.0.0.1:8787`) or writes an SVG/HTML snapshot (`--snapshot`). It never mutates the registry, memory repo, or Herdr.
 
 `aflt memory` is opt-in and never auto-syncs. Resolution: `AFLT_MEMORY_REPO` → `config.json` `memoryRepo`. Optional `--commit` / `--push` on `sync` stages root `DASHBOARD.md` and `*/_aflt/**` (human files stay unstaged). Layout: root `DASHBOARD.md` is generated (Active/Dormant; default 14-day ET window via `--active-days` / `memoryActiveDays`; doc-bot summary markers preserved verbatim); `<repo>/<project>/_aflt/` is generated (never hand-edit); `<project>/README.md`, `dashboard.md`, `status-notes/` are human/Doc Bot files that aflt creates only if missing and never commits (never write `DASHBOARD.md` inside a project folder — that name is root-only). Redaction (default on) covers generated files only: home → `~`, private IPs, `*.local`, emails, token-like strings, long hex/base64 (not the preserved doc-bot block). `adhoc` (home/tmp one-offs) is excluded from `--all` unless `--include-adhoc`. Nightly flow on the Mini: `aflt memory sync --all --commit --push` (commits `memory: sync YYYY-MM-DD` only when something changed; exits non-zero if push fails or there is no upstream), then optionally `aflt memory doc` to update the Doc Bot summary in `DASHBOARD.md` (separate commit, only when instructed). `DOC-AGENT.md` in the memory repo is the portable documentarian prompt; `aflt memory init` writes it when missing. `aflt memory doc --engine copilot` is the same role on a work laptop that has Copilot CLI instead of Cursor.
 

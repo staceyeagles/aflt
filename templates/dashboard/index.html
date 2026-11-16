@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>aflt live</title>
+  <link rel="stylesheet" href="/dashboard.css"/>
+</head>
+<body>
+  <div class="shell">
+    <main class="stage" id="stage" aria-label="activity graph">
+      <svg id="graph" xmlns="http://www.w3.org/2000/svg"></svg>
+      <div class="hint" id="hint">hover a node · click for details</div>
+    </main>
+    <aside class="panel" id="panel">
+      <header class="panel-head">
+        <div class="brand">aflt live</div>
+        <div class="meta" id="meta">local · connecting…</div>
+      </header>
+      <section class="stats" id="stats"></section>
+      <section class="sparks">
+        <div class="spark-block">
+          <div class="label">last 24h</div>
+          <svg class="spark" id="spark24" viewBox="0 0 280 40" preserveAspectRatio="none"></svg>
+        </div>
+        <div class="spark-block">
+          <div class="label">last 7d</div>
+          <svg class="spark" id="spark7" viewBox="0 0 280 40" preserveAspectRatio="none"></svg>
+        </div>
+      </section>
+      <section class="detail" id="detail">
+        <div class="empty">select a project or session</div>
+      </section>
+      <section class="timeline">
+        <div class="label">recent</div>
+        <ul id="events"></ul>
+      </section>
+    </aside>
+  </div>
+  <script src="/dashboard.js"></script>
+</body>
+</html>

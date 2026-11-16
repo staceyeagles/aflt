@@ -23,6 +23,7 @@ const mcp = require('../lib/mcp');
 const projectLib = require('../lib/project');
 const timeline = require('../lib/timeline');
 const memory = require('../lib/memory');
+const dashboard = require('../lib/dashboard');
 const resolveSession = require('../lib/resolve-session');
 const {
   parseArgs,
@@ -97,6 +98,14 @@ Usage:
                             best-effort git commits per session cwd (skipped when
                             missing/not-git; projects need no repo). --since ISO or
                             YYYY-MM-DD. Exit 0 when empty.
+  aflt dashboard --serve [--port 8787] [--host 127.0.0.1] [--json]
+                            Live local activity dashboard (read-only). Default bind
+                            127.0.0.1:8787. Blocks until SIGINT/SIGTERM. Separate from
+                            aflt memory dashboard (memory-repo DASHBOARD.md).
+  aflt dashboard --snapshot <file.svg|html>
+                            Write a standalone SVG or self-contained HTML snapshot
+                            of the current activity graph (no server). Parent dirs
+                            created as needed. Only .svg / .html(.htm) supported.
   aflt memory                 Show resolved project-memory repo path (or hint to init)
   aflt memory where [--json]  Same as aflt memory (path + source: env|config)
   aflt memory init <path> [--force] [--json]
@@ -439,6 +448,9 @@ async function main() {
       break;
     case 'timeline':
       cmdTimeline(rest);
+      break;
+    case 'dashboard':
+      await cmdDashboard(rest);
       break;
     case 'memory':
       await cmdMemory(rest);
@@ -1114,6 +1126,72 @@ function cmdTimeline(argv) {
     return;
   }
   process.stdout.write(timeline.formatTimelineText(payload));
+}
+
+/**
+ * Live local activity dashboard (read-only). Separate from `aflt memory dashboard`.
+ */
+async function cmdDashboard(argv) {
+  const { args, flags } = parseArgs(argv);
+  const asJson = recoverBoolFlag(flags, 'json', args);
+  const serve = Boolean(flags.serve);
+  const snapshot =
+    flags.snapshot != null && flags.snapshot !== true
+      ? String(flags.snapshot)
+      : args[0] && !serve
+        ? String(args[0])
+        : null;
+
+  if (!serve && !snapshot) {
+    fail(
+      'usage: aflt dashboard --serve [--port 8787] [--host 127.0.0.1] [--json]\n' +
+        '       aflt dashboard --snapshot <file.svg|html>',
+      { json: asJson }
+    );
+  }
+
+  if (serve && snapshot) {
+    fail('aflt dashboard: use either --serve or --snapshot, not both', { json: asJson });
+  }
+
+  if (snapshot) {
+    let state;
+    try {
+      state = dashboard.collectState();
+    } catch (err) {
+      fail(err.message || String(err), { json: asJson });
+    }
+    let outPath;
+    try {
+      outPath = dashboard.writeSnapshot(snapshot, state);
+    } catch (err) {
+      fail(err.message || String(err), { json: asJson });
+    }
+    if (asJson) {
+      emitJson({ ok: true, path: outPath, generatedAt: state.generatedAt });
+    } else {
+      process.stdout.write(outPath + '\n');
+    }
+    return;
+  }
+
+  let host = dashboard.DEFAULT_HOST;
+  if (flags.host != null && flags.host !== true) {
+    host = String(flags.host);
+  }
+  let port = dashboard.DEFAULT_PORT;
+  if (flags.port != null && flags.port !== true) {
+    port = parseInt(String(flags.port), 10);
+    if (!Number.isInteger(port) || port < 0 || port > 65535) {
+      fail('--port must be an integer 0–65535', { json: asJson });
+    }
+  }
+
+  try {
+    await dashboard.serveDashboard({ host, port, json: asJson });
+  } catch (err) {
+    fail(err.message || String(err), { json: asJson });
+  }
 }
 
 /**

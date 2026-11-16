@@ -23,7 +23,8 @@
     "templates",
     "docs",
     "README.md",
-    "AGENTS.md"
+    "AGENTS.md",
+    "assets"
   ],
   "keywords": [
     "cursor",
