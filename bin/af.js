@@ -102,25 +102,40 @@ Usage:
   aflt memory init <path> [--force] [--json]
                             Create/register an aflt project-memory git repo (local only;
                             never adds a remote, never commits). Writes README/.gitignore/
-                            .aflt-memory.json when missing; registers realpath as
-                            memoryRepo in $AGENTFLEET_HOME/config.json. Idempotent on an
-                            existing memory repo. Refuses a non-empty foreign dir unless
-                            --force (then adds files; never overwrites README/.gitignore).
+                            .aflt-memory.json / DOC-AGENT.md when missing; registers
+                            realpath as memoryRepo in $AGENTFLEET_HOME/config.json.
+                            Idempotent on an existing memory repo. Refuses a non-empty
+                            foreign dir unless --force (then adds files; never overwrites
+                            README/.gitignore/DOC-AGENT.md).
   aflt memory sync [<project>...] [--all] [--include-adhoc] [--dry-run] [--json] [--no-redact]
-                            [--commit] [--push]
+                            [--active-days N] [--commit] [--push]
                             Write <repo>/<project>/_aflt/timeline.md + sessions.jsonl from
-                            the registry (read-only). Default: cwd / AFLT_PROJECT project.
+                            the registry (read-only), then regenerate root DASHBOARD.md
+                            (complete Active/Dormant table for all memory-repo + registry
+                            projects). Default: cwd / AFLT_PROJECT project.
                             --all: every registry project except adhoc (one-off home/tmp
                             prompts are often personal; pass --include-adhoc or name adhoc
                             explicitly). Creates <project>/README.md + status-notes/.gitkeep
                             only if missing; never overwrites human notes. Writes only when
                             content differs. Redaction ON by default (--no-redact to disable).
-                            --commit: after sync, stage only */_aflt/** and commit
+                            --active-days N: Active threshold in calendar days ET (default 14;
+                            else config.json memoryActiveDays). Flag > config > 14.
+                            --commit: after sync, stage DASHBOARD.md + */_aflt/** and commit
                             (message "memory: sync YYYY-MM-DD"); refuses if the index already
-                            has staged changes or anything outside */_aflt/ would be included;
+                            has staged changes or anything else would be included; never
+                            stages human README / per-project dashboard.md / status-notes;
                             --commit --dry-run is an error. --push requires --commit; pushes
                             to the current branch upstream when a commit was made or the
                             branch is ahead (never adds remotes / never force).
+  aflt memory dashboard [--dry-run] [--json] [--no-redact] [--active-days N]
+                            Regenerate root DASHBOARD.md only (no per-project _aflt/ writes).
+                            Same dry-run / json / redact / active-days semantics as sync.
+                            Preserves <!-- doc-bot:summary --> block verbatim when present.
+  aflt memory doc [--engine cursor|copilot] [--dry-run] [--json] [--force]
+                            Launch a portable Doc Bot session (\`memory-doc\`) in the memory
+                            repo with DOC-AGENT.md as the prompt (Cursor CLI or Copilot CLI
+                            via --engine). Fails if DOC-AGENT.md is missing. --dry-run does
+                            not create a session or start an engine.
   aflt memory status [--json]
                             Read-only: repo path/source, git dirty count, per-project
                             folder/lastSync/sessions/stale (stale = sync would change files).
@@ -426,7 +441,7 @@ async function main() {
       cmdTimeline(rest);
       break;
     case 'memory':
-      cmdMemory(rest);
+      await cmdMemory(rest);
       break;
     case 'sync':
       cmdSync(rest);
@@ -1102,13 +1117,13 @@ function cmdTimeline(argv) {
 }
 
 /**
- * Opt-in project memory repo: init / where / sync / status.
+ * Opt-in project memory repo: init / where / sync / dashboard / status.
  * Sync is read-only on the af registry; optional --commit/--push touches only
- * the memory git repo (generated paths).
+ * the memory git repo (generated paths: DASHBOARD.md and per-project _aflt/).
  */
-function cmdMemory(argv) {
+async function cmdMemory(argv) {
   const { args: rawArgs, flags } = parseArgs(argv);
-  const MEMORY_SUBS = new Set(['where', 'init', 'sync', 'status']);
+  const MEMORY_SUBS = new Set(['where', 'init', 'sync', 'dashboard', 'doc', 'status']);
   const args = rawArgs.slice();
   // Take subcommand first so --json/--force before a path do not reorder it
   // (e.g. `memory init --json /path` → flags.json="/path", args=["init"]).
@@ -1118,6 +1133,30 @@ function cmdMemory(argv) {
   }
   const restArgs = args;
   const asJson = recoverBoolFlag(flags, 'json', restArgs);
+
+  function parseActiveDaysFlag() {
+    const v = flags['active-days'];
+    if (v == null || v === false) return undefined;
+    if (v === true) {
+      fail('--active-days requires a positive integer', { json: asJson });
+    }
+    const n = parseInt(String(v), 10);
+    if (!Number.isInteger(n) || n < 1 || String(n) !== String(v).trim()) {
+      fail('--active-days must be a positive integer', { json: asJson });
+    }
+    return n;
+  }
+
+  function dashboardJson(dash) {
+    if (!dash) return undefined;
+    return {
+      path: dash.path,
+      changed: dash.changed,
+      activeDays: dash.activeDays,
+      active: dash.active,
+      dormant: dash.dormant,
+    };
+  }
 
   if (!sub || sub === 'where') {
     const resolved = memory.resolveMemoryRepo();
@@ -1165,6 +1204,7 @@ function cmdMemory(argv) {
     const noRedact = recoverBoolFlag(flags, 'no-redact', restArgs);
     const doCommit = recoverBoolFlag(flags, 'commit', restArgs);
     const doPush = recoverBoolFlag(flags, 'push', restArgs);
+    const activeDays = parseActiveDaysFlag();
     const projects = restArgs.filter((a) => a && !String(a).startsWith('-'));
 
     if (doPush && !doCommit) {
@@ -1182,6 +1222,7 @@ function cmdMemory(argv) {
         includeAdhoc,
         dryRun,
         redact: !noRedact,
+        activeDays,
         cwd: process.cwd(),
       });
 
@@ -1224,6 +1265,7 @@ function cmdMemory(argv) {
             sessions: p.sessions,
             files: p.files.map((f) => ({ path: f.path, changed: f.changed })),
           })),
+          dashboard: dashboardJson(result.dashboard),
         };
         if (commitJson) payload.commit = commitJson;
         if (pushJson) payload.push = pushJson;
@@ -1241,6 +1283,14 @@ function cmdMemory(argv) {
             );
           }
         }
+        if (result.dashboard) {
+          const mark = result.dashboard.changed ? 'write' : 'skip';
+          process.stdout.write(
+            `  [${mark}] ${result.dashboard.path}` +
+              `${result.dashboard.bytes != null ? ` (${result.dashboard.bytes} bytes)` : ''}` +
+              ` (active ${result.dashboard.active}, dormant ${result.dashboard.dormant})\n`
+          );
+        }
         return;
       }
       let changed = 0;
@@ -1249,9 +1299,17 @@ function cmdMemory(argv) {
           if (f.changed) changed++;
         }
       }
+      if (result.dashboard && result.dashboard.changed) changed++;
       process.stdout.write(
         `memory sync: ${result.projects.length} project(s), ${changed} file(s) updated → ${result.repo}\n`
       );
+      if (result.dashboard) {
+        process.stdout.write(
+          `memory dashboard: ${result.dashboard.path}` +
+            ` (active ${result.dashboard.active}, dormant ${result.dashboard.dormant}` +
+            `, ${result.dashboard.activeDays}d)\n`
+        );
+      }
       if (commitInfo) {
         if (commitInfo.committed) {
           process.stdout.write(
@@ -1291,6 +1349,101 @@ function cmdMemory(argv) {
     return;
   }
 
+  if (sub === 'dashboard') {
+    const dryRun = recoverBoolFlag(flags, 'dry-run', restArgs);
+    const noRedact = recoverBoolFlag(flags, 'no-redact', restArgs);
+    const includeAdhoc = recoverBoolFlag(flags, 'include-adhoc', restArgs);
+    const activeDays = parseActiveDaysFlag();
+    const sessions = registry.list({ includeDone: true });
+    try {
+      const result = memory.syncDashboard(sessions, {
+        dryRun,
+        redact: !noRedact,
+        includeAdhoc,
+        activeDays,
+        cwd: process.cwd(),
+      });
+      if (asJson) {
+        emitJson({
+          ok: true,
+          repo: result.repo,
+          source: result.source,
+          dashboard: dashboardJson(result.dashboard),
+        });
+        return;
+      }
+      if (dryRun) {
+        const d = result.dashboard;
+        const mark = d.changed ? 'write' : 'skip';
+        process.stdout.write(
+          `[${mark}] ${d.path}${d.bytes != null ? ` (${d.bytes} bytes)` : ''}` +
+            ` (active ${d.active}, dormant ${d.dormant}, ${d.activeDays}d)\n`
+        );
+        return;
+      }
+      const d = result.dashboard;
+      process.stdout.write(
+        `memory dashboard: ${d.path}` +
+          `${d.changed ? ' updated' : ' unchanged'}` +
+          ` (active ${d.active}, dormant ${d.dormant}, ${d.activeDays}d) → ${result.repo}\n`
+      );
+    } catch (err) {
+      fail(err.message || String(err), { json: asJson });
+    }
+    return;
+  }
+
+  if (sub === 'doc') {
+    const dryRun = recoverBoolFlag(flags, 'dry-run', restArgs);
+    const force = recoverBoolFlag(flags, 'force', restArgs);
+    const engineFlag = flags.engine && flags.engine !== true ? String(flags.engine) : null;
+    const modelFlag = flags.model && flags.model !== true ? String(flags.model) : null;
+    const timeoutFlag = flags.timeout != null && flags.timeout !== true ? String(flags.timeout) : null;
+
+    const resolved = memory.resolveMemoryRepo();
+    if (!resolved) {
+      fail(
+        'no memory repo configured. Run `aflt memory init <path>` or set AFLT_MEMORY_REPO.',
+        { json: asJson }
+      );
+    }
+    const docPath = path.join(resolved.path, memory.DOC_AGENT_REL);
+    if (!fs.existsSync(docPath)) {
+      fail(
+        `missing ${memory.DOC_AGENT_REL} in ${resolved.path}. Re-run \`aflt memory init\` on this repo or copy templates/${memory.DOC_AGENT_REL} from the aflt package.`,
+        { json: asJson }
+      );
+    }
+    let prompt;
+    try {
+      prompt = fs.readFileSync(docPath, 'utf8');
+    } catch (err) {
+      fail(`cannot read ${docPath}: ${err.message || err}`, { json: asJson });
+    }
+    if (!String(prompt || '').trim()) {
+      fail(`${memory.DOC_AGENT_REL} is empty: ${docPath}`, { json: asJson });
+    }
+
+    const runArgv = [
+      'memory-doc',
+      '--cwd',
+      resolved.path,
+      '--project',
+      'aflt-memory',
+      '--prompt',
+      prompt,
+      '--no-docs',
+    ];
+    if (engineFlag) runArgv.push('--engine', engineFlag);
+    if (modelFlag) runArgv.push('--model', modelFlag);
+    if (timeoutFlag) runArgv.push('--timeout', timeoutFlag);
+    if (force) runArgv.push('--force');
+    if (dryRun) runArgv.push('--dry-run');
+    if (asJson) runArgv.push('--json');
+    await cmdRun(runArgv);
+    return;
+  }
+
   if (sub === 'status') {
     const sessions = registry.list({ includeDone: true });
     try {
@@ -1317,7 +1470,7 @@ function cmdMemory(argv) {
   }
 
   fail(
-    `unknown memory subcommand: ${sub}\nusage: aflt memory [where|init|sync|status] …`,
+    `unknown memory subcommand: ${sub}\nusage: aflt memory [where|init|sync|dashboard|doc|status] …`,
     { json: asJson }
   );
 }

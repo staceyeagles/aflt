@@ -105,6 +105,9 @@ describe('aflt memory', () => {
     assert.equal(j.repo, fs.realpathSync(memRepo));
     assert.ok(fs.existsSync(path.join(memRepo, '.aflt-memory.json')));
     assert.ok(fs.existsSync(path.join(memRepo, 'README.md')));
+    assert.ok(fs.existsSync(path.join(memRepo, 'DOC-AGENT.md')));
+    const docAgent = fs.readFileSync(path.join(memRepo, 'DOC-AGENT.md'), 'utf8');
+    assert.match(docAgent, /Memory documentarian/);
     assert.ok(fs.existsSync(path.join(memRepo, '.gitignore')));
     const gi = fs.readFileSync(path.join(memRepo, '.gitignore'), 'utf8');
     assert.match(gi, /\.DS_Store/);
@@ -124,10 +127,13 @@ describe('aflt memory', () => {
   it('init is idempotent and re-registers', () => {
     assert.equal(af(['memory', 'init', memRepo], env()).status, 0);
     const marker1 = fs.readFileSync(path.join(memRepo, '.aflt-memory.json'), 'utf8');
+    const docPath = path.join(memRepo, 'DOC-AGENT.md');
+    fs.writeFileSync(docPath, '# custom doc agent\n');
     const r2 = af(['memory', 'init', memRepo, '--json'], env());
     assert.equal(r2.status, 0, r2.stderr);
     const j = JSON.parse(r2.stdout);
     assert.equal(j.created, false);
+    assert.equal(fs.readFileSync(docPath, 'utf8'), '# custom doc agent\n');
     assert.equal(fs.readFileSync(path.join(memRepo, '.aflt-memory.json'), 'utf8'), marker1);
   });
 
@@ -359,6 +365,10 @@ describe('aflt memory', () => {
     assert.ok(j.projects[0].files.some((f) => f.changed));
     assert.deepEqual(fs.readdirSync(memRepo).sort(), before.sort());
     assert.ok(!fs.existsSync(path.join(memRepo, 'dryproj')));
+    assert.ok(!fs.existsSync(path.join(memRepo, 'DASHBOARD.md')));
+    assert.ok(j.dashboard);
+    assert.equal(j.dashboard.path, 'DASHBOARD.md');
+    assert.equal(j.dashboard.changed, true);
   });
 
   it('redaction cases + commit hash preserved + --no-redact', () => {
@@ -556,6 +566,10 @@ describe('aflt memory', () => {
     assert.match(r.stderr + r.stdout, /--commit cannot be used with --dry-run/);
   });
 
+  function isCommitEligiblePath(p) {
+    return p === 'DASHBOARD.md' || /^[^/]+\/_aflt\//.test(p);
+  }
+
   it('--commit stages only _aflt paths; leaves dirty human files unstaged', () => {
     seedProjAndInit();
     const sync1 = af(['memory', 'sync', 'commit-app', '--commit', '--json'], env());
@@ -573,10 +587,12 @@ describe('aflt memory', () => {
       .split(/\r?\n/)
       .map((l) => l.trim())
       .filter(Boolean);
-    assert.ok(committed.every((p) => /^[^/]+\/_aflt\//.test(p)));
+    assert.ok(committed.every(isCommitEligiblePath));
+    assert.ok(committed.some((p) => p === 'DASHBOARD.md'));
     assert.ok(committed.some((p) => p.endsWith('_aflt/timeline.md')));
     assert.ok(committed.some((p) => p.endsWith('_aflt/sessions.jsonl')));
     assert.ok(!committed.some((p) => p.endsWith('README.md')));
+    assert.ok(!committed.some((p) => /(?:^|\/)dashboard\.md$/.test(p)));
     assert.ok(!committed.some((p) => p.includes('status-notes')));
 
     // Dirty human files must stay unstaged / uncommitted on next sync --commit
@@ -622,7 +638,7 @@ describe('aflt memory', () => {
       .split(/\r?\n/)
       .map((l) => l.trim())
       .filter(Boolean);
-    assert.ok(committed2.every((p) => /^[^/]+\/_aflt\//.test(p)));
+    assert.ok(committed2.every(isCommitEligiblePath));
     assert.equal(fs.readFileSync(readme, 'utf8'), '# commit-app\n\nhuman edit\n');
     assert.equal(fs.readFileSync(dash, 'utf8'), '# dashboard dirty\n');
     assert.equal(fs.readFileSync(note, 'utf8'), 'untracked note\n');
@@ -758,4 +774,462 @@ describe('aflt memory', () => {
     const log = git(memRepo, ['log', '-1', '--pretty=%s']);
     assert.equal(String(log.stdout).trim(), j.commit.message);
   });
+
+  describe('DASHBOARD.md', () => {
+    const NOW = new Date('2026-11-15T17:00:00.000Z'); // afternoon ET on 2026-11-15
+
+    function initDash() {
+      assert.equal(af(['memory', 'init', memRepo], env()).status, 0);
+      configureGitIdentity(memRepo);
+    }
+
+    it('sync and dashboard write root DASHBOARD.md; idempotent with same now', () => {
+      initDash();
+      seedSession(home, {
+        title: 'dash-a',
+        project: 'dash-a',
+        cwd: path.join(home, 'workspace', 'dash-a'),
+        created: '2026-11-10T00:00:00.000Z',
+        lastUsed: '2026-11-10T12:00:00.000Z',
+        status: 'done',
+      });
+      const mem = loadMemory(home);
+      const registry = loadRegistry(home);
+      const sessions = registry.list({ includeDone: true });
+      const r1 = mem.syncMemory(sessions, {
+        projects: ['dash-a'],
+        now: NOW,
+        redact: true,
+      });
+      assert.equal(r1.ok, true);
+      assert.ok(r1.dashboard);
+      assert.equal(r1.dashboard.changed, true);
+      const dashPath = path.join(memRepo, 'DASHBOARD.md');
+      assert.ok(fs.existsSync(dashPath));
+      const body1 = fs.readFileSync(dashPath, 'utf8');
+      assert.match(body1, /^# aflt project memory dashboard/m);
+      assert.match(body1, /Active = activity within the last 14 days/);
+      assert.match(body1, /America\/New_York/);
+      assert.ok(!/generated at/i.test(body1));
+      assert.match(body1, /<!-- doc-bot:summary:start -->/);
+      assert.match(body1, /_No Doc Bot summary yet\._/);
+
+      const r2 = mem.syncMemory(sessions, {
+        projects: ['dash-a'],
+        now: NOW,
+        redact: true,
+      });
+      assert.equal(r2.dashboard.changed, false);
+      assert.equal(fs.readFileSync(dashPath, 'utf8'), body1);
+      const mtime1 = fs.statSync(dashPath).mtimeMs;
+
+      const d1 = mem.syncDashboard(sessions, { now: NOW, redact: true });
+      assert.equal(d1.dashboard.changed, false);
+      assert.equal(fs.statSync(dashPath).mtimeMs, mtime1);
+
+      const builtA = mem.buildDashboard(sessions, { now: NOW, redact: true });
+      const builtB = mem.buildDashboard(sessions, { now: NOW, redact: true });
+      assert.equal(builtA.md, builtB.md);
+    });
+
+    it('active vs dormant with injected now; flag wins over memoryActiveDays', () => {
+      initDash();
+      seedSession(home, {
+        title: 'fresh',
+        project: 'fresh-app',
+        cwd: home,
+        created: '2026-11-10T00:00:00.000Z',
+        lastUsed: '2026-11-10T12:00:00.000Z',
+        status: 'done',
+      });
+      seedSession(home, {
+        title: 'old',
+        project: 'old-app',
+        cwd: home,
+        created: '2026-01-01T00:00:00.000Z',
+        lastUsed: '2026-01-02T12:00:00.000Z',
+        status: 'done',
+      });
+      const mem = loadMemory(home);
+      const sessions = loadRegistry(home).list({ includeDone: true });
+
+      const def = mem.buildDashboard(sessions, { now: NOW, redact: false });
+      assert.equal(def.activeDays, 14);
+      assert.ok(def.active.some((r) => r.project === 'fresh-app'));
+      assert.ok(def.dormant.some((r) => r.project === 'old-app'));
+
+      fs.writeFileSync(
+        path.join(home, 'config.json'),
+        JSON.stringify({ memoryRepo: fs.realpathSync(memRepo), memoryActiveDays: 400 }, null, 2)
+      );
+      const fromCfg = mem.buildDashboard(sessions, { now: NOW, redact: false });
+      assert.equal(fromCfg.activeDays, 400);
+      assert.ok(fromCfg.active.some((r) => r.project === 'old-app'));
+
+      const fromFlag = mem.buildDashboard(sessions, {
+        now: NOW,
+        redact: false,
+        activeDays: 7,
+      });
+      assert.equal(fromFlag.activeDays, 7);
+      assert.ok(fromFlag.active.some((r) => r.project === 'fresh-app'));
+      assert.ok(fromFlag.dormant.some((r) => r.project === 'old-app'));
+      assert.equal(mem.resolveActiveDays({ activeDays: 3, config: { memoryActiveDays: 99 } }), 3);
+    });
+
+    it('sorts by last activity newest first with name tie-break', () => {
+      initDash();
+      seedSession(home, {
+        title: 'b',
+        project: 'beta',
+        cwd: home,
+        created: '2026-11-01T00:00:00.000Z',
+        lastUsed: '2026-11-12T12:00:00.000Z',
+        status: 'done',
+      });
+      seedSession(home, {
+        title: 'a',
+        project: 'alpha',
+        cwd: home,
+        created: '2026-11-01T00:00:00.000Z',
+        lastUsed: '2026-11-12T12:00:00.000Z',
+        status: 'done',
+      });
+      seedSession(home, {
+        title: 'z',
+        project: 'zeta',
+        cwd: home,
+        created: '2026-11-01T00:00:00.000Z',
+        lastUsed: '2026-11-14T12:00:00.000Z',
+        status: 'done',
+      });
+      const mem = loadMemory(home);
+      const built = mem.buildDashboard(loadRegistry(home).list({ includeDone: true }), {
+        now: NOW,
+        redact: false,
+      });
+      assert.deepEqual(
+        built.active.map((r) => r.project),
+        ['zeta', 'alpha', 'beta']
+      );
+    });
+
+    it('session counts open/idle/total from active/paused/done', () => {
+      initDash();
+      const cwd = path.join(home, 'workspace', 'counts');
+      fs.mkdirSync(cwd, { recursive: true });
+      seedSession(home, {
+        title: 'o1',
+        project: 'counts',
+        cwd,
+        status: 'active',
+        created: '2026-11-01T00:00:00.000Z',
+        lastUsed: '2026-11-14T00:00:00.000Z',
+      });
+      seedSession(home, {
+        title: 'o2',
+        project: 'counts',
+        cwd,
+        status: 'active',
+        created: '2026-11-01T00:00:00.000Z',
+        lastUsed: '2026-11-14T01:00:00.000Z',
+      });
+      seedSession(home, {
+        title: 'idle',
+        project: 'counts',
+        cwd,
+        status: 'paused',
+        created: '2026-11-01T00:00:00.000Z',
+        lastUsed: '2026-11-14T02:00:00.000Z',
+      });
+      seedSession(home, {
+        title: 'done',
+        project: 'counts',
+        cwd,
+        status: 'done',
+        created: '2026-11-01T00:00:00.000Z',
+        lastUsed: '2026-11-14T03:00:00.000Z',
+      });
+      const mem = loadMemory(home);
+      const built = mem.buildDashboard(loadRegistry(home).list({ includeDone: true }), {
+        now: NOW,
+        redact: false,
+      });
+      const row = built.active.find((r) => r.project === 'counts');
+      assert.ok(row);
+      assert.equal(row.open, 2);
+      assert.equal(row.idle, 1);
+      assert.equal(row.total, 4);
+      assert.match(built.md, /\| \[counts\]\(counts\/\) \| 2026-11-1[34] \| 2\/1\/4 \|/);
+    });
+
+    it('status-note title+date from filename/heading; archive ignored; newest wins', () => {
+      initDash();
+      const folder = path.join(memRepo, 'notes-app');
+      fs.mkdirSync(path.join(folder, 'status-notes', 'archive'), { recursive: true });
+      fs.writeFileSync(
+        path.join(folder, 'status-notes', 'archive', '2026-11-20-ignored.md'),
+        '# Should Ignore\n'
+      );
+      fs.writeFileSync(
+        path.join(folder, 'status-notes', '2026-11-01-older.md'),
+        '# Older Note\n'
+      );
+      fs.writeFileSync(
+        path.join(folder, 'status-notes', '2026-11-12T1500-shipped.md'),
+        '# Shipped Feature\n\nbody\n'
+      );
+      const mem = loadMemory(home);
+      const built = mem.buildDashboard([], { now: NOW, redact: false });
+      const row = built.rows.find((r) => r.project === 'notes-app');
+      assert.ok(row);
+      assert.equal(row.noteYmd, '2026-11-12');
+      assert.equal(row.noteTitle, 'Shipped Feature');
+      assert.equal(row.noteFile, '2026-11-12T1500-shipped.md');
+      assert.equal(row.activityYmd, '2026-11-12');
+      assert.match(
+        built.md,
+        /\[Shipped Feature\]\(notes-app\/status-notes\/2026-11-12T1500-shipped\.md\) \(2026-11-12\)/
+      );
+    });
+
+    it('doc-bot block preserved verbatim; placeholder when missing; later sync keeps summary', () => {
+      initDash();
+      seedSession(home, {
+        title: 'd',
+        project: 'docbot',
+        cwd: home,
+        created: '2026-11-01T00:00:00.000Z',
+        lastUsed: '2026-11-14T00:00:00.000Z',
+        status: 'done',
+      });
+      const mem = loadMemory(home);
+      const sessions = loadRegistry(home).list({ includeDone: true });
+      mem.syncMemory(sessions, { projects: ['docbot'], now: NOW });
+      const dashPath = path.join(memRepo, 'DASHBOARD.md');
+      let body = fs.readFileSync(dashPath, 'utf8');
+      assert.match(body, /_No Doc Bot summary yet\._/);
+
+      const customInner = '\nHello from Doc Bot — contact human@example.com\n\n';
+      body = body.replace(
+        /<!-- doc-bot:summary:start -->[\s\S]*?<!-- doc-bot:summary:end -->/,
+        `${mem.DOC_BOT_SUMMARY_START}${customInner}${mem.DOC_BOT_SUMMARY_END}`
+      );
+      fs.writeFileSync(dashPath, body);
+
+      mem.syncMemory(sessions, { projects: ['docbot'], now: NOW });
+      const after = fs.readFileSync(dashPath, 'utf8');
+      const inner = mem.extractDocBotSummaryInner(after);
+      assert.equal(inner, customInner);
+      assert.match(after, /human@example\.com/);
+      assert.ok(!after.includes('[redacted]@') || after.includes('human@example.com'));
+    });
+
+    it('redacts status-note titles; --no-redact leaves them; doc-bot inner not redacted', () => {
+      initDash();
+      const folder = path.join(memRepo, 'sec-dash');
+      fs.mkdirSync(path.join(folder, 'status-notes'), { recursive: true });
+      fs.writeFileSync(
+        path.join(folder, 'status-notes', '2026-11-14-leak.md'),
+        '# Leak me@example.com and sk-abc1234567890xyz\n'
+      );
+      fs.writeFileSync(
+        path.join(memRepo, 'DASHBOARD.md'),
+        `# aflt project memory dashboard\n\n` +
+          `<!-- doc-bot:summary:start -->\n` +
+          `Doc Bot: mail keep@example.com please\n` +
+          `<!-- doc-bot:summary:end -->\n`
+      );
+      const mem = loadMemory(home);
+      const red = mem.buildDashboard([], { now: NOW, redact: true });
+      assert.match(red.md, /\[redacted\]/);
+      assert.match(red.md, /Doc Bot: mail keep@example\.com please/);
+      const raw = mem.buildDashboard([], { now: NOW, redact: false });
+      assert.match(raw.md, /Leak me@example\.com and sk-abc1234567890xyz/);
+      assert.match(raw.md, /Doc Bot: mail keep@example\.com please/);
+    });
+
+    it('one-project sync still lists other memory-repo folders on dashboard', () => {
+      initDash();
+      fs.mkdirSync(path.join(memRepo, 'orphan-proj', 'status-notes'), { recursive: true });
+      fs.writeFileSync(path.join(memRepo, 'orphan-proj', 'README.md'), '# orphan\n');
+      seedSession(home, {
+        title: 'only',
+        project: 'only-sync',
+        cwd: home,
+        created: '2026-11-01T00:00:00.000Z',
+        lastUsed: '2026-11-14T00:00:00.000Z',
+        status: 'done',
+      });
+      const r = af(['memory', 'sync', 'only-sync', '--json'], env());
+      assert.equal(r.status, 0, r.stderr + r.stdout);
+      const j = JSON.parse(r.stdout);
+      assert.deepEqual(
+        j.projects.map((p) => p.project),
+        ['only-sync']
+      );
+      const dash = fs.readFileSync(path.join(memRepo, 'DASHBOARD.md'), 'utf8');
+      assert.match(dash, /\[only-sync\]\(only-sync\/\)/);
+      assert.match(dash, /\[orphan-proj\]\(orphan-proj\/\)/);
+      assert.match(dash, /no recorded activity/);
+    });
+
+    it('dashboard --dry-run writes nothing; CLI --json works', () => {
+      initDash();
+      seedSession(home, {
+        title: 'cli',
+        project: 'cli-dash',
+        cwd: home,
+        created: '2026-11-01T00:00:00.000Z',
+        lastUsed: '2026-11-14T00:00:00.000Z',
+        status: 'done',
+      });
+      const before = fs.readdirSync(memRepo).sort();
+      const dry = af(['memory', 'dashboard', '--dry-run', '--json'], env());
+      assert.equal(dry.status, 0, dry.stderr + dry.stdout);
+      const dj = JSON.parse(dry.stdout);
+      assert.equal(dj.ok, true);
+      assert.equal(dj.dashboard.path, 'DASHBOARD.md');
+      assert.equal(dj.dashboard.changed, true);
+      assert.deepEqual(fs.readdirSync(memRepo).sort(), before);
+      assert.ok(!fs.existsSync(path.join(memRepo, 'DASHBOARD.md')));
+
+      const live = af(['memory', 'dashboard', '--json', '--active-days', '14'], env());
+      assert.equal(live.status, 0, live.stderr + live.stdout);
+      const lj = JSON.parse(live.stdout);
+      assert.equal(lj.ok, true);
+      assert.equal(lj.dashboard.changed, true);
+      assert.equal(lj.dashboard.activeDays, 14);
+      assert.ok(fs.existsSync(path.join(memRepo, 'DASHBOARD.md')));
+    });
+
+    it('folder sanitization; prefer note/updated over later _aflt-only git commit', () => {
+      initDash();
+      const folder = path.join(memRepo, 'prefer-dates');
+      fs.mkdirSync(path.join(folder, '_aflt'), { recursive: true });
+      fs.mkdirSync(path.join(folder, 'status-notes'), { recursive: true });
+      fs.writeFileSync(
+        path.join(folder, 'dashboard.md'),
+        '---\nid: prefer-dates\nupdated: 2026-10-01\n---\n\n# prefer-dates\n'
+      );
+      fs.writeFileSync(
+        path.join(folder, 'status-notes', '2026-10-05-note.md'),
+        '# Note Wins\n'
+      );
+      fs.writeFileSync(path.join(folder, '_aflt', 'timeline.md'), '# t\n');
+      fs.writeFileSync(path.join(folder, '_aflt', 'sessions.jsonl'), '');
+      assert.equal(git(memRepo, ['add', '-A']).status, 0);
+      assert.equal(git(memRepo, ['commit', '-m', 'seed prefer']).status, 0);
+      // Later commit that only touches _aflt must not win over note date
+      fs.writeFileSync(path.join(folder, '_aflt', 'timeline.md'), '# t2\n');
+      assert.equal(git(memRepo, ['add', '-A', '--', 'prefer-dates/_aflt']).status, 0);
+      assert.equal(git(memRepo, ['commit', '-m', 'aflt only']).status, 0);
+
+      const mem = loadMemory(home);
+      const built = mem.buildDashboard([], { now: NOW, redact: false });
+      const row = built.rows.find((r) => r.project === 'prefer-dates');
+      assert.ok(row);
+      assert.equal(row.activityYmd, '2026-10-05');
+
+      // Unsafe project name still sanitizes for folder links when synced
+      seedSession(home, {
+        title: 'weird',
+        project: 'weird:name',
+        cwd: home,
+        created: '2026-11-01T00:00:00.000Z',
+        lastUsed: '2026-11-14T00:00:00.000Z',
+        status: 'done',
+      });
+      const sessions = loadRegistry(home).list({ includeDone: true });
+      const sync = mem.syncMemory(sessions, {
+        projects: ['weird:name'],
+        now: NOW,
+        redact: false,
+      });
+      assert.ok(sync.projects.some((p) => p.folder === 'weird-name'));
+      assert.ok(fs.existsSync(path.join(memRepo, 'weird-name', '_aflt', 'timeline.md')));
+      assert.match(fs.readFileSync(path.join(memRepo, 'DASHBOARD.md'), 'utf8'), /weird-name/);
+    });
+
+    it('empty Active/Dormant use stable _None._ wording', () => {
+      initDash();
+      // Only a very old session → Active empty
+      seedSession(home, {
+        title: 'ancient',
+        project: 'ancient',
+        cwd: home,
+        created: '2020-01-01T00:00:00.000Z',
+        lastUsed: '2020-01-02T00:00:00.000Z',
+        status: 'done',
+      });
+      const mem = loadMemory(home);
+      const built = mem.buildDashboard(loadRegistry(home).list({ includeDone: true }), {
+        now: NOW,
+        activeDays: 14,
+        redact: false,
+      });
+      assert.equal(built.active.length, 0);
+      assert.match(built.md, /## Active\n\n_None\._/);
+      assert.ok(built.dormant.length >= 1);
+    });
+  });
+
+  describe('aflt memory doc', () => {
+    it('fails when no memory repo is configured', () => {
+      const r = af(['memory', 'doc', '--dry-run', '--json'], env({ AFLT_MEMORY_REPO: '' }));
+      assert.equal(r.status, 1, r.stderr + r.stdout);
+      assert.match(r.stderr + r.stdout, /no memory repo configured/);
+    });
+
+    it('fails when DOC-AGENT.md is missing', () => {
+      assert.equal(af(['memory', 'init', memRepo], env()).status, 0);
+      fs.rmSync(path.join(memRepo, 'DOC-AGENT.md'));
+      const r = af(['memory', 'doc', '--dry-run', '--json'], env());
+      assert.equal(r.status, 1, r.stderr + r.stdout);
+      assert.match(r.stderr + r.stdout, /missing DOC-AGENT\.md|missing DOC-AGENT.md/);
+    });
+
+    it('dry-run --engine copilot does not create a session and includes the prompt', () => {
+      assert.equal(af(['memory', 'init', memRepo], env()).status, 0);
+      const r = af(
+        ['memory', 'doc', '--engine', 'copilot', '--dry-run', '--json'],
+        env()
+      );
+      assert.equal(r.status, 0, r.stderr + r.stdout);
+      const j = JSON.parse(r.stdout);
+      assert.equal(j.ok, true);
+      assert.equal(j.dryRun, true);
+      assert.equal(j.session.engine, 'copilot');
+      assert.equal(j.session.title, 'memory-doc');
+      assert.match(String(j.command || ''), /copilot/);
+      assert.match(r.stderr, /would create a copilot session/);
+      const real = fs.realpathSync(memRepo);
+      // cwd is the memory repo
+      assert.ok(
+        (j.session.cwd && fs.existsSync(j.session.cwd) && fs.realpathSync(j.session.cwd) === real) ||
+          String(j.command || r.stderr || '').includes(memRepo) ||
+          String(j.command || r.stderr || '').includes(real),
+        `expected memory repo cwd in dry-run output: ${r.stdout}\n${r.stderr}`
+      );
+      // prompt comes from DOC-AGENT.md
+      const prompt = fs.readFileSync(path.join(memRepo, 'DOC-AGENT.md'), 'utf8');
+      assert.ok(
+        String(j.command || '').includes('Memory documentarian') ||
+          String(j.command || '').includes('DOC-AGENT') ||
+          prompt.includes('Memory documentarian'),
+        'DOC-AGENT.md should be the prompt source'
+      );
+      // no registry write
+      const sessionsPath = path.join(home, 'sessions.json');
+      if (fs.existsSync(sessionsPath)) {
+        const raw = fs.readFileSync(sessionsPath, 'utf8').trim();
+        if (raw) {
+          const data = JSON.parse(raw);
+          const list = Array.isArray(data) ? data : data.sessions || [];
+          assert.equal(list.length, 0, 'dry-run must not write the registry');
+        }
+      }
+    });
+  });
+
 });

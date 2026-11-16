@@ -7,7 +7,7 @@
 <p align="center">
   <img alt="Node 18+" src="https://img.shields.io/badge/node-%3E%3D18-brightgreen?logo=node.js&logoColor=white"/>
   <img alt="version 1.2.0" src="https://img.shields.io/badge/version-1.2.0-blue"/>
-  <img alt="382 tests passing, 1 skipped" src="https://img.shields.io/badge/tests-382%20passing%20%7C%201%20skipped-success"/>
+  <img alt="396 tests passing, 1 skipped" src="https://img.shields.io/badge/tests-396%20passing%20%7C%201%20skipped-success"/>
   <img alt="macOS | Linux untested" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20untested-lightgrey"/>
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-yellow"/>
 </p>
@@ -32,7 +32,7 @@ CLI coding agents are powerful but ephemeral: chat IDs live in engine-local stor
 | **Herdr** | `hc` terminals + desktop app spaces/tabs + bundled `af-sessions` panel; shell-only reboot recovery via in-tab relaunch |
 | **Orchestration** | `aflt master`, `aflt spawn [--detach]`, `children`, `wait`, `result [--require-fresh]`, `tail`, `send`, `stop`, `rm --children` |
 | **Projects** | Optional `session.project` + `aflt ls --project` / `aflt timeline` (read-only session tree + commits) |
-| **Memory** | Opt-in `aflt memory` repo: sync per-project timelines into a local git working tree; optional `--commit`/`--push` for generated `_aflt/` only |
+| **Memory** | Opt-in `aflt memory` repo: sync per-project timelines + root `DASHBOARD.md` into a local git working tree; optional `--commit`/`--push` for generated `_aflt/` + root `DASHBOARD.md` |
 | **Messaging** | Opt-in `aflt msg` / `inbox` / `thread` + stdio MCP (`aflt mcp`) for Copilot & Cursor |
 | **Documentarian** | Opt-in `aflt docs`; auto once after headless master / `aflt wait --docs` |
 | **Ops** | `aflt import`, `aflt doctor`, `--json` / `--dry-run` on mutating paths |
@@ -133,7 +133,7 @@ Each session stores identity (`id`, `title`, `chatId`, `cwd`, `branch`, `model`,
 | `aflt add` | Register an existing chat / Copilot UUID |
 | `aflt ls` / `aflt sync` | List (optional `--project`); persist Herdr evidence |
 | `aflt timeline` | Read-only project session tree (+ best-effort commits) |
-| `aflt memory` | Opt-in project-memory git repo (`init` / `sync --commit --push` / `status` / `where`) |
+| `aflt memory` | Opt-in project-memory git repo (`init` / `sync --commit --push` / `dashboard` / `doc` / `status` / `where`) |
 | `aflt run` / `aflt log` | Headless create-or-resume; print last capture |
 | `aflt resume` / `aflt pick` | Resume one, interactive pick, or `--all` |
 | `aflt rename` / `aflt note` / `aflt done` | Metadata |
@@ -148,7 +148,7 @@ Each session stores identity (`id`, `title`, `chatId`, `cwd`, `branch`, `model`,
 - **`aflt add "<title>" --chat <id>`** — `--cwd` `--model` `--engine` `--project` `--tag` `--prompt`
 - **`aflt run`** — `--prompt` (required) `--cwd` `--model` `--engine` `--project` `--mode ask|plan` (Cursor) `--force` `--output-format text|json` `--timeout` `--messaging|--no-messaging` `--no-docs` `--dry-run` `--json`
 - **`aflt timeline [<project>]`** — `--all` `--json` `--since <date>` (ISO or YYYY-MM-DD); read-only. Default project: `<project>` arg → `AFLT_PROJECT` → cwd's derived project. Text shows local times (JSON keeps ISO UTC). Commits come from each session's own cwd (`commitsReason`: `not-git` / `missing-cwd`); an open-ended row that is not a live run is bounded at `lastUsed` (`open-ended` when it never ran).
-- **`aflt memory`** — opt-in project memory (local git repo). `init <path>` registers `memoryRepo` in config (or override with `AFLT_MEMORY_REPO`). `sync [<project>…]` writes `<repo>/<project>/_aflt/timeline.md` + `sessions.jsonl` (default: cwd/`AFLT_PROJECT`; `--all` skips `adhoc` unless `--include-adhoc`). Redaction ON by default for generated files (home → `~`; private IPs, `*.local` hosts, emails, token-like strings, long hex/base64 → `[redacted]`; `--no-redact` to disable). Output is deterministic and only rewritten on change, so a repeat sync changes nothing. Human files (`<project>/README.md`, `dashboard.md`, `status-notes/`) are created only if missing and never overwritten or committed by aflt; to map a repo to a differently named memory folder, set `"project"` in its `.agentfleet.json`. Optional `--commit` stages only `*/_aflt/**` (refuses dirty index; no `--dry-run`); `--push` requires `--commit` and pushes to `@{u}` when a commit was made or the branch is ahead. Nightly: `aflt memory sync --all --commit --push`. `status` / `where` are read-only.
+- **`aflt memory`** — opt-in project memory (local git repo). `init <path>` registers `memoryRepo` in config (or override with `AFLT_MEMORY_REPO`). `sync [<project>…]` writes `<repo>/<project>/_aflt/timeline.md` + `sessions.jsonl`, then regenerates root `DASHBOARD.md` (complete Active/Dormant table for all memory-repo + registry projects; default 14-day ET window via `--active-days` / config `memoryActiveDays`). `aflt memory dashboard` regenerates `DASHBOARD.md` only. Default sync target: cwd/`AFLT_PROJECT`; `--all` skips `adhoc` unless `--include-adhoc`. Redaction ON by default for generated files (home → `~`; private IPs, `*.local` hosts, emails, token-like strings, long hex/base64 → `[redacted]`; `--no-redact` to disable; doc-bot summary block in `DASHBOARD.md` is preserved verbatim and not redacted). Output is deterministic and only rewritten on change, so a repeat sync changes nothing. Human files (`<project>/README.md`, `dashboard.md`, `status-notes/`) are created only if missing and never overwritten or committed by aflt (never write `DASHBOARD.md` inside a project folder); to map a repo to a differently named memory folder, set `"project"` in its `.agentfleet.json`. Optional `--commit` stages root `DASHBOARD.md` + `*/_aflt/**` (refuses dirty index; no `--dry-run`); `--push` requires `--commit` and pushes to `@{u}` when a commit was made or the branch is ahead. Nightly: `aflt memory sync --all --commit --push`, then (optionally) `aflt memory doc` to fill the Doc Bot summary (separate commit, only when instructed). `aflt memory doc [--engine cursor|copilot]` launches an `aflt run` session titled `memory-doc` in the memory repo with `DOC-AGENT.md` as the prompt, so the same role works on a Cursor CLI machine or a Copilot CLI laptop. `status` / `where` are read-only.
 - **`aflt resume <title|id>`** — `--via herdr|plain` `--here` `--open|--no-open` `--prompt` `--force` `--dry-run` `--no-herdr-app`
 - **`aflt resume --all`** — `--tag` `--via tmux|iterm2|wezterm|herdr|plain` `--open|--no-open` `--force` `--dry-run` `--no-herdr-app`
 - **`aflt rm`** — exact id/title preferred (multi-arg); TTY confirms/picks fuzzy matches (agents: exact only); `--keep-files` `--force` `--dry-run`; or `--children <master> [--with-master]`
@@ -304,10 +304,10 @@ Resolved by walking cwd → ancestors until the git root (or filesystem root). O
 ### Fleet: `~/.agentfleet/config.json`
 
 ```json
-{ "defaultEngine": "cursor", "project": "ops", "memoryRepo": "/path/to/aflt-memory" }
+{ "defaultEngine": "cursor", "project": "ops", "memoryRepo": "/path/to/aflt-memory", "memoryActiveDays": 14 }
 ```
 
-Optional `"project"` is a create-time default for non-repo agent groups (after `AFLT_PROJECT`, before basename/`adhoc`). Optional `"memoryRepo"` is set by `aflt memory init` (override with `AFLT_MEMORY_REPO`).
+Optional `"project"` is a create-time default for non-repo agent groups (after `AFLT_PROJECT`, before basename/`adhoc`). Optional `"memoryRepo"` is set by `aflt memory init` (override with `AFLT_MEMORY_REPO`). Optional `"memoryActiveDays"` sets the Active/Dormant threshold for root `DASHBOARD.md` (overridden by `--active-days`; default 14).
 
 ### Environment
 
@@ -348,7 +348,7 @@ Optional `"project"` is a create-time default for non-repo agent groups (after `
 | `aflt import` / `aflt import-file` | Discover local sessions / merge backup |
 | `aflt ls` / `aflt sync` | List sessions / persist Herdr evidence |
 | `aflt timeline` | Read-only project session tree |
-| `aflt memory` | Opt-in project-memory repo (init / sync / status; sync `--commit`/`--push`) |
+| `aflt memory` | Opt-in project-memory repo (init / sync / dashboard / doc / status; sync `--commit`/`--push`) |
 | `aflt run` / `aflt log` | Headless prompt / last capture |
 | `aflt spawn` / `aflt master` | Worker under master / bootstrap orchestrator |
 | `aflt children` | List workers or summarize masters |
@@ -397,7 +397,7 @@ See `af --help` / `aflt help` for the authoritative flag list. Long-form help co
 npm test
 ```
 
-383 tests (Node test runner): 382 passing, 1 skipped (a live `create-chat` smoke test that only runs with a real `cursor-agent`). Coverage includes registry, engines, Herdr backends, orchestration, messaging, MCP, docs, project/timeline, project memory, dry-run purity, interactive rm/stop pickers, and hermetic `AGENTFLEET_HOME` fixtures.
+397 tests (Node test runner): 396 passing, 1 skipped (a live `create-chat` smoke test that only runs with a real `cursor-agent`). Coverage includes registry, engines, Herdr backends, orchestration, messaging, MCP, docs, project/timeline, project memory, dry-run purity, interactive rm/stop pickers, and hermetic `AGENTFLEET_HOME` fixtures.
 
 ## License
 

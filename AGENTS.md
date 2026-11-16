@@ -82,7 +82,9 @@ aflt ls --status active
 aflt ls --project my-app --json # filter by stored or derived project name
 aflt timeline                   # read-only session tree for cwd's project
 aflt timeline --all --json      # every project, grouped
-aflt memory sync                # opt-in: write cwd project timeline into memory repo
+aflt memory sync                # opt-in: write cwd project timeline + root DASHBOARD.md
+aflt memory dashboard           # regenerate root DASHBOARD.md only
+aflt memory doc [--engine cursor|copilot]  # Doc Bot session (DOC-AGENT.md)
 aflt memory sync --all --commit --push  # nightly: sync + commit generated + push
 aflt children --json            # workers of this master, or a summary of masters
 ```
@@ -180,17 +182,32 @@ aflt memory | aflt memory where [--json]
 
 aflt memory init <path> [--force] [--json]
 # Create/register a local project-memory git repo (never remote, never commit).
-# Writes README/.gitignore/.aflt-memory.json when missing; sets config memoryRepo.
+# Writes README/.gitignore/.aflt-memory.json/DOC-AGENT.md when missing; sets config memoryRepo.
 
 aflt memory sync [<project>...] [--all] [--include-adhoc] [--dry-run] [--json] [--no-redact]
- [--commit] [--push]
-# Write <repo>/<project>/_aflt/timeline.md + sessions.jsonl (registry read-only).
-# Default: cwd / AFLT_PROJECT. --all skips adhoc unless --include-adhoc or named.
-# Human README/status-notes created only if missing; never overwritten. Redaction ON.
-# --commit: stage only */_aflt/** and commit ("memory: sync YYYY-MM-DD"); refuses if
-# the index already has staged changes. --commit --dry-run is an error. --push requires
-# --commit; pushes to @{u} when a commit was made or the branch is ahead (never force /
-# never add remotes). Nightly: aflt memory sync --all --commit --push.
+ [--active-days N] [--commit] [--push]
+# Write <repo>/<project>/_aflt/timeline.md + sessions.jsonl (registry read-only), then
+# regenerate root DASHBOARD.md (complete Active/Dormant table for all memory-repo +
+# registry projects — a one-project sync does not wipe other rows). Default: cwd /
+# AFLT_PROJECT. --all skips adhoc unless --include-adhoc or named.
+# Human README/dashboard.md/status-notes created only if missing; never overwritten.
+# Redaction ON for generated files. --active-days N (ET calendar days; default 14;
+# else config.json memoryActiveDays; flag > config > 14). Doc-bot summary block in
+# DASHBOARD.md is preserved verbatim when markers exist.
+# --commit: stage DASHBOARD.md + */_aflt/** and commit ("memory: sync YYYY-MM-DD");
+# refuses if the index already has staged changes; never stages human README /
+# per-project dashboard.md / status-notes. --commit --dry-run is an error. --push
+# requires --commit; pushes to @{u} when a commit was made or the branch is ahead
+# (never force / never add remotes). Nightly: aflt memory sync --all --commit --push.
+
+aflt memory dashboard [--dry-run] [--json] [--no-redact] [--active-days N]
+# Regenerate root DASHBOARD.md only (no per-project _aflt/ writes). Same dry-run /
+# json / redact / active-days semantics as sync.
+
+aflt memory doc [--engine cursor|copilot] [--dry-run] [--json] [--force]
+# Launch a portable Doc Bot `aflt run` session (title memory-doc) in the memory
+# repo using DOC-AGENT.md as the prompt. Works with Cursor CLI or Copilot CLI.
+# --dry-run does not create a session or start an engine.
 
 aflt memory status [--json]
 # Read-only: repo + git dirty count + per-project folder/lastSync/sessions/stale.
@@ -201,7 +218,7 @@ aflt sync [--dry-run] [--json]
 
 `aflt timeline` is read-only. Default project: `<project>` arg → `AFLT_PROJECT` → cwd's derived project. Text shows local times (JSON keeps ISO UTC). Commits come from each session's own cwd (`commitsReason`: `not-git` / `missing-cwd`); an open-ended row that is not a live run is bounded at `lastUsed` (`open-ended` when it never ran).
 
-`aflt memory` is opt-in and never auto-syncs. Resolution: `AFLT_MEMORY_REPO` → `config.json` `memoryRepo`. Optional `--commit` / `--push` on `sync` records only generated `*/_aflt/**` (human files stay unstaged). Layout: `<repo>/<project>/_aflt/` is generated (never hand-edit); `<project>/README.md`, `dashboard.md`, `status-notes/` are human/Doc Bot files that aflt creates only if missing and never commits. Redaction (default on) covers generated files only: home → `~`, private IPs, `*.local`, emails, token-like strings, long hex/base64. `adhoc` (home/tmp one-offs) is excluded from `--all` unless `--include-adhoc`. Nightly flow on the Mini: `aflt memory sync --all --commit --push` (commits `memory: sync YYYY-MM-DD` only when something changed; exits non-zero if push fails or there is no upstream).
+`aflt memory` is opt-in and never auto-syncs. Resolution: `AFLT_MEMORY_REPO` → `config.json` `memoryRepo`. Optional `--commit` / `--push` on `sync` stages root `DASHBOARD.md` and `*/_aflt/**` (human files stay unstaged). Layout: root `DASHBOARD.md` is generated (Active/Dormant; default 14-day ET window via `--active-days` / `memoryActiveDays`; doc-bot summary markers preserved verbatim); `<repo>/<project>/_aflt/` is generated (never hand-edit); `<project>/README.md`, `dashboard.md`, `status-notes/` are human/Doc Bot files that aflt creates only if missing and never commits (never write `DASHBOARD.md` inside a project folder — that name is root-only). Redaction (default on) covers generated files only: home → `~`, private IPs, `*.local`, emails, token-like strings, long hex/base64 (not the preserved doc-bot block). `adhoc` (home/tmp one-offs) is excluded from `--all` unless `--include-adhoc`. Nightly flow on the Mini: `aflt memory sync --all --commit --push` (commits `memory: sync YYYY-MM-DD` only when something changed; exits non-zero if push fails or there is no upstream), then optionally `aflt memory doc` to update the Doc Bot summary in `DASHBOARD.md` (separate commit, only when instructed). `DOC-AGENT.md` in the memory repo is the portable documentarian prompt; `aflt memory init` writes it when missing. `aflt memory doc --engine copilot` is the same role on a work laptop that has Copilot CLI instead of Cursor.
 
 ### Headless run and logs
 
@@ -490,10 +507,10 @@ Resolved by walking cwd → ancestors until the git root (or filesystem root).
 ### Fleet: `~/.agentfleet/config.json`
 
 ```json
-{ "defaultEngine": "cursor", "project": "ops", "memoryRepo": "/path/to/aflt-memory" }
+{ "defaultEngine": "cursor", "project": "ops", "memoryRepo": "/path/to/aflt-memory", "memoryActiveDays": 14 }
 ```
 
-Optional `"project"` is a create-time default when `--project` / `AFLT_PROJECT` / `.agentfleet.json` are unset (useful for non-repo agent groups). Optional `"memoryRepo"` comes from `aflt memory init` (override with `AFLT_MEMORY_REPO`).
+Optional `"project"` is a create-time default when `--project` / `AFLT_PROJECT` / `.agentfleet.json` are unset (useful for non-repo agent groups). Optional `"memoryRepo"` comes from `aflt memory init` (override with `AFLT_MEMORY_REPO`). Optional `"memoryActiveDays"` sets the Active/Dormant threshold for root `DASHBOARD.md` (positive integer; overridden by `--active-days`; default 14).
 
 ---
 
