@@ -191,7 +191,7 @@ hc kill af-smoke; hc rm af-smoke   # if it has already exited, just hc rm
 
 - `hc` 0.1.16 at `~/.local/bin/hc`; Herdr.app at `~/Applications/Herdr.app` (also `~/.local/bin/herdr-app`).
 - `hc templates` was empty; `~/.config/herdr-core` did not exist; `~/.config/herdr-app` did not exist. The desktop app's agent-menu integrations were not configured, and finishing those in the GUI needs the Herdr desktop (not available to a CLI-only agent).
-- CLI path that *is* finished: `aflt herdr-templates` installs bundled `cursor.md` and `opencode.md` into `~/.config/herdr-core/templates/` (official format from [templates.md](https://github.com/herdrdev/herdr-core/blob/master/docs/templates.md): `command`, `description`, `ready: quiet`). Then:
+- CLI path that *is* finished: `aflt herdr-templates` installs only the bundled Herdr templates `copilot.md`, `cursor.md`, and `opencode.md` into `~/.config/herdr-core/templates/` (official format from [templates.md](https://github.com/herdrdev/herdr-core/blob/master/docs/templates.md): `command`, `description`, `ready: quiet`). aflt prompt files (`DOC-AGENT.md`, `documentarian.md`, `orchestrator.md`) stay in the package and are not installed. Then:
 
 ```bash
 hc templates
@@ -735,7 +735,7 @@ Other notes: bundled Herdr templates use official frontmatter and `ready: quiet`
 - [ ] `aflt ls` shows HERDR; `aflt sync --dry-run` does not write
 - [ ] `aflt run "smoke" --prompt "Reply pong." --mode ask --cwd … --dry-run` looks right; then a cheap live ask if you want to spend Cursor quota
 - [ ] `aflt resume smoke --via herdr --dry-run` has **no** `--` before `cursor-agent`; then without `--dry-run` if you want a live TUI
-- [ ] `aflt herdr-templates` && `hc templates` lists `cursor` and `opencode`
+- [ ] `aflt herdr-templates` && `hc templates` lists `copilot`, `cursor`, and `opencode` (not DOC-AGENT/documentarian/orchestrator)
 - [ ] `aflt export` backup stored outside the repo
 - [ ] (Copilot work Mac) `aflt import copilot` lists sessions; import an existing UUID by id
 - [ ] (Wrong folder) `aflt cwd <title> ~/correct/path` updates cwd; resume/adopt if a Herdr tab was live

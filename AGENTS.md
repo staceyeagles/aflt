@@ -430,7 +430,8 @@ aflt docs --status [--json] [--all] [<dir>...]
 aflt doctor [--json]                 # read-only environment checks
 aflt which-backend                   # auto-detected resume --all backend
 aflt herdr-templates [--force] [--dry-run]
-# Install Cursor/OpenCode/Copilot templates into ~/.config/herdr-core/templates
+# Install only Cursor/Copilot/OpenCode Herdr templates into ~/.config/herdr-core/templates
+# (DOC-AGENT.md, documentarian.md, orchestrator.md stay in the package for aflt)
 
 aflt herdr-app install [--copy] [--force] [--dry-run]
 # Symlink (default) or copy the af-sessions panel + af layout into

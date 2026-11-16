@@ -303,8 +303,10 @@ Usage:
   aflt import-file <file>     Merge sessions from a backup file
   aflt which-backend          Show auto-detected resume --all backend
   aflt herdr-templates [--force] [--dry-run]
-                            Install Cursor/OpenCode/Copilot templates into
-                            ~/.config/herdr-core/templates
+                            Install only the Cursor, Copilot, and OpenCode Herdr
+                            templates into ~/.config/herdr-core/templates
+                            (not DOC-AGENT/documentarian/orchestrator — those
+                            stay in the package for aflt itself)
   aflt herdr-app install [--copy] [--force] [--dry-run]
                             Symlink (default) or copy the af-sessions Herdr panel
                             + af layout into ~/.config/herdr-app (or $HERDR_APP_HOME)
@@ -5751,7 +5753,11 @@ function cmdHerdrTemplates(argv) {
   const srcDir = path.join(__dirname, '..', 'templates');
   const destDir = path.join(require('../lib/util').homeDir(), '.config', 'herdr-core', 'templates');
   if (!fs.existsSync(srcDir)) fail(`bundled templates not found at ${srcDir}`);
-  const files = fs.readdirSync(srcDir).filter((f) => f.endsWith('.md'));
+  const files = herdr.HERDR_TEMPLATE_FILES;
+  for (const f of files) {
+    const src = path.join(srcDir, f);
+    if (!fs.existsSync(src)) fail(`bundled Herdr template missing: ${src}`);
+  }
   let copied = 0;
   let skipped = 0;
   if (!dryRun) fs.mkdirSync(destDir, { recursive: true });

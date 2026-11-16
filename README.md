@@ -195,7 +195,7 @@ Requires **herdr-core** (`hc` on PATH or `AGENTFLEET_HC_BIN`) and optionally the
 - **`aflt cwd`** — updates registry folder/branch; does not move a live tab — resume (and optionally adopt) after.
 - **Shell status / reboot:** `--keep` terminals restore as a login shell (`HERDR=shell`). `aflt resume` relaunches the engine **into the existing tab** via `hc send` (`cd '<cwd>' && env … <engine>`), without a new terminal. Prefer herdr-core ≥ 0.1.20 (`aflt doctor` warns when older).
 - **Panel:** `aflt herdr-app install` symlinks (or `--copy`) `herdr/mods/af-sessions` + `herdr/layouts/af.json` into `~/.config/herdr-app` (`HERDR_APP_HOME`). Switch layout: `herdr-app do layout.switch --name af`. Panel clicks focus / adopt / resume.
-- **Templates:** `aflt herdr-templates` installs Cursor/OpenCode/Copilot templates into `~/.config/herdr-core/templates`.
+- **Templates:** `aflt herdr-templates` installs only the Cursor, Copilot, and OpenCode Herdr templates into `~/.config/herdr-core/templates`. Package files `DOC-AGENT.md`, `documentarian.md`, and `orchestrator.md` stay in `templates/` for aflt itself and are not installed.
 - **Backends for `resume --all`:** `tmux` | `iterm2` (macOS) | `wezterm` | `herdr` | `plain`. Auto-detect: `AGENTFLEET_VIA` → inside Herdr → tmux → `TERM_PROGRAM` → … → plain. `aflt which-backend` prints the choice.
 
 ## Master / worker orchestration
@@ -370,7 +370,7 @@ Optional `"project"` is a create-time default for non-repo agent groups (after `
 | `aflt rm` | Remove session(s) by exact id/title or TTY fuzzy pick (+ af-owned files) |
 | `aflt export` | Write registry JSON |
 | `aflt which-backend` | Show auto-detected `resume --all` backend |
-| `aflt herdr-templates` | Install hc templates |
+| `aflt herdr-templates` | Install Cursor/Copilot/OpenCode hc templates only |
 | `aflt herdr-app install` / `status` | Install/report af-sessions panel + layout |
 | `aflt doctor` | Read-only environment checks |
 | `aflt help` | This usage text |
