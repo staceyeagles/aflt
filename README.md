@@ -36,6 +36,7 @@ CLI coding agents are powerful but ephemeral: chat IDs live in engine-local stor
 | **Memory** | Opt-in `aflt memory` repo: sync per-project timelines + root `DASHBOARD.md` into a local git working tree; optional `--commit`/`--push` for generated `_aflt/` + root `DASHBOARD.md` |
 | **Messaging** | Opt-in `aflt msg` / `inbox` / `thread` + stdio MCP (`aflt mcp`) for Copilot & Cursor |
 | **Documentarian** | Opt-in `aflt docs`; auto once after headless master / `aflt wait --docs` |
+| **Agent docs** | Opt-in `agentDocs`: shared `DOCUMENTATION-PROCESS.md` + project `AGENT-DOCS.md`, launch path delivery, checkpoint status (Doc Bot notify = issue #2) |
 | **Ops** | `aflt setup`, `aflt import`, `aflt doctor`, `--json` / `--dry-run` on mutating paths |
 
 ## Architecture
@@ -135,6 +136,7 @@ Home directory: **`$AGENTFLEET_HOME`** (default `~/.agentfleet`). Override regis
 | `plans/` | Master plans (`$AGENTFLEET_PLAN`) |
 | `messages/<masterId>.jsonl` | Team message log |
 | `docs/<hash>.json` | Documentarian since-tracking |
+| `doc-checkpoints/<project>.json` | Opt-in agentDocs checkpoint state |
 
 Each session stores identity (`id`, `title`, `chatId`, `cwd`, `branch`, `model`, `engine`), optional `project`, lifecycle `status` (`active`\|`paused`\|`done`), `tags` / `notes` / `prompt`, optional `herdr` evidence from `aflt sync`, and orchestration fields (`parent`, `role`, `task`, `result`, `workerStatus`, run pid metadata, `messaging`, …).
 
@@ -300,7 +302,24 @@ aflt rm --children <master> [--with-master] …
 - **`aflt wait` exits:** `0` all done · `1` failed/stopped · `2` timeout · `3` waiting (needs input). Precedence: timeout → failed/stopped → waiting → ok. See [CAPABILITIES.md](docs/CAPABILITIES.md) for Cursor (no OSC 7501) vs Copilot interactive waiting.
 - **`--detach`:** headless only; returns immediately; supervisor records exit/handoff. Prefer over shell `&`.
 - **Handoffs:** workers write `$AGENTFLEET_RESULT` (default `$AGENTFLEET_HOME/results/<id>.md`). Headless success with missing/stale file → **af-fallback** from stdout. Freshness uses `runStartedAt` / `resultMtimeAtStart`; `aflt result --require-fresh` exits 1 if stale. HANDOFF column: `yes` / `af` / `stale` / `no`.
-- **Env on launch:** `AGENTFLEET_ID` always; workers `AGENTFLEET_PARENT` / `AGENTFLEET_RESULT`; masters `AGENTFLEET_ROLE=master` / `AGENTFLEET_PLAN` / `AGENTFLEET_RESULT`. Messaging also sets `AGENTFLEET_SESSION` (= id) and `AGENTFLEET_MASTER` when known.
+- **Env on launch:** `AGENTFLEET_ID` always; workers `AGENTFLEET_PARENT` / `AGENTFLEET_RESULT`; masters `AGENTFLEET_ROLE=master` / `AGENTFLEET_PLAN` / `AGENTFLEET_RESULT`. Messaging also sets `AGENTFLEET_SESSION` (= id) and `AGENTFLEET_MASTER` when known. Opt-in `agentDocs` also sets `AFLT_PROJECT` / `AFLT_MEMORY_REPO` / `AFLT_DOCS_PROCESS` / `AFLT_AGENT_DOCS` (and reports missing memory clearly).
+
+## Agent documentation (opt-in)
+
+**Off by default.** Enable with `.agentfleet.json` `{"agentDocs": true}` (optional `docCheckpointHours`, default 4 — overdue labeling only; elapsed time is **not** progress).
+
+```bash
+# Copy templates/AGENT-DOCS.md into the project root; memory init writes DOCUMENTATION-PROCESS.md
+aflt docs checkpoint request [--reason …] [--json]
+aflt docs checkpoint complete [--note path] [--json]
+aflt docs --status --json   # includes agentDocs.checkpoint missing/overdue
+aflt dashboard --snapshot out.json  # JSON state includes checkpoints{}
+```
+
+- Delivers project identity + memory/instruction paths on launch/resume for **Cursor and Copilot** without replacing `AGENTS.md`.
+- Works with no memory repo configured; warns when memory is required but missing (`AFLT_MEMORY_MISSING=1`).
+- Checkpoints are bookkeeping only — never interrupts a busy agent. Archive convention: ignore `status-notes/archive/`; aflt never auto-moves or deletes documents.
+- Doc Bot notifications via messaging are **deferred to issue #2** (`notifyDocBot` hook). Copilot Task Complete capture (`aflt dashboard --capture-completions`) is separate and unchanged.
 
 ## Messaging
 
@@ -343,6 +362,7 @@ aflt mcp install --engine cursor --write     # ~/.cursor/mcp.json
 aflt docs [<project dir>] [--since <commit>] [--engine …] [--model …]
         [--force|--no-force] [--anyway] [--dry-run] [--json]
 aflt docs --status [--json] [--all] [<dir>...]
+aflt docs checkpoint request|complete [<dir>] [--project NAME] [--reason T] [--note PATH] [--json]
 ```
 
 - One headless worker (`role=docs`, title `docs-<folder>`, reused). Template: `templates/documentarian.md`.
@@ -351,7 +371,7 @@ aflt docs --status [--json] [--all] [<dir>...]
 - State: `$AGENTFLEET_HOME/docs/<hash>.json` (`lastCommit`).
 - **`docsInstructions`:** readable files are injected as a “Project-specific documentation instructions” section (per-file / total size caps; missing files warn + skip). Dry-run / `--json` list used and skipped paths.
 - **Session timeline:** prompt may include a compact “Session timeline since last docs run” (same as `aflt timeline`, ~8KB cap). Dry-run / `--json` report `timelineBytes` (0 when skipped).
-- **`--status`:** read-only (no engine, no writes). Per project: `docsEnabled`, `docsPaths`, `docsInstructions`, `lastRun`, `commitsSince`, `dirtyDocs`, `needsDocs`, `skip` / `skipReason` / `skipFiles`, `ready`. **Doc Bot rule:** skip any repo with uncommitted docs edits — if a `docsPaths` file is dirty (`.DS_Store` ignored), status sets `skip: true`, `skipReason: "dirty-docs"`, and lists the files. `needsDocs` is unchanged; act only on `ready` (`needsDocs && !skip`). `aflt docs` itself does not enforce this. Exit 0 even when `needsDocs` is true. `--all` adds distinct registry project dirs.
+- **`--status`:** read-only (no engine, no writes). Per project: `docsEnabled`, `docsPaths`, `docsInstructions`, `lastRun`, `commitsSince`, `dirtyDocs`, `needsDocs`, `skip` / `skipReason` / `skipFiles`, `ready`, plus opt-in `agentDocs` checkpoint missing/overdue. **Doc Bot rule:** skip any repo with uncommitted docs edits — if a `docsPaths` file is dirty (`.DS_Store` ignored), status sets `skip: true`, `skipReason: "dirty-docs"`, and lists the files. `needsDocs` is unchanged; act only on `ready` (`needsDocs && !skip`). `aflt docs` itself does not enforce this. Exit 0 even when `needsDocs` is true. `--all` adds distinct registry project dirs.
 - **Auto-trigger:** after successful headless master (`aflt master --headless` or `aflt run` on `role=master`) when docs enabled; skip `--no-docs`. Docs failure → WARNING + JSON `docs:{ok:false}` but master exit 0. `aflt wait --docs` same after wait exit 0; **errors** if no master. Guard: `docsTriggeredRunId` (once per master run). `--anyway` runs once without enabling in config.
 
 ## Import

@@ -24,6 +24,7 @@ const projectLib = require('../lib/project');
 const timeline = require('../lib/timeline');
 const memory = require('../lib/memory');
 const dashboard = require('../lib/dashboard');
+const agentDocs = require('../lib/agent-docs');
 const setup = require('../lib/setup');
 const resolveSession = require('../lib/resolve-session');
 const {
@@ -205,9 +206,14 @@ Usage:
                             project dirs. Reports docsEnabled, docsPaths,
                             docsInstructions, lastRun, commitsSince, dirtyDocs,
                             needsDocs, skip/skipReason (dirty-docs: uncommitted
-                            docsPaths edits, .DS_Store ignored), and ready
-                            (needsDocs && !skip; act only on ready). Exit 0
-                            even when needsDocs is true.
+                            docsPaths edits, .DS_Store ignored), ready
+                            (needsDocs && !skip; act only on ready), and opt-in
+                            agentDocs checkpoint missing/overdue (age ≠ progress).
+                            Exit 0 even when needsDocs is true.
+  aflt docs checkpoint request|complete [<dir>] [--project NAME] [--reason T]
+                            [--note PATH] [--json]
+                            Record a documentation checkpoint (opt-in agentDocs).
+                            Never interrupts a busy agent; Doc Bot notify = #2.
   aflt msg <to> <text...> [--type T] [--reply <msgId>] [--from S] [--json] [--dry-run]
                             Task-scoped message (off by default; see Messaging).
                             With --reply and no <to>, defaults to=reply sender.
@@ -610,8 +616,20 @@ async function cmdNew(argv) {
     /* ignore */
   }
 
-  const argvLaunch = engine.buildInteractiveCommand(saved, launchOpts);
-  const launchEnv = { ...process.env, ...messages.sessionIdentityEnv(saved) };
+  const prepared = agentDocs.prepareLaunch(saved, {
+    prompt: launchOpts.prompt,
+    requestReason: 'aflt-new',
+  });
+  for (const w of prepared.warnings) {
+    try {
+      process.stderr.write(`WARNING: ${w}\n`);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  const launchOptsPrepared = { ...launchOpts, prompt: prepared.prompt };
+  const argvLaunch = engine.buildInteractiveCommand(saved, launchOptsPrepared);
+  const launchEnv = { ...process.env, ...prepared.env };
   const { code } = await engine.spawnInteractive(argvLaunch, { cwd, env: launchEnv });
   registry.bestEffortTouch(saved.id);
   process.exitCode = code || 0;
@@ -1746,8 +1764,20 @@ async function cmdResume(argv) {
   } catch (err) {
     fail(err.message);
   }
-  const argvLaunch = engine.buildInteractiveCommand(session, resumeOpts);
-  const launchEnv = { ...process.env, ...messages.sessionIdentityEnv(session) };
+  const prepared = agentDocs.prepareLaunch(session, {
+    prompt: resumeOpts.prompt,
+    requestReason: 'aflt-resume',
+  });
+  for (const w of prepared.warnings) {
+    try {
+      process.stderr.write(`WARNING: ${w}\n`);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  const resumeOptsPrepared = { ...resumeOpts, prompt: prepared.prompt };
+  const argvLaunch = engine.buildInteractiveCommand(session, resumeOptsPrepared);
+  const launchEnv = { ...process.env, ...prepared.env };
   const { code } = await engine.spawnInteractive(argvLaunch, {
     cwd: session.cwd,
     env: launchEnv,
@@ -2592,14 +2622,39 @@ async function executeHeadlessRun(session, opts = {}) {
     fail('--mode ask|plan is a Cursor flag; Copilot has no equivalent here');
   }
 
+  const prepared = agentDocs.prepareLaunch(session, {
+    prompt,
+    extraEnv: {},
+    requestReason: 'aflt-run',
+  });
+  for (const w of prepared.warnings) {
+    try {
+      process.stderr.write(`WARNING: ${w}\n`);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  const effectivePrompt = prepared.prompt != null ? prepared.prompt : prompt;
+
   let bin;
   let argvRun;
   if (engineName === 'cursor') {
     bin = cursor.resolveCursorBin();
-    argvRun = cursor.buildPrintArgs(session, { prompt, mode, force, outputFormat, trust });
+    argvRun = cursor.buildPrintArgs(session, {
+      prompt: effectivePrompt,
+      mode,
+      force,
+      outputFormat,
+      trust,
+    });
   } else if (engineName === 'copilot') {
     bin = copilot.resolveCopilotBin();
-    argvRun = copilot.buildPrintArgs(session, { prompt, force, outputFormat, silent });
+    argvRun = copilot.buildPrintArgs(session, {
+      prompt: effectivePrompt,
+      force,
+      outputFormat,
+      silent,
+    });
   } else {
     fail(`unsupported engine: ${engineName}`);
   }
@@ -2625,7 +2680,9 @@ async function executeHeadlessRun(session, opts = {}) {
   process.stderr.write(
     `Running "${session.title}" via ${bin} (${engineName}${mode ? `, mode=${mode}` : ''}${force ? ', force' : ''}) in ${session.cwd}\n`
   );
-  const childEnv = env || { ...process.env, ...messages.sessionIdentityEnv(session) };
+  const childEnv = env
+    ? { ...env, ...prepared.env }
+    : { ...process.env, ...prepared.env };
   const outPath = runlib.newRunLogPath(session.id, engineName);
   runlib.writeRunLogHeader(outPath, { argv: [bin, ...argvRun], cwd: session.cwd });
 
@@ -3146,10 +3203,24 @@ async function cmdSpawn(argv) {
     stopRequested: false,
   });
 
-  const envOverlay = messages.sessionIdentityEnv(worker, {
-    AGENTFLEET_PARENT: parent.id,
-    AGENTFLEET_RESULT: finalResult,
+  const preparedSpawn = agentDocs.prepareLaunch(worker, {
+    prompt: finalWrapped,
+    extraEnv: {
+      AGENTFLEET_PARENT: parent.id,
+      AGENTFLEET_RESULT: finalResult,
+    },
+    requestReason: 'aflt-spawn',
   });
+  for (const w of preparedSpawn.warnings) {
+    try {
+      process.stderr.write(`WARNING: ${w}\n`);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  const envOverlay = preparedSpawn.env;
+  const spawnPrompt =
+    preparedSpawn.prompt != null ? preparedSpawn.prompt : finalWrapped;
 
   if (interactive) {
     try {
@@ -3158,7 +3229,7 @@ async function cmdSpawn(argv) {
       fail(err.message, { json: asJson });
     }
     const resumeOpts = {
-      prompt: finalWrapped,
+      prompt: spawnPrompt,
       trust,
       force,
       herdrApp: herdrapp.herdrAppEnabled(flags),
@@ -3362,7 +3433,7 @@ async function cmdSuperviseHeadless(argv) {
   const timeoutSec = flags.timeout != null && flags.timeout !== true ? Number(flags.timeout) : 0;
   const prompt = session.prompt || '';
   const resultPath = session.result || orchestrate.defaultResultPath(session.id);
-  const envOverlay = messages.sessionIdentityEnv(session, {
+  const envOverlay = agentDocs.sessionLaunchEnv(session, {
     ...(session.parent ? { AGENTFLEET_PARENT: session.parent } : {}),
     ...(resultPath ? { AGENTFLEET_RESULT: resultPath } : {}),
   });
@@ -3481,7 +3552,7 @@ async function cmdMaster(argv) {
   }
 
   function masterEnvOverlay(session) {
-    const overlay = messages.sessionIdentityEnv(session, {
+    const overlay = agentDocs.sessionLaunchEnv(session, {
       AGENTFLEET_RESULT: session.result,
       AGENTFLEET_ROLE: 'master',
       PATH: orchestrate.pathWithAf(process.env),
@@ -4075,7 +4146,7 @@ async function runDocsForProject(projectRoot, opts = {}) {
     throw err;
   }
 
-  const envOverlay = messages.sessionIdentityEnv(session, {
+  const envOverlay = agentDocs.sessionLaunchEnv(session, {
     AGENTFLEET_RESULT: finalResult,
     AGENTFLEET_ROLE: 'docs',
     PATH: orchestrate.pathWithAf(process.env),
@@ -4239,8 +4310,8 @@ function cmdDocsStatus({ asJson, wantAll }, dirArgsIn) {
     addTarget(process.cwd());
   }
 
-  const projects = targets.map((dir) =>
-    docs.collectProjectDocsStatus(dir, {
+  const projects = targets.map((dir) => {
+    const status = docs.collectProjectDocsStatus(dir, {
       warn: (msg) => {
         try {
           process.stderr.write(`WARNING: ${msg}\n`);
@@ -4248,8 +4319,35 @@ function cmdDocsStatus({ asJson, wantAll }, dirArgsIn) {
           /* ignore */
         }
       },
-    })
-  );
+    });
+    if (status.error) return status;
+    const ctx = agentDocs.resolveAgentDocsContext(
+      { cwd: status.root, project: null },
+      { cwd: status.root }
+    );
+    let checkpoint = null;
+    if (ctx.enabled) {
+      checkpoint = agentDocs.summarizeCheckpoint(ctx.project, {
+        hours: ctx.checkpointHours,
+      });
+    }
+    return {
+      ...status,
+      agentDocs: {
+        enabled: ctx.enabled,
+        project: ctx.project,
+        memoryRepo: ctx.memoryRepo,
+        memoryMissing: ctx.missing.includes('memoryRepo'),
+        processDocPath: ctx.processDocPath,
+        agentDocsPath: ctx.agentDocsPath,
+        agentsMdPath: ctx.agentsMdPath,
+        warnings: ctx.warnings,
+        checkpoint,
+        // Issue #2: Doc Bot notifications via messaging — not sent here.
+        docBotNotify: agentDocs.DOC_BOT_NOTIFY_DEFERRED,
+      },
+    };
+  });
 
   if (asJson) {
     emitJson({ ok: true, projects });
@@ -4298,9 +4396,91 @@ function cmdDocsStatus({ asJson, wantAll }, dirArgsIn) {
         process.stdout.write(`  skip:      ${p.skipReason} (commit or discard docs edits first)\n`);
       }
       process.stdout.write(`  instr:     used=${usedN} skipped=${skipN}\n`);
+      if (p.agentDocs && p.agentDocs.enabled) {
+        const cp = p.agentDocs.checkpoint;
+        const cpLine = cp
+          ? `progress=${cp.progress} missing=${cp.missing} overdue=${cp.overdue}` +
+            (cp.ageHours != null ? ` ageHours=${cp.ageHours.toFixed(2)}` : '')
+          : '-';
+        process.stdout.write(`  agentDocs: project=${p.agentDocs.project}  ${cpLine}\n`);
+        if (p.agentDocs.memoryMissing) {
+          process.stdout.write(
+            `  memory:    MISSING (run aflt memory init <path> or set AFLT_MEMORY_REPO)\n`
+          );
+        }
+      }
     }
   }
   process.exitCode = 0;
+}
+
+function cmdDocsCheckpoint(argv) {
+  const { args, flags } = parseArgs(argv);
+  const action = args[0] ? String(args[0]) : '';
+  const dirArg = args[1] || flags.cwd || flags.C || process.cwd();
+  const asJson = Boolean(flags.json);
+  if (action !== 'request' && action !== 'complete') {
+    fail(
+      'usage: aflt docs checkpoint request|complete [<dir>] [--project NAME] [--reason T] [--note PATH] [--json]',
+      { json: asJson }
+    );
+  }
+  const cwd = resolveCwd(dirArg);
+  const projectFlag =
+    flags.project && flags.project !== true ? String(flags.project).trim() : null;
+  const ctx = agentDocs.resolveAgentDocsContext(
+    { cwd, project: projectFlag },
+    { cwd, project: projectFlag }
+  );
+  if (!ctx.enabled && !projectFlag) {
+    fail(
+      `agentDocs not enabled for ${cwd} (add {"agentDocs": true} to .agentfleet.json)`,
+      { json: asJson }
+    );
+  }
+  const project = projectFlag || ctx.project;
+  let summary;
+  if (action === 'request') {
+    const reason =
+      flags.reason && flags.reason !== true ? String(flags.reason) : 'manual';
+    summary = agentDocs.requestCheckpoint(project, {
+      sessionId: process.env.AGENTFLEET_ID || process.env.AGENTFLEET_SESSION || null,
+      reason,
+    });
+  } else {
+    const note =
+      flags.note && flags.note !== true ? String(flags.note) : null;
+    summary = agentDocs.completeCheckpoint(project, {
+      sessionId: process.env.AGENTFLEET_ID || process.env.AGENTFLEET_SESSION || null,
+      notePath: note,
+    });
+  }
+  const payload = {
+    ok: true,
+    action,
+    project,
+    checkpoint: summary,
+    docBotNotify: agentDocs.notifyDocBot({
+      type: action === 'request' ? 'checkpoint-requested' : 'checkpoint-completed',
+      project,
+    }),
+    warnings: ctx.warnings,
+    missing: ctx.missing,
+  };
+  if (asJson) {
+    emitJson(payload);
+    return;
+  }
+  process.stdout.write(
+    `docs-checkpoint  ${action}  project=${project}  progress=${summary.progress}` +
+      `  missing=${summary.missing}  overdue=${summary.overdue}\n`
+  );
+  for (const w of ctx.warnings) {
+    process.stderr.write(`WARNING: ${w}\n`);
+  }
+  process.stderr.write(
+    'note: Doc Bot notifications deferred to issue #2 (cross-session messaging).\n'
+  );
 }
 
 async function cmdDocs(argv) {
@@ -4312,6 +4492,12 @@ async function cmdDocs(argv) {
     const wantAll = docsRecoverBoolFlag(flags, 'all', dirArgs);
     const statusJson = docsRecoverBoolFlag(flags, 'json', dirArgs);
     cmdDocsStatus({ asJson: statusJson, wantAll }, dirArgs);
+    return;
+  }
+
+  if (args[0] === 'checkpoint') {
+    const idx = argv.indexOf('checkpoint');
+    cmdDocsCheckpoint(idx >= 0 ? argv.slice(idx + 1) : args.slice(1));
     return;
   }
 
@@ -5550,7 +5736,7 @@ async function cmdSend(argv) {
       ? orchestrate.continueWorkerPrompt(resultPath, text)
       : text;
 
-  const envOverlay = messages.sessionIdentityEnv(session, {
+  const envOverlay = agentDocs.sessionLaunchEnv(session, {
     ...(resultPath ? { AGENTFLEET_RESULT: resultPath } : {}),
   });
 

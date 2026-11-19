@@ -204,7 +204,8 @@ aflt memory | aflt memory where [--json]
 
 aflt memory init <path> [--force] [--json]
 # Create/register a local project-memory git repo (never remote, never commit).
-# Writes README/.gitignore/.aflt-memory.json/DOC-AGENT.md when missing; sets config memoryRepo.
+# Writes README/.gitignore/.aflt-memory.json/DOC-AGENT.md/DOCUMENTATION-PROCESS.md
+# when missing; sets config memoryRepo.
 
 aflt memory sync [<project>...] [--all] [--include-adhoc] [--dry-run] [--json] [--no-redact]
  [--active-days N] [--commit] [--push]
@@ -478,8 +479,23 @@ aflt docs --status [--json] [--all] [<dir>...]
 - Updates **only** configured docs paths. Warns on non-doc edits (including a new `CHANGELOG.md` when not allowed); does not revert.
 - Optional `.agentfleet.json` `docsInstructions`: file path(s) (string or array; `~` / repo-relative / absolute) injected into the prompt as project-specific instructions; edit restriction still applies. Missing/unreadable files warn + skip; size caps apply. Dry-run/`--json` report used and skipped files.
 - Prompt may include a compact **Session timeline since last docs run** (same builder as `aflt timeline`, cap ~8KB with `[truncated]` marker). Dry-run/`--json` report `timelineBytes` (0 when skipped).
-- **`aflt docs --status`:** read-only status (no engine, no registry/state writes). Default cwd; `--all` adds distinct registry project dirs. Reports `needsDocs` (`docsEnabled && (no lastRun || commitsSince>0 || unknown lastCommit)`); also `skip` / `skipReason` / `skipFiles` and `ready`. **Doc Bot rule:** skip repos with uncommitted docs edits — any dirty `docsPaths` file (`.DS_Store` ignored) sets `skip: true`, `skipReason: "dirty-docs"`; `needsDocs` is unchanged. Only run `aflt docs` on projects where `ready` (`needsDocs && !skip`) is true. `aflt docs` itself does not check this. Exit 0 even when `needsDocs` is true.
+- **`aflt docs --status`:** read-only status (no engine, no registry/state writes). Default cwd; `--all` adds distinct registry project dirs. Reports `needsDocs` (`docsEnabled && (no lastRun || commitsSince>0 || unknown lastCommit)`); also `skip` / `skipReason` / `skipFiles` and `ready`; when `agentDocs` is enabled, includes checkpoint missing/overdue (age is status only, not progress). **Doc Bot rule:** skip repos with uncommitted docs edits — any dirty `docsPaths` file (`.DS_Store` ignored) sets `skip: true`, `skipReason: "dirty-docs"`; `needsDocs` is unchanged. Only run `aflt docs` on projects where `ready` (`needsDocs && !skip`) is true. `aflt docs` itself does not check this. Exit 0 even when `needsDocs` is true.
 - Auto-runs once after a successful headless master (`aflt master --headless` or `aflt run` on `role=master`) when docs are enabled; skip with `--no-docs`. Docs failure → WARNING + JSON `docs:{ok:false}` but the master exit stays 0. `aflt wait --docs` is the same after wait exit 0, and **errors** if no master can be resolved. Guard: `docsTriggeredRunId` (once per master run).
+
+### Agent documentation + checkpoints (opt-in, issue #3 phase 1)
+
+Off by default. Enable with `.agentfleet.json` `{"agentDocs": true}` (optional `docCheckpointHours`, default 4).
+
+```bash
+aflt docs checkpoint request|complete [<dir>] [--project NAME] [--reason T] [--note PATH] [--json]
+aflt docs --status --json
+```
+
+- Templates: `templates/DOCUMENTATION-PROCESS.md` (shared; also copied by `aflt memory init` when missing) and `templates/AGENT-DOCS.md` (copy into the project root).
+- On launch/resume (`new` / `resume` / `run` / Herdr backends) for **Cursor and Copilot**: when enabled, sets `AFLT_PROJECT`, `AFLT_MEMORY_REPO`, `AFLT_DOCS_PROCESS`, `AFLT_AGENT_DOCS`, `AFLT_AGENTS_MD` and may prepend a short preamble. Existing `AGENTS.md` instructions are preserved (pointed at, not replaced). Works with no memory repo; missing required memory is reported (`AFLT_MEMORY_MISSING=1` + WARNING).
+- Checkpoints live under `$AGENTFLEET_HOME/doc-checkpoints/`. Progress is **requested → completed** only; overdue uses age for status/dashboard labels and never interrupts busy agents. Dashboard JSON includes `checkpoints` + per-project `checkpoint`.
+- Archive convention: live status notes ignore `status-notes/archive/`; **aflt never auto-moves or deletes documents**.
+- Doc Bot notifications via messaging are **not** implemented here — `agentDocs.notifyDocBot` is an explicit hook deferred to **issue #2**. Do not reimplement Copilot completion capture (`aflt dashboard --capture-completions` / `lib/task-completions.js`).
 
 ### Doctor and Herdr helpers
 
@@ -540,6 +556,7 @@ Home: **`$AGENTFLEET_HOME`** (default `~/.agentfleet`). Override the registry fi
 | `plans/` | Master plans (`$AGENTFLEET_PLAN`) |
 | `messages/<masterId>.jsonl` | Team message log |
 | `docs/<hash>.json` | Documentarian since-tracking (`lastCommit`) |
+| `doc-checkpoints/<project>.json` | Opt-in agentDocs checkpoint request/complete state |
 
 Each session stores identity (`id`, `title`, `chatId`, `cwd`, `branch`, `model`, `engine`), optional `project`, lifecycle `status` (`active` | `paused` | `done`), `tags` / `notes` / `prompt`, optional `herdr` evidence from `aflt sync`, and orchestration fields (`parent`, `role`, `task`, `result`, `workerStatus`, run pid metadata, `messaging`, …).
 
@@ -561,7 +578,9 @@ Resolved by walking cwd → ancestors until the git root (or filesystem root).
   "docsPaths": ["README.md", "docs/"],
   "docsInstructions": ["docs/DOCS_STYLE.md"],
   "docsEngine": "cursor",
-  "docsForce": false
+  "docsForce": false,
+  "agentDocs": true,
+  "docCheckpointHours": 4
 }
 ```
 
@@ -574,6 +593,8 @@ Resolved by walking cwd → ancestors until the git root (or filesystem root).
 | `docsInstructions` | optional file path(s) injected into the documentarian prompt (`~` / repo-relative / absolute; still only edit `docsPaths`) |
 | `docsEngine` | `cursor` \| `copilot` |
 | `docsForce` | `false` to opt out of the default write grant |
+| `agentDocs` | `true` to deliver docs-process / AGENT-DOCS paths on launch and track checkpoints |
+| `docCheckpointHours` | overdue threshold hours for status/dashboard only (default 4; not a progress metric) |
 
 ### Fleet: `~/.agentfleet/config.json`
 
@@ -607,8 +628,10 @@ Set by the caller or the environment:
 | `AGENTFLEET_HOME` | Registry dir (default `~/.agentfleet`) |
 | `AGENTFLEET_REGISTRY` | Override `sessions.json` path |
 | `AGENTFLEET_ENGINE` | Default engine for **new** sessions |
-| `AFLT_PROJECT` | Default project name for **new** sessions (after `--project` / parent; before `.agentfleet.json` / config.json / basename). Projects need no git. |
-| `AFLT_MEMORY_REPO` | Override project-memory repo path (else `config.json` `memoryRepo` from `aflt memory init`) |
+| `AFLT_PROJECT` | Default project name for **new** sessions (after `--project` / parent; before `.agentfleet.json` / config.json / basename). Projects need no git. Also set on launch when `agentDocs` is enabled. |
+| `AFLT_MEMORY_REPO` | Override project-memory repo path (else `config.json` `memoryRepo` from `aflt memory init`). Also injected on launch when `agentDocs` is enabled. |
+| `AFLT_DOCS_PROCESS` / `AFLT_AGENT_DOCS` / `AFLT_AGENTS_MD` / `AFLT_MEMORY_PROJECT` | Set on launch/resume when `agentDocs` is enabled (paths to process doc, project AGENT-DOCS.md, AGENTS.md, memory project folder). |
+| `AFLT_MEMORY_MISSING` | `1` when `agentDocs` is enabled but no memory repo is configured |
 | `AGENTFLEET_CURSOR_BIN` | Override `cursor-agent` |
 | `AGENTFLEET_COPILOT_BIN` | Override `copilot` |
 | `AGENTFLEET_COPILOT_HOME` | Copilot home for import (else `COPILOT_HOME` / `~/.copilot`) |
