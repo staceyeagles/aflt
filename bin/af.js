@@ -24,6 +24,7 @@ const projectLib = require('../lib/project');
 const timeline = require('../lib/timeline');
 const memory = require('../lib/memory');
 const dashboard = require('../lib/dashboard');
+const setup = require('../lib/setup');
 const resolveSession = require('../lib/resolve-session');
 const {
   parseArgs,
@@ -305,6 +306,15 @@ Usage:
   aflt export [file]          Write registry JSON (default: stdout)
   aflt import-file <file>     Merge sessions from a backup file
   aflt which-backend          Show auto-detected resume --all backend
+  aflt setup [--apply] [--json] [--herdr] [--memory <path>] [--force]
+                            Machine setup preview (default) or apply. Checks Node,
+                            CLI aliases on PATH, $AGENTFLEET_HOME, engines; never
+                            edits shell rc files, never mutates sessions, never
+                            installs engines or publishes packages. --apply performs
+                            only needed actions (idempotent). --memory <path> runs
+                            memory init/register. --herdr installs Herdr templates
+                            + af-sessions panel when hc/herdr-app are present.
+                            --force replaces foreign ~/.local/bin aliases only.
   aflt herdr-templates [--force] [--dry-run]
                             Install only the Cursor, Copilot, and OpenCode Herdr
                             templates into ~/.config/herdr-core/templates
@@ -504,6 +514,9 @@ async function main() {
       break;
     case 'which-backend':
       process.stdout.write(backends.detectBackend() + '\n');
+      break;
+    case 'setup':
+      cmdSetup(rest);
       break;
     case 'doctor':
       cmdDoctor(rest);
@@ -5757,6 +5770,36 @@ function cmdLog(argv) {
   }
   if (!fs.existsSync(file)) fail(`output file missing: ${file}`);
   process.stdout.write(fs.readFileSync(file, 'utf8'));
+}
+
+function cmdSetup(argv) {
+  const { args, flags } = parseArgs(argv);
+  const asJson = recoverBoolFlag(flags, 'json', args);
+  const apply = recoverBoolFlag(flags, 'apply', args);
+  const wantHerdr = recoverBoolFlag(flags, 'herdr', args);
+  const force = recoverBoolFlag(flags, 'force', args);
+  let memoryPath = null;
+  if (flags.memory != null && flags.memory !== false) {
+    if (flags.memory === true) {
+      fail('usage: aflt setup [--apply] [--json] [--herdr] [--memory <path>] [--force]', {
+        json: asJson,
+      });
+    }
+    memoryPath = String(flags.memory);
+  }
+  const result = setup.runSetup({
+    apply,
+    herdr: wantHerdr,
+    memory: memoryPath,
+    force,
+    env: process.env,
+  });
+  if (asJson) {
+    emitJson(result);
+  } else {
+    process.stdout.write(setup.formatText(result));
+  }
+  process.exitCode = result.ok ? 0 : 1;
 }
 
 function cmdHerdrTemplates(argv) {

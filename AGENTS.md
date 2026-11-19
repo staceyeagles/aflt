@@ -2,9 +2,9 @@
 
 This guide is for **AI coding agents** (GitHub Copilot CLI, Cursor CLI / `cursor-agent`, and orchestrators that shell out to them). It is the practical companion to the human-oriented [README](README.md). Flag lists and exit codes come from `aflt help` (`bin/af.js` `USAGE`) and the implementation; do not invent flags.
 
-`aflt` is the **primary command**. `af` and `agentfleet` are aliases for the same CLI (`bin/af.js`). The product name is **AgentFleet**. Internal names are unchanged: `~/.agentfleet`, `AGENTFLEET_*`, `.agentfleet.json`, npm package `agentfleet`, MCP server name `af`, Herdr mod `af-sessions`.
+`aflt` is the **primary command**. `af` and `agentfleet` are aliases for the same CLI (`bin/af.js`). The product name is **AgentFleet**. Internal names are unchanged: `~/.agentfleet`, `AGENTFLEET_*`, `.agentfleet.json`, MCP server name `af`, Herdr mod `af-sessions`. The npm package name is **`aflt`** (homepage [aflt.dev](https://aflt.dev)).
 
-Prefer **`aflt help`** (or `aflt` with no args) for the full usage text. **`aflt <command> --help` is not a dedicated help path** — some commands print a short usage error, and others (`ls`, `sync`, `import`, `doctor`, `version`) may **run the command**.
+Prefer **`aflt help`** (or `aflt` with no args) for the full usage text. **`aflt <command> --help` is not a dedicated help path** — some commands print a short usage error, and others (`ls`, `sync`, `import`, `doctor`, `setup`, `version`) may **run the command**.
 
 ---
 
@@ -20,32 +20,44 @@ It does **not** replace the engines. You (the agent) call `aflt` to create sessi
 
 Requires **Node ≥ 18**. Zero npm runtime dependencies.
 
-From a clone of [wwlib/aflt](https://github.com/wwlib/aflt):
+Keep **install**, **machine setup**, **project onboarding**, and **workflows** separate:
 
 ```bash
-cd ~/github/wwlib/aflt    # or wherever you cloned
-npm install -g .          # installs aflt plus aliases af and agentfleet
-# or without a global install:
-#   npm link
-#   ln -sfn "$(pwd)/bin/af.js" ~/.local/bin/aflt
-#   ln -sfn "$(pwd)/bin/af.js" ~/.local/bin/af          # optional alias
-#   ln -sfn "$(pwd)/bin/af.js" ~/.local/bin/agentfleet  # optional alias
+# Install the CLI (primary, after registry publish):
+npm install -g aflt
+
+# Fallback (before first publish, and anytime):
+npm install -g github:wwlib/aflt
+
+# Contributors / checkout:
+#   cd ~/github/wwlib/aflt && npm install -g .
+#   # or: npm link / ln -sfn "$(pwd)/bin/af.js" ~/.local/bin/{aflt,af,agentfleet}
 ```
 
-Ensure `~/.local/bin` is on `PATH`. Then:
+Ensure the npm global bin dir (and `~/.local/bin` if you use clone-backed symlinks) is on `PATH`. **Do not** edit users' shell startup files for them — print PATH instructions only. Until the first `npm publish`, the GitHub install is the working path.
+
+**Migration** from older clone-backed `~/.local/bin/{aflt,af,agentfleet}` symlinks: after a global npm install, point `which aflt` at the npm binary (remove or replace checkout symlinks). `aflt setup` refuses to overwrite an unrelated `~/.local/bin` name unless `--force`.
 
 ```bash
-aflt --version            # e.g. "aflt 1.2.0"
-aflt --version --json     # {"version":"1.2.0"}
+aflt --version            # e.g. "aflt 1.3.0"
+aflt --version --json     # {"version":"1.3.0"}
+
+# Machine setup (preview by default; --apply to mutate)
+aflt setup                # non-mutating plan
+aflt setup --apply        # create $AGENTFLEET_HOME if missing; link aliases if needed
+aflt setup --apply --herdr
+aflt setup --apply --memory ~/aflt-memory
+aflt setup --json
+
 aflt doctor               # read-only: node, home, hc, engines, MCP hints
 aflt doctor --json
 ```
 
-Also install the engine(s) you will use:
+Also install the engine(s) you will use (`aflt setup` reports missing engines but never installs them):
 
 - Cursor CLI: `curl https://cursor.com/install -fsS | bash` (`cursor-agent` / `agent` on PATH). Override with `AGENTFLEET_CURSOR_BIN`.
 - Copilot CLI (optional): `npm install -g @github/copilot`. Override with `AGENTFLEET_COPILOT_BIN`.
-- Herdr (`hc` + optional `herdr-app`) is recommended for interactive sessions but is not required for headless `aflt run` / `spawn`.
+- Herdr (`hc` + optional `herdr-app`) is recommended for interactive sessions but is not required for headless `aflt run` / `spawn`. Pass `--herdr` to `aflt setup` only when you want templates/panel installed.
 
 Optional bash completion: `source /path/to/aflt/completions/af.bash` (completes `aflt`, `af`, and `agentfleet`).
 
@@ -472,6 +484,8 @@ aflt docs --status [--json] [--all] [<dir>...]
 ### Doctor and Herdr helpers
 
 ```bash
+aflt setup [--apply] [--json] [--herdr] [--memory <path>] [--force]
+# Machine setup preview (default) or apply; never edits shell rc / sessions
 aflt doctor [--json]                 # read-only environment checks
 aflt which-backend                   # auto-detected resume --all backend
 aflt herdr-templates [--force] [--dry-run]

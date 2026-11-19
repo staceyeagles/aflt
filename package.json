@@ -1,6 +1,6 @@
 {
-  "name": "agentfleet",
-  "version": "1.2.0",
+  "name": "aflt",
+  "version": "1.3.0",
   "description": "Track, resume, and headlessly run Cursor CLI (and optional Copilot CLI) sessions",
   "bin": {
     "agentfleet": "./bin/af.js",
@@ -12,19 +12,21 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node --import ./test/_setup.js --test test/*.test.js",
+    "test": "node --import ./test/_setup.js --test --test-concurrency=1 test/*.test.js",
     "af": "node bin/af.js"
   },
   "files": [
     "bin",
     "lib",
     "herdr",
+    "!herdr/**/gpui-kit.d.ts",
     "completions",
     "templates",
     "docs",
     "README.md",
     "AGENTS.md",
-    "assets"
+    "assets",
+    "LICENSE"
   ],
   "keywords": [
     "cursor",
@@ -40,7 +42,7 @@
     "type": "git",
     "url": "git+https://github.com/wwlib/aflt.git"
   },
-  "homepage": "https://github.com/wwlib/aflt",
+  "homepage": "https://aflt.dev",
   "bugs": {
     "url": "https://github.com/wwlib/aflt/issues"
   }

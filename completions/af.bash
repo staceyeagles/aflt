@@ -42,7 +42,7 @@ _af() {
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  cmds="version new add import ls list timeline dashboard memory sync run log spawn master docs children result wait tail send stop resume pick adopt cursor copilot engine rename cwd set-cwd done rm remove note export import-file which-backend herdr-templates herdr-app doctor msg inbox thread mcp help"
+  cmds="version new add import ls list timeline dashboard memory sync run log spawn master docs children result wait tail send stop resume pick adopt cursor copilot engine rename cwd set-cwd done rm remove note export import-file which-backend setup herdr-templates herdr-app doctor msg inbox thread mcp help"
 
   if [[ ${COMP_CWORD} -eq 1 ]]; then
     COMPREPLY=( $(compgen -W "${cmds}" -- "${cur}") )
@@ -192,6 +192,9 @@ _af() {
       ;;
     herdr-templates)
       COMPREPLY=( $(compgen -W "--force --dry-run" -- "${cur}") )
+      ;;
+    setup)
+      COMPREPLY=( $(compgen -W "--apply --json --herdr --memory --force" -- "${cur}") )
       ;;
     doctor)
       COMPREPLY=( $(compgen -W "--json" -- "${cur}") )

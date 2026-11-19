@@ -4,6 +4,19 @@ Self-contained guide to reproduce the home Mac mini agent-fleet stack on another
 
 Source of truth for `aflt`: the code and README in this repo (`bin/af.js`, `lib/backends.js`, `lib/cursor.js`, tests). AI coding agents should start with [AGENTS.md](../AGENTS.md). Install commands below for Herdr, Cursor CLI, OpenCode, tmux, and WezTerm were checked against their official docs (2026-11).
 
+### Install vs setup vs project vs workflows
+
+| Layer | What | Command |
+|-------|------|---------|
+| **Install** the CLI | Put `aflt` / `af` / `agentfleet` on PATH | `npm install -g aflt` (fallback: `npm install -g github:wwlib/aflt`; contributors: clone + `npm install -g .` / symlink) |
+| **Machine setup** | Home dir, optional Herdr templates/panel, optional memory registration | `aflt setup` (preview) / `aflt setup --apply` |
+| **Project onboarding** | Per-repo messaging/docs/project name | `.agentfleet.json`, `aflt memory init`, `aflt mcp install` |
+| **Ongoing workflows** | Run agents, orchestrate, sync memory | `aflt run`, `aflt master` / `spawn`, `aflt memory sync`, … |
+
+Until the first npm registry publish, use the GitHub install. `aflt setup` never edits shell startup files, never installs engines, never publishes packages, and never rewrites `sessions.json`.
+
+**Migration** from clone-backed `~/.local/bin` aliases: after a global npm install, replace those symlinks so `which aflt` resolves to the npm binary. `aflt setup` refuses to overwrite an unrelated `~/.local/bin` name unless you pass `--force`.
+
 ---
 
 ## 1. What each piece is (and how they fit)
@@ -327,33 +340,54 @@ aflt mcp install --engine cursor --write
 
 Until messaging is enabled for the running session, `aflt mcp` advertises no tools. Copilot launches get a per-run `--additional-mcp-config` automatically when messaging is enabled (no `~/.copilot` write). If an older Cursor `af` entry lacks the `${env:…}` mapping, re-run install (`aflt` warns on launch; `aflt doctor` flags `mcp_cursor`).
 
-### 3.9 Install `af` from this archive
+### 3.9 Install `aflt` (preferred: npm)
 
-Copy `agentfleet/` (or extract `agentfleet.tar.gz`) onto the work machine, then:
+```bash
+# After the package is on the npm registry:
+npm install -g aflt
+
+# Fallback (before first publish, and anytime):
+npm install -g github:wwlib/aflt
+
+# Then machine setup (preview first):
+aflt setup
+aflt setup --apply
+# optional:
+# aflt setup --apply --herdr
+# aflt setup --apply --memory ~/aflt-memory
+```
+
+Add the npm global bin directory to `PATH` yourself (for example in `~/.zshrc`). `aflt` never edits shell rc files.
+
+### 3.9b Install from a checkout / archive (contributors)
+
+Copy or clone the repo onto the work machine, then:
 
 Preferred user-local layout (used on the home Mini; avoids writing under `/usr/local`):
 
 ```bash
-# after copying this tree (or extracting agentfleet.tar.gz)
+# after cloning or copying this tree
 mkdir -p "$HOME/.local/share" "$HOME/.local/bin"
-# install tree: ~/.local/share/agentfleet
-cp -R /path/to/agentfleet "$HOME/.local/share/agentfleet"
-ln -sfn "$HOME/.local/share/agentfleet/bin/af.js" "$HOME/.local/bin/aflt"
-ln -sfn "$HOME/.local/share/agentfleet/bin/af.js" "$HOME/.local/bin/af"          # optional alias
-ln -sfn "$HOME/.local/share/agentfleet/bin/af.js" "$HOME/.local/bin/agentfleet" # optional alias
+# install tree: ~/.local/share/aflt
+cp -R /path/to/aflt "$HOME/.local/share/aflt"
+ln -sfn "$HOME/.local/share/aflt/bin/af.js" "$HOME/.local/bin/aflt"
+ln -sfn "$HOME/.local/share/aflt/bin/af.js" "$HOME/.local/bin/af"          # optional alias
+ln -sfn "$HOME/.local/share/aflt/bin/af.js" "$HOME/.local/bin/agentfleet" # optional alias
 
-export PATH="$HOME/.local/bin:$PATH"
+# Add ~/.local/bin to PATH in your shell rc yourself, then:
 aflt help
-cd "$HOME/.local/share/agentfleet" && npm test
-aflt herdr-templates    # optional; skips files that already exist
+aflt setup --apply          # idempotent machine setup
+# or piecemeal:
+# aflt herdr-templates      # optional; skips files that already exist
+cd "$HOME/.local/share/aflt" && npm test
 ```
 
-Alternatives: `npm install -g --prefix "$HOME/.local" .` (creates `~/.local/lib`), `npm link`, or `alias af='node /path/to/agentfleet/bin/af.js'`. Avoid `npm install -g .` into `/usr/local` unless you intend to write there.
+Alternatives: `npm install -g --prefix "$HOME/.local" .` (creates `~/.local/lib`), `npm link`, or `alias aflt='node /path/to/aflt/bin/af.js'`. Avoid `npm install -g .` into `/usr/local` unless you intend to write there.
 
 Optional bash completion:
 
 ```bash
-source /path/to/agentfleet/completions/af.bash
+source /path/to/aflt/completions/af.bash
 ```
 
 Override binary if needed:

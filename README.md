@@ -6,7 +6,7 @@
 
 <p align="center">
   <img alt="Node 18+" src="https://img.shields.io/badge/node-%3E%3D18-brightgreen?logo=node.js&logoColor=white"/>
-  <img alt="version 1.2.0" src="https://img.shields.io/badge/version-1.2.0-blue"/>
+  <img alt="version 1.3.0" src="https://img.shields.io/badge/version-1.3.0-blue"/>
   <img alt="396 tests passing, 1 skipped" src="https://img.shields.io/badge/tests-396%20passing%20%7C%201%20skipped-success"/>
   <img alt="macOS | Linux untested" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20untested-lightgrey"/>
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-yellow"/>
@@ -16,7 +16,7 @@
 
 **For AI agents:** [AGENTS.md](AGENTS.md) — install, commands, engines, and how to delegate or orchestrate work from Cursor or Copilot CLI.
 
-Zero npm runtime dependencies beyond **Node ≥18**. Install once (`npm i -g .`) to get `aflt` plus the aliases `af` and `agentfleet`. Engine × mode behavior (liveness, completion, handoffs, `aflt wait`): [docs/CAPABILITIES.md](docs/CAPABILITIES.md). Setup deep-dive: [docs/SETUP.md](docs/SETUP.md).
+Zero npm runtime dependencies beyond **Node ≥18**. Install the CLI (`npm install -g aflt`, or `npm install -g github:wwlib/aflt` before the first registry publish), then optionally run `aflt setup` for machine config. Engine × mode behavior (liveness, completion, handoffs, `aflt wait`): [docs/CAPABILITIES.md](docs/CAPABILITIES.md). Setup deep-dive: [docs/SETUP.md](docs/SETUP.md).
 
 ## Why AgentFleet
 
@@ -36,7 +36,7 @@ CLI coding agents are powerful but ephemeral: chat IDs live in engine-local stor
 | **Memory** | Opt-in `aflt memory` repo: sync per-project timelines + root `DASHBOARD.md` into a local git working tree; optional `--commit`/`--push` for generated `_aflt/` + root `DASHBOARD.md` |
 | **Messaging** | Opt-in `aflt msg` / `inbox` / `thread` + stdio MCP (`aflt mcp`) for Copilot & Cursor |
 | **Documentarian** | Opt-in `aflt docs`; auto once after headless master / `aflt wait --docs` |
-| **Ops** | `aflt import`, `aflt doctor`, `--json` / `--dry-run` on mutating paths |
+| **Ops** | `aflt setup`, `aflt import`, `aflt doctor`, `--json` / `--dry-run` on mutating paths |
 
 ## Architecture
 
@@ -52,27 +52,43 @@ CLI coding agents are powerful but ephemeral: chat IDs live in engine-local stor
 
 ## Install
 
+**Install** the CLI, then optionally run **machine setup**. Project onboarding (`.agentfleet.json`, `aflt memory`, …) and day-to-day workflows stay separate.
+
 ```bash
 # Node 18+
-cd aflt   # this repo
-npm install -g .
-# Primary binary: aflt  (also installs aliases af + agentfleet)
-# or without global install:
-#   npm link
-#   ln -s "$(pwd)/bin/af.js" ~/.local/bin/aflt
-# Optional aliases:
-#   ln -s ~/.local/bin/aflt ~/.local/bin/af
-#   alias aflt='node /path/to/aflt/bin/af.js'
+# Primary (after the package is published to the npm registry):
+npm install -g aflt
 
-# Cursor CLI (required for --engine cursor)
-curl https://cursor.com/install -fsS | bash   # agent / cursor-agent on PATH
+# Fallback (works before the first registry publish, and anytime):
+npm install -g github:wwlib/aflt
 
-# Optional: Copilot CLI, Herdr (hc + herdr-app), bash completion
-# npm install -g @github/copilot
-source /path/to/aflt/completions/af.bash   # completes aflt, af, and agentfleet
+# Contributors / local checkout:
+#   cd /path/to/aflt && npm install -g .
+#   # or: npm link / ln -sfn "$(pwd)/bin/af.js" ~/.local/bin/{aflt,af,agentfleet}
+
+# Ensure your PATH includes the npm global bin dir (and ~/.local/bin if you
+# use clone-backed symlinks). Edit your shell rc yourself — aflt never does.
 ```
 
+Until the first `npm publish`, the GitHub install is the supported path. Bin entries are `aflt`, `af`, and `agentfleet` (same CLI).
+
+**Migration** from clone-backed `~/.local/bin` aliases: after `npm install -g aflt` (or the GitHub form), remove or replace old symlinks that pointed at a checkout so `which aflt` resolves to the npm-installed binary. `aflt setup` will refuse to overwrite an unrelated `~/.local/bin/aflt` unless you pass `--force`.
+
 ```bash
+# Machine setup (preview by default; apply only with --apply)
+aflt setup                # non-mutating plan
+aflt setup --apply        # create ~/.agentfleet if missing; link aliases if needed
+aflt setup --apply --herdr                  # optional Herdr templates + panel
+aflt setup --apply --memory ~/aflt-memory   # optional memory repo init/register
+aflt setup --json
+
+# Engines (install yourself — setup never installs them)
+curl https://cursor.com/install -fsS | bash   # agent / cursor-agent on PATH
+# npm install -g @github/copilot              # optional
+
+# Optional bash completion (source manually)
+# source /path/to/aflt/completions/af.bash
+
 aflt doctor          # read-only: node, home, hc, engines, MCP hints
 aflt doctor --json
 ```
@@ -348,8 +364,9 @@ aflt import copilot <uuid|prefix>…   # register; --title (single id), --tag, -
                                    # --json, --all, --dry-run, --allow-missing, -i|--pick
 ```
 
-## Doctor, JSON, dry-run
+## Doctor, setup, JSON, dry-run
 
+- **`aflt setup [--apply] [--json] [--herdr] [--memory <path>] [--force]`** — machine setup preview (default) or apply. Idempotent; never edits shell rc, never mutates sessions, never installs engines.
 - **`aflt doctor [--json]`** — read-only checks: node, home, registry, default engine, `hc`, engines, MCP wiring hints.
 - **`--json`** — machine-readable stdout on supporting commands (single JSON object where applicable).
 - **`--dry-run`** — plan only; no registry/state mutation (new, run, spawn, master, docs, msg enable, adopt, cwd, rm, sync, herdr-*, mcp install, …).
@@ -438,6 +455,7 @@ Optional `"project"` is a create-time default for non-repo agent groups (after `
 | `aflt rm` | Remove session(s) by exact id/title or TTY fuzzy pick (+ af-owned files) |
 | `aflt export` | Write registry JSON |
 | `aflt which-backend` | Show auto-detected `resume --all` backend |
+| `aflt setup` | Machine setup preview / `--apply` (opt-in `--herdr`, `--memory`) |
 | `aflt herdr-templates` | Install Cursor/Copilot/OpenCode hc templates only |
 | `aflt herdr-app install` / `status` | Install/report af-sessions panel + layout |
 | `aflt doctor` | Read-only environment checks |
