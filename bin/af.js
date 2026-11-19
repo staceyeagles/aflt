@@ -102,7 +102,8 @@ Usage:
                             YYYY-MM-DD. Exit 0 when empty.
   aflt dashboard --serve [--port 8787] [--host 127.0.0.1] [--json] [--capture-completions]
                             Live local activity dashboard (read-only by default). Bind
-                            127.0.0.1:8787. Blocks until SIGINT/SIGTERM. Separate from
+                            127.0.0.1:8787. History tree + Gantt by default; Graph toggle
+                            for the star view. Blocks until SIGINT/SIGTERM. Separate from
                             aflt memory dashboard (memory-repo DASHBOARD.md).
                             --capture-completions: save registered Copilot Task Complete
                             events as project status notes in the configured memory repo.
@@ -630,6 +631,23 @@ async function cmdNew(argv) {
   const launchOptsPrepared = { ...launchOpts, prompt: prepared.prompt };
   const argvLaunch = engine.buildInteractiveCommand(saved, launchOptsPrepared);
   const launchEnv = { ...process.env, ...prepared.env };
+  try {
+    const receipt = runlib.recordInteractiveLaunch(saved.id, {
+      engine: engineName,
+      argv: argvLaunch,
+      cwd,
+      prompt: prepared.prompt || prompt || null,
+      kind: 'interactive',
+    });
+    if (receipt) {
+      registry.bestEffortUpdate(saved.id, {
+        lastOutput: receipt,
+        lastPrompt: prompt || prepared.prompt || null,
+      });
+    }
+  } catch (_) {
+    /* never block launch on receipt write */
+  }
   const { code } = await engine.spawnInteractive(argvLaunch, { cwd, env: launchEnv });
   registry.bestEffortTouch(saved.id);
   process.exitCode = code || 0;
@@ -1778,6 +1796,23 @@ async function cmdResume(argv) {
   const resumeOptsPrepared = { ...resumeOpts, prompt: prepared.prompt };
   const argvLaunch = engine.buildInteractiveCommand(session, resumeOptsPrepared);
   const launchEnv = { ...process.env, ...prepared.env };
+  try {
+    const receipt = runlib.recordInteractiveLaunch(session.id, {
+      engine: session.engine || 'cursor',
+      argv: argvLaunch,
+      cwd: session.cwd,
+      prompt: prepared.prompt || resumeOpts.prompt || null,
+      kind: 'interactive',
+    });
+    if (receipt) {
+      registry.bestEffortUpdate(session.id, {
+        lastOutput: receipt,
+        lastPrompt: resumeOpts.prompt || prepared.prompt || null,
+      });
+    }
+  } catch (_) {
+    /* never block launch on receipt write */
+  }
   const { code } = await engine.spawnInteractive(argvLaunch, {
     cwd: session.cwd,
     env: launchEnv,
@@ -2684,7 +2719,12 @@ async function executeHeadlessRun(session, opts = {}) {
     ? { ...env, ...prepared.env }
     : { ...process.env, ...prepared.env };
   const outPath = runlib.newRunLogPath(session.id, engineName);
-  runlib.writeRunLogHeader(outPath, { argv: [bin, ...argvRun], cwd: session.cwd });
+  runlib.writeRunLogHeader(outPath, {
+    argv: [bin, ...argvRun],
+    cwd: session.cwd,
+    kind: 'headless',
+    prompt: effectivePrompt,
+  });
 
   const asJson = Boolean(opts.json);
   const runId = crypto.randomUUID();
