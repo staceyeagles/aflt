@@ -3,9 +3,9 @@
   "version": "1.3.0",
   "description": "Track, resume, and headlessly run Cursor CLI (and optional Copilot CLI) sessions",
   "bin": {
-    "agentfleet": "./bin/af.js",
-    "af": "./bin/af.js",
-    "aflt": "./bin/af.js"
+    "agentfleet": "bin/af.js",
+    "af": "bin/af.js",
+    "aflt": "bin/af.js"
   },
   "type": "commonjs",
   "engines": {
