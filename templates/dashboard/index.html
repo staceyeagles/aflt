@@ -16,23 +16,62 @@
 </head>
 <body>
   <div class="shell">
-    <main class="stage" id="stage" aria-label="activity graph">
-      <svg id="graph" xmlns="http://www.w3.org/2000/svg"></svg>
-      <div id="graph-tooltip" class="graph-tooltip" role="tooltip" hidden></div>
-      <div class="hint" id="hint">
-        <div class="activity-legend" aria-label="Session activity">
-          <span class="working">working</span>
-          <span class="completed">completed</span>
-          <span class="waiting">awaiting input</span>
+    <header class="topbar" aria-label="dashboard controls">
+      <div class="brand-block">
+        <div class="brand">aflt live</div>
+        <div class="meta" id="meta">local · connecting…</div>
+      </div>
+      <div class="controls">
+        <div class="view-toggle" role="group" aria-label="View">
+          <button type="button" id="view-history" class="active" aria-pressed="true">History</button>
+          <button type="button" id="view-graph" aria-pressed="false">Graph</button>
         </div>
-        hover a node · click for details · double-click an agent for Herdr
+        <label class="sort-control" for="history-sort">Sort
+          <select id="history-sort">
+            <option value="recent">Recent activity</option>
+            <option value="created">Created</option>
+            <option value="name">Name</option>
+            <option value="project">Project</option>
+          </select>
+        </label>
+      </div>
+    </header>
+    <main class="stage" id="stage" aria-label="session history">
+      <div id="history-view" class="history-view">
+        <div class="history-toolbar">
+          <div class="activity-legend state-filter" id="history-filter" role="group" aria-label="Filter by state">
+            <button type="button" class="filter-chip active" data-state="" aria-pressed="true">all</button>
+            <button type="button" class="filter-chip running" data-state="running" aria-pressed="false">running</button>
+            <button type="button" class="filter-chip waiting" data-state="waiting" aria-pressed="false">waiting</button>
+            <button type="button" class="filter-chip idle" data-state="idle" aria-pressed="false">idle</button>
+            <button type="button" class="filter-chip done" data-state="done" aria-pressed="false">done</button>
+            <button type="button" class="filter-chip failed" data-state="failed" aria-pressed="false">failed</button>
+          </div>
+          <div class="gantt-axis" id="gantt-axis" aria-hidden="true"></div>
+        </div>
+        <p class="herdr-remote-note" id="herdr-remote-note" hidden>
+          Opening Herdr only works on the Mini — open this dashboard at 127.0.0.1 locally.
+        </p>
+        <div id="history-tree" class="history-tree" role="tree"></div>
+        <div id="history-tooltip" class="graph-tooltip" role="tooltip" hidden></div>
+        <div class="hint history-hint" id="history-hint">
+          click for details · double-click a session for Herdr · Esc to dismiss hint
+        </div>
+      </div>
+      <div id="graph-view" class="graph-view" hidden>
+        <svg id="graph" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div id="graph-tooltip" class="graph-tooltip" role="tooltip" hidden></div>
+        <div class="hint" id="hint">
+          <div class="activity-legend" aria-label="Session activity">
+            <span class="working">working</span>
+            <span class="completed">completed</span>
+            <span class="waiting">awaiting input</span>
+          </div>
+          hover a node · click for details · double-click an agent for Herdr
+        </div>
       </div>
     </main>
     <aside class="panel" id="panel">
-      <header class="panel-head">
-        <div class="brand">aflt live</div>
-        <div class="meta" id="meta">local · connecting…</div>
-      </header>
       <p class="action-status" id="action-status" role="status" aria-live="polite" hidden></p>
       <section class="stats" id="stats"></section>
       <section class="sparks">
@@ -47,6 +86,14 @@
       </section>
       <section class="detail" id="detail">
         <div class="empty">select a project or session</div>
+      </section>
+      <section class="leftoff-panel" id="leftoff-panel" aria-label="where we left off" hidden>
+        <div class="label">Where we left off</div>
+        <div id="leftoff"></div>
+      </section>
+      <section class="history-panel" id="history-panel" aria-label="prompt history" hidden>
+        <div class="label">History</div>
+        <div id="history-feed"></div>
       </section>
       <section class="memory-panel" aria-label="project status and documentation">
         <label for="project-select">Project status &amp; docs</label>

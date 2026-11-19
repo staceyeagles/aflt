@@ -30,6 +30,9 @@ function clearDashboardModules() {
     '../lib/herdr',
     '../lib/orchestrate',
     '../lib/task-completions',
+    '../lib/run',
+    '../lib/run-history',
+    '../lib/agent-docs',
     '../lib/dashboard',
   ];
   for (const m of mods) {
@@ -1029,17 +1032,26 @@ describe('aflt dashboard', () => {
     }
     element('aflt-dashboard-data').textContent = JSON.stringify(state);
     element('graph-tooltip').getBoundingClientRect = () => ({ width: 320, height: 240 });
-    element('graph').parent = element('stage');
-    element('graph-tooltip').parent = element('stage');
+    // Mirror production DOM: #stage > #graph-view > (#graph, #graph-tooltip)
+    element('graph-view').parent = element('stage');
+    element('graph').parent = element('graph-view');
+    element('graph-tooltip').parent = element('graph-view');
     const browser = vm.createContext({
       document: { getElementById: element, createElementNS: makeElement },
       window: { addEventListener(type, handler) { windowHandlers[type] = handler; } },
+      location: { hostname: '127.0.0.1' },
       URL,
       matchMedia: () => ({ matches: true }),
       setInterval() {},
       setTimeout: scheduleTimeout,
       clearTimeout: (id) => timeouts.delete(id),
       requestAnimationFrame: (frame) => { frames.push(frame); return frames.length; },
+      // Replace cancelled slots with a no-op (keep indices stable for raf ids).
+      // A blank cancel leaves stale draw/loop callbacks after view switches.
+      cancelAnimationFrame: (id) => {
+        const idx = Number(id) - 1;
+        if (idx >= 0 && idx < frames.length) frames[idx] = function () {};
+      },
       fetch() { assert.fail('offline snapshots must not fetch'); },
       EventSource() { assert.fail('offline snapshots must not open SSE'); },
     });
@@ -1077,6 +1089,48 @@ describe('aflt dashboard', () => {
     element('project-select').handlers.change();
     assert.match(element('project-memory').innerHTML, /Select a project/);
 
+    // History is the default view — graph-parity: badges, waiting marker, filter, Herdr dblclick.
+    assert.match(element('history-tree').innerHTML, /history-row/);
+    assert.match(element('history-tree').innerHTML, /history-state/);
+    assert.match(
+      element('history-tree').innerHTML,
+      /history-row session[^"]*awaiting-input[^"]*"[^>]*data-id="waiting-session"/
+    );
+    assert.match(element('history-tree').innerHTML, /row-waiting-mark/);
+    element('history-tree').handlers.mouseover({
+      target: {
+        closest: () => ({
+          getAttribute: (k) => (k === 'data-id' ? 'waiting-session' : k === 'data-kind' ? 'session' : null),
+        }),
+      },
+    });
+    assert.equal(element('history-tooltip').hidden, false);
+    assert.match(element('history-tooltip').innerHTML, /Session ID: <code>waiting-session<\/code>/);
+    assert.match(element('history-tooltip').innerHTML, /Awaiting input/);
+    element('history-filter').handlers.click({
+      target: {
+        closest: () => ({
+          getAttribute: (k) => (k === 'data-state' ? 'waiting' : null),
+        }),
+      },
+    });
+    assert.match(element('history-tree').innerHTML, /data-id="waiting-session"/);
+    assert.doesNotMatch(element('history-tree').innerHTML, /data-id="pla-funnel-lifecycle-29c501"/);
+    element('history-filter').handlers.click({
+      target: { closest: () => ({ getAttribute: (k) => (k === 'data-state' ? '' : null) }) },
+    });
+    element('history-tree').handlers.dblclick({
+      target: {
+        closest: () => ({
+          getAttribute: (k) => (k === 'data-id' ? 'waiting-session' : k === 'data-kind' ? 'session' : null),
+        }),
+      },
+      stopPropagation() {},
+      preventDefault() {},
+    });
+    assert.match(element('action-status').textContent, /live local dashboard|Herdr/);
+    element('view-graph').handlers.click();
+    assert.match(String(element('view-graph').className || ''), /active/);
     frames.shift()();
     const graph = element('graph');
     const graphEdges = graph.children[1].children;
@@ -1204,11 +1258,27 @@ describe('aflt dashboard', () => {
         getElementById: (id) => id === 'aflt-dashboard-data' ? null : element(id),
         createElementNS: makeElement,
       },
-      window: { addEventListener(type, handler) { windowHandlers[type] = handler; } }, URL,
+      window: { addEventListener(type, handler) { windowHandlers[type] = handler; } },
+      location: { hostname: '127.0.0.1' },
+      URL,
       matchMedia: () => ({ matches: true }), setInterval() {},
       setTimeout: scheduleTimeout, clearTimeout: (id) => timeouts.delete(id),
       requestAnimationFrame: (frame) => { frames.push(frame); return frames.length; },
+      cancelAnimationFrame: (id) => {
+        const idx = Number(id) - 1;
+        if (idx >= 0 && idx < frames.length) frames[idx] = function () {};
+      },
       fetch: async (url, opts) => {
+        if (String(url).startsWith('/api/history')) {
+          return {
+            ok: true,
+            json: async () => ({
+              leftOff: { completion: null, statusNote: null, checkpoint: null },
+              history: [],
+              messages: { deferred: true, issue: 2, items: [] },
+            }),
+          };
+        }
         if (!opts) return { json: async () => state };
         focusRequests.push({ url, opts });
         return { ok: !focusError, json: async () => focusError ? { error: focusError } : { ok: true } };
@@ -1217,6 +1287,7 @@ describe('aflt dashboard', () => {
     });
     snapshotScripts.slice(1).forEach((script) => vm.runInContext(script[1], liveBrowser));
     await new Promise((resolve) => setImmediate(resolve));
+    element('view-graph').handlers.click();
     frames.shift()();
     const liveNode = graph.children[2].children.find((n) => n.getAttribute('data-id') === 'waiting-session');
     assert.equal(liveNode.children[2].getAttribute('visibility'), 'visible');
@@ -1312,6 +1383,46 @@ describe('aflt dashboard', () => {
     liveNode.dispatch('mouseenter', {});
     windowHandlers.keydown({ key: 'Escape' });
     assert.equal(element('graph-tooltip').hidden, true);
+
+    // History view Herdr focus uses the same token endpoint as graph dblclick.
+    // Clear the intentional graph-path focusError so this asserts the success path.
+    focusError = null;
+    element('view-history').handlers.click();
+    assert.match(element('history-tree').innerHTML, /data-id="waiting-session"/);
+    const herdrCalls = focusRequests.length;
+    element('history-tree').handlers.dblclick({
+      target: {
+        closest: () => ({
+          getAttribute: (k) => (k === 'data-id' ? 'waiting-session' : k === 'data-kind' ? 'session' : null),
+        }),
+      },
+      stopPropagation() {},
+      preventDefault() {},
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(focusRequests.length, herdrCalls + 1);
+    assert.equal(focusRequests.at(-1).url, '/api/herdr/focus/waiting-session');
+    assert.equal(focusRequests.at(-1).opts.headers['X-Aflt-Action-Token'], 'test-action-token');
+    assert.match(element('action-status').textContent, /Selected Needs input in Herdr/);
+
+    // Remote LAN hostname: show Mini-only note and refuse Herdr focus without calling the API.
+    liveBrowser.location.hostname = '192.168.1.50';
+    element('view-history').handlers.click();
+    assert.equal(element('herdr-remote-note').hidden, false);
+    assert.match(element('herdr-remote-note').textContent, /Mini/);
+    const beforeRemote = focusRequests.length;
+    element('history-tree').handlers.dblclick({
+      target: {
+        closest: () => ({
+          getAttribute: (k) => (k === 'data-id' ? 'waiting-session' : k === 'data-kind' ? 'session' : null),
+        }),
+      },
+      stopPropagation() {},
+      preventDefault() {},
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(focusRequests.length, beforeRemote);
+    assert.match(element('action-status').textContent, /only works on the Mini/);
   });
 
   it('HTTP serve: /, /api/state, /events; read-only on registry', async () => {
@@ -1537,4 +1648,184 @@ describe('aflt dashboard', () => {
     assert.equal(r.status, 1);
     assert.match(r.stderr, /--serve|--snapshot/);
   });
+
+  it('rowFilterState and isHerdrFocusLocal match graph display-state rules', () => {
+    clearDashboardModules();
+    const ui = require('../templates/dashboard/dashboard.js');
+    assert.equal(ui.rowFilterState({ displayState: 'running' }), 'running');
+    assert.equal(ui.rowFilterState({ displayState: 'idle', activityState: 'working' }), 'running');
+    assert.equal(ui.rowFilterState({ displayState: 'idle', awaitingInput: true }), 'waiting');
+    assert.equal(ui.rowFilterState({ displayState: 'idle', activityState: 'waiting' }), 'waiting');
+    assert.equal(ui.rowFilterState({ displayState: 'idle' }), 'idle');
+    assert.equal(ui.rowFilterState({ displayState: 'done', activityState: 'completed' }), 'done');
+    assert.equal(ui.rowFilterState({ displayState: 'failed' }), 'failed');
+    assert.equal(ui.isHerdrFocusLocal({ hostname: '127.0.0.1' }), true);
+    assert.equal(ui.isHerdrFocusLocal({ hostname: 'localhost' }), true);
+    assert.equal(ui.isHerdrFocusLocal({ hostname: '' }), true);
+    assert.equal(ui.isHerdrFocusLocal(null), true);
+    assert.equal(ui.isHerdrFocusLocal({ hostname: '192.168.1.20' }), false);
+    assert.equal(ui.isHerdrFocusLocal({ hostname: 'mini.local' }), false);
+  });
+
+  it('history tree carries awaitingInput and state for graph-parity badges', () => {
+    const dash = loadDashboard(home);
+    const state = dash.aggregateDashboard({
+      sessions: [
+        {
+          id: 'run-1', title: 'Live', project: 'alpha', status: 'active',
+          workerStatus: 'running', runPid: process.pid,
+          created: '2026-11-18T00:00:00.000Z', lastUsed: '2026-11-19T00:00:00.000Z',
+        },
+        {
+          id: 'wait-1', title: 'Needs input', project: 'alpha', status: 'active',
+          workerStatus: 'waiting', parent: 'run-1',
+          created: '2026-11-18T01:00:00.000Z', lastUsed: '2026-11-19T00:00:00.000Z',
+        },
+      ],
+      enrichmentById: {
+        'run-1': { runtime: 'running' },
+        'wait-1': { runtime: 'running' },
+      },
+      sessionActivityById: {
+        'run-1': { working: true, awaitingInput: false, completed: false },
+        'wait-1': { working: false, awaitingInput: true, completed: false, hint: 'waiting' },
+      },
+      now: '2026-11-19T00:00:00.000Z',
+      isAlive: (pid) => Number(pid) === process.pid,
+    });
+    const alpha = state.historyTree.projects.find((p) => p.name === 'alpha');
+    assert.ok(alpha);
+    const live = alpha.children.find((c) => c.id === 'run-1');
+    const waiting = live.children.find((c) => c.id === 'wait-1');
+    assert.equal(live.displayState, 'running');
+    assert.equal(live.activityState, 'working');
+    assert.equal(waiting.awaitingInput, true);
+    assert.equal(waiting.activityState, 'waiting');
+  });
+
+  it('rolls up project state waiting>running>failed>idle>done and auto-expands live attention', () => {
+    const dash = loadDashboard(home);
+    assert.equal(dash.rollupProjectFilterState(['done', 'idle', 'waiting']), 'waiting');
+    assert.equal(dash.rollupProjectFilterState(['failed', 'running']), 'running');
+    assert.equal(dash.rollupProjectFilterState(['done', 'idle']), 'idle');
+    assert.equal(dash.sessionFilterState({ displayState: 'idle', awaitingInput: true }), 'waiting');
+
+    const state = dash.aggregateDashboard({
+      sessions: [
+        { id: 'done-a', title: 'Done', project: 'alpha', status: 'done' },
+        {
+          id: 'wait-a', title: 'Needs input', project: 'alpha', status: 'active',
+          workerStatus: 'waiting',
+          // Cross-project parent must not hide this row under beta.
+          parent: 'other-project-session',
+        },
+        { id: 'other-project-session', title: 'Other', project: 'beta', status: 'done' },
+        { id: 'idle-only', title: 'Idle', project: 'gamma', status: 'active' },
+      ],
+      sessionActivityById: {
+        'wait-a': { working: false, awaitingInput: true, completed: false, hint: 'waiting' },
+      },
+      now: '2026-11-19T00:00:00.000Z',
+    });
+    const byName = Object.fromEntries(state.historyTree.projects.map((p) => [p.name, p]));
+    assert.equal(byName.alpha.displayState, 'waiting');
+    assert.equal(byName.alpha.filterState, 'waiting');
+    assert.equal(byName.alpha.collapsed, false, 'waiting project starts expanded');
+    assert.ok(byName.alpha.children.some((c) => c.id === 'wait-a'));
+    assert.equal(byName.alpha.children.find((c) => c.id === 'wait-a').awaitingInput, true);
+    assert.equal(byName.beta.displayState, 'done');
+    assert.equal(byName.beta.collapsed, true);
+    assert.equal(byName.gamma.displayState, 'idle');
+    assert.equal(byName.gamma.collapsed, true, 'idle-only project starts collapsed');
+  });
+
+  it('builds a history tree with dormant projects collapsed and exposes /api/history', async () => {
+    const dash = loadDashboard(home);
+    const mem = path.join(home, 'mem');
+    fs.mkdirSync(path.join(mem, 'alpha', 'status-notes'), { recursive: true });
+    fs.writeFileSync(path.join(mem, 'DASHBOARD.md'), '# D\n');
+    fs.writeFileSync(
+      path.join(mem, 'alpha', 'status-notes', '2026-11-18-note.md'),
+      '# Pickup\nLeft off on auth.\n'
+    );
+    // AGENTFLEET_HOME is `home`, so runs live under home/runs
+    const runs = path.join(home, 'runs', 'hist-sess');
+    fs.mkdirSync(runs, { recursive: true });
+    const runlib = require('../lib/run');
+    const logPath = path.join(runs, '2026-11-18T12-00-00-000Z.cursor.txt');
+    runlib.writeRunLog(logPath, {
+      argv: ['cursor-agent', '-p', '--output-format', 'text', '--trust', 'Fix the tests'],
+      cwd: path.join(home, 'proj'),
+      stdout: 'All green.\n',
+      code: 0,
+      kind: 'headless',
+      prompt: 'Fix the tests',
+    });
+    seedSession(home, {
+      id: 'hist-sess',
+      title: 'Fix tests',
+      project: 'alpha',
+      status: 'done',
+      created: '2026-11-10T00:00:00.000Z',
+      lastUsed: '2026-11-18T12:05:00.000Z',
+      lastRunAt: '2026-11-18T12:05:00.000Z',
+    });
+    seedSession(home, {
+      id: 'old-sess',
+      title: 'Dormant work',
+      project: 'dormant',
+      status: 'done',
+      created: '2024-01-01T00:00:00.000Z',
+      lastUsed: '2024-01-02T00:00:00.000Z',
+    });
+
+    const state = dash.collectState({
+      memoryRepo: mem,
+      enrichmentById: {},
+      now: '2026-11-19T00:00:00.000Z',
+    });
+    assert.equal(state.defaultView, 'history');
+    assert.ok(state.historyTree);
+    assert.equal(state.messages.deferred, true);
+    assert.deepEqual(state.messages.items, []);
+    const byName = Object.fromEntries(state.historyTree.projects.map((p) => [p.name, p]));
+    // Done/idle projects start collapsed; only running/waiting auto-expand.
+    assert.equal(byName.alpha.collapsed, true);
+    assert.equal(byName.alpha.displayState, 'done');
+    assert.equal(byName.dormant.collapsed, true);
+    assert.ok(byName.alpha.children.some((c) => c.id === 'hist-sess'));
+    assert.ok(byName.alpha.children[0].segments.length >= 1);
+    assert.ok(Array.isArray(byName.alpha.children[0].messageMarkers));
+
+    const handle = dash.createDashboardServer({
+      memoryRepo: mem,
+      enrichmentById: {},
+      sseIntervalMs: 60_000,
+      registryPollMs: 60_000,
+    });
+    await new Promise((resolve) => handle.server.listen(0, '127.0.0.1', resolve));
+    const { port } = handle.server.address();
+    try {
+      const res = await httpGet(port, '/api/history?session=hist-sess');
+      assert.equal(res.status, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.scope.type, 'session');
+      assert.ok(body.leftOff);
+      assert.ok(body.history.some((e) => e.type === 'prompt-reply' && e.prompt === 'Fix the tests'));
+      assert.match(body.history.find((e) => e.type === 'prompt-reply').reply, /All green/);
+      assert.equal(body.messages.issue, 2);
+
+      const proj = await httpGet(port, '/api/history?project=alpha');
+      assert.equal(proj.status, 200);
+      const projBody = JSON.parse(proj.body);
+      assert.ok(projBody.history.some((e) => e.type === 'status-note'));
+      assert.ok(projBody.leftOff.statusNote);
+
+      const bad = await httpGet(port, '/api/history');
+      assert.equal(bad.status, 400);
+    } finally {
+      await handle.close();
+    }
+  });
 });
+

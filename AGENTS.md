@@ -103,7 +103,7 @@ aflt memory sync --all --commit --push  # nightly: sync + commit generated + pus
 aflt children --json            # workers of this master, or a summary of masters
 ```
 
-`STATUS` is saved lifecycle (`active` | `paused` | `done`). A process exit does **not** mark the task done — use `aflt done`. `HERDR` is live runtime from `hc ls`: `running` | `shell` | `exited` | `missing` | `unknown` | `-`. `aflt ls --json` also includes derived `workerStatus` (same rules as `aflt children --json`) plus effective `project` and `parent`. `aflt ls` never writes the registry. `aflt timeline` is strictly read-only (no registry/Herdr writes). `aflt dashboard` is read-only by default (local UI / snapshot; not `aflt memory dashboard`); `--capture-completions` explicitly writes completion notes and receipts. Live graph positions persist across SSE updates and settle; **open** counts are live/running only (Herdr-exited/`missing` registry-active sessions are **idle**, not open — registry `status` unchanged). Legacy project `af` aliases to `aflt` for dashboard hubs and memory sync/dashboard folders.
+`STATUS` is saved lifecycle (`active` | `paused` | `done`). A process exit does **not** mark the task done — use `aflt done`. `HERDR` is live runtime from `hc ls`: `running` | `shell` | `exited` | `missing` | `unknown` | `-`. `aflt ls --json` also includes derived `workerStatus` (same rules as `aflt children --json`) plus effective `project` and `parent`. `aflt ls` never writes the registry. `aflt timeline` is strictly read-only (no registry/Herdr writes). `aflt dashboard` is read-only by default (local UI / snapshot; not `aflt memory dashboard`); `--capture-completions` explicitly writes completion notes and receipts. Default UI is a collapsible history tree with Gantt activity bars and state filter (star graph remains a selectable view). History matches graph interactions: badges/waiting/working markers, hover popups, SSE updates, double-click → Herdr focus (loopback-only; remote clients get a Mini-only note). Click a row for “where we left off” + prompt/reply history from `runs/<id>/` (plus status notes / completions). Interactive launches record a prompt receipt into `runs/` without scraping Herdr. Live graph positions persist across SSE updates and settle; **open** counts are live/running only (Herdr-exited/`missing` registry-active sessions are **idle**, not open — registry `status` unchanged). Legacy project `af` aliases to `aflt` for dashboard hubs and memory sync/dashboard folders.
 
 ### 3. Orchestrate workers from a master
 
@@ -193,11 +193,13 @@ aflt timeline [<project>] [--all] [--json] [--since <date>]
 
 aflt dashboard --serve [--port 8787] [--host 127.0.0.1] [--json] [--capture-completions]
 # Live local activity dashboard (read-only by default). Default bind 127.0.0.1:8787.
-# Blocks until SIGINT/SIGTERM. Not the same as aflt memory dashboard.
+# History-first UI (tree + Gantt); Graph toggle keeps the star view. Click a row for
+# prompt/reply history (GET /api/history). Blocks until SIGINT/SIGTERM.
+# Not the same as aflt memory dashboard.
 # --capture-completions opts into redacted Task Complete status notes in memory.
 
 aflt dashboard --snapshot <file.svg|html>
-# Standalone SVG or self-contained HTML snapshot of the activity graph (no server).
+# Standalone SVG or self-contained HTML snapshot of the activity UI (no server).
 
 aflt memory | aflt memory where [--json]
 # Resolved memory repo path + source (env|config), or hint to run init (exit 1).
@@ -242,7 +244,7 @@ aflt sync [--dry-run] [--json]
 
 `aflt timeline` is read-only. Default project: `<project>` arg → `AFLT_PROJECT` → cwd's derived project. Text shows local times (JSON keeps ISO UTC). Commits come from each session's own cwd (`commitsReason`: `not-git` / `missing-cwd`); an open-ended row that is not a live run is bounded at `lastUsed` (`open-ended` when it never ran).
 
-`aflt dashboard` is a separate top-level command from `aflt memory dashboard`. It serves a local activity UI (`--serve`, default `127.0.0.1:8787`) or writes an SVG/HTML snapshot (`--snapshot`). Background refreshes never mutate the registry or Herdr; memory writes require `--capture-completions`. Explicitly double-clicking an agent node in the live local UI focuses its uniquely live labeled terminal in the open Herdr app and raises the window. It never resumes or launches agents; errors appear in the sidebar. Snapshots cannot focus Herdr. The graph keeps node positions across SSE ticks and cools the force layout until it settles (reheat on node add/remove or resize). Stats `open` / `idle` / `done` / `failed` follow display-state (running vs idle), not bare registry `active`.
+`aflt dashboard` is a separate top-level command from `aflt memory dashboard`. It serves a local activity UI (`--serve`, default `127.0.0.1:8787`) or writes an SVG/HTML snapshot (`--snapshot`). Default view is a collapsible project/session tree with Gantt bars (most recent activity first; dormant projects collapsed; state filter matching display-state: running / waiting / idle / done / failed); the star graph is optional. History rows have feature parity with graph interactions: state badges + waiting `?` / working spinner, hover/focus popups (same fields as graph), click selects, Esc dismisses, live SSE refresh, and double-click on a session focuses its uniquely live Herdr terminal via the same loopback-only `/api/herdr/focus` token flow as Graph (remote LAN clients see an inline note that opening Herdr only works on the Mini). Selecting a row opens a history panel (latest completion / status note / open doc checkpoints, then prompt↔reply pairs from run logs, newest first). Issue #2 cross-session message markers are reserved in the payload (`messages` / per-row `messageMarkers`) but not rendered. Background refreshes never mutate the registry or Herdr; memory writes require `--capture-completions`. All served text is redacted; write/action endpoints remain loopback-only. It never resumes or launches agents; errors appear in the sidebar. Snapshots cannot focus Herdr. The graph keeps node positions across SSE ticks and cools the force layout until it settles (reheat on node add/remove or resize). Stats `open` / `idle` / `done` / `failed` follow display-state (running vs idle), not bare registry `active`.
 
 Session activity is separate from lifecycle: green spinning ring = working,
 blue = completed, amber dashed ring / `?` = awaiting input. Herdr `done`

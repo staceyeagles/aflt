@@ -103,6 +103,30 @@ function activityLabel(item) {
     item.displayState || 'unknown';
 }
 
+/**
+ * Filter / badge key aligned with graph display-state (+ waiting overlay).
+ * running = live/working; waiting = awaiting input; idle/done/failed = displayState.
+ */
+function rowFilterState(item) {
+  if (!item) return 'done';
+  if (item.awaitingInput || item.activityState === 'waiting') return 'waiting';
+  if (item.activityState === 'working' || item.displayState === 'running') return 'running';
+  if (item.displayState === 'failed') return 'failed';
+  if (item.displayState === 'idle') return 'idle';
+  return 'done';
+}
+
+/** Project roll-up priority: waiting > running > failed > idle > done. */
+const FILTER_PRIORITY = ['waiting', 'running', 'failed', 'idle', 'done'];
+
+function isHerdrFocusLocal(loc) {
+  const source = loc || (typeof location !== 'undefined' ? location : null);
+  // Missing hostname (tests / file://) → treat as local; only explicit remote hosts are blocked.
+  if (!source || source.hostname == null || String(source.hostname).trim() === '') return true;
+  const host = String(source.hostname).replace(/^\[|\]$/g, '');
+  return host === '127.0.0.1' || host === 'localhost' || host === '::1';
+}
+
 function renderTaskCompletion(completion) {
   if (!completion) return '';
   return '<section class="task-completion"><div class="label">Latest Task Complete</div>' +
@@ -212,7 +236,10 @@ function mergeSimPreserve(prevSim, nextBuilt, opts) {
 }
 
 if (typeof module !== 'undefined' && module.exports && typeof document === 'undefined') {
-  module.exports = { mergeSimPreserve, renderProjectMemory, renderGraphHint, renderMarkdown, resolveDocumentLink, renderTaskCompletion };
+  module.exports = {
+    mergeSimPreserve, renderProjectMemory, renderGraphHint, renderMarkdown, resolveDocumentLink,
+    renderTaskCompletion, activityLabel, rowFilterState, isHerdrFocusLocal,
+  };
 } else {
   (function () {
     const reduced =
@@ -239,6 +266,57 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     const documentNotice = document.getElementById('document-notice');
     const documentToggle = document.getElementById('document-toggle');
     const snapshotData = document.getElementById('aflt-dashboard-data');
+    const historyViewEl = document.getElementById('history-view');
+    const historyTreeEl = document.getElementById('history-tree');
+    const ganttAxisEl = document.getElementById('gantt-axis');
+    const graphViewEl = document.getElementById('graph-view');
+    const viewHistoryBtn = document.getElementById('view-history');
+    const viewGraphBtn = document.getElementById('view-graph');
+    const sortSelect = document.getElementById('history-sort');
+    const leftoffPanel = document.getElementById('leftoff-panel');
+    const leftoffEl = document.getElementById('leftoff');
+    const historyPanel = document.getElementById('history-panel');
+    const historyFeed = document.getElementById('history-feed');
+    const historyFilterEl = document.getElementById('history-filter');
+    const historyTooltip = document.getElementById('history-tooltip');
+    const historyHintEl = document.getElementById('history-hint');
+    const herdrRemoteNote = document.getElementById('herdr-remote-note');
+
+    // Prefer updating a trailing text node so the legend element stays intact.
+    // Fall back to textContent when the host DOM is a minimal test double.
+    const hintTextNode = (function () {
+      if (!hintEl) return null;
+      const nodes = hintEl.childNodes;
+      if (nodes && nodes.length) {
+        for (let i = nodes.length - 1; i >= 0; i--) {
+          if (nodes[i] && nodes[i].nodeType === 3) return nodes[i];
+        }
+      }
+      if (typeof document.createTextNode === 'function' && typeof hintEl.appendChild === 'function') {
+        try {
+          const t = document.createTextNode('');
+          hintEl.appendChild(t);
+          return t;
+        } catch (_) {
+          /* fall through */
+        }
+      }
+      return null;
+    })();
+    function setHintText(text) {
+      if (hintTextNode) hintTextNode.nodeValue = '\n          ' + text + '\n        ';
+      else if (hintEl) hintEl.textContent = text;
+    }
+
+    let currentView = 'history';
+    let simStale = true;
+    let sortMode = 'recent';
+    let sortTouched = false;
+    let stateFilter = '';
+    const collapseOverride = new Map();
+    let historyReq = 0;
+    let historyLoaded = null;
+    const expandedReplies = new Set();
 
     let state = null;
     let selectedId = null;
@@ -247,6 +325,11 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     let tooltipId = null;
     let tooltipHovered = false;
     let tooltipHideTimer = null;
+    let historyHoverId = null;
+    let historyFocusId = null;
+    let historyTooltipId = null;
+    let historyTooltipHovered = false;
+    let historyTooltipHideTimer = null;
     let sim = null;
     let graphLayers = null;
     const graphNodes = new Map();
@@ -256,6 +339,16 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     let documentSource = false;
     let openingHerdr = false;
 
+    function updateHerdrRemoteNote() {
+      if (!herdrRemoteNote) return;
+      const remote = !snapshotData && !isHerdrFocusLocal();
+      herdrRemoteNote.hidden = !remote;
+      if (remote) {
+        herdrRemoteNote.textContent =
+          'Opening Herdr only works on the Mini — open this dashboard at 127.0.0.1 locally.';
+      }
+    }
+
     async function openInHerdr(id) {
       if (openingHerdr) return;
       const session = (state.sessions || []).find(function (s) { return s.id === id; });
@@ -264,6 +357,13 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       actionStatus.setAttribute('class', 'action-status');
       if (snapshotData || !state.actions || !state.actions.herdrFocusToken) {
         actionStatus.textContent = 'Open the live local dashboard to select this agent in Herdr.';
+        return;
+      }
+      if (!isHerdrFocusLocal()) {
+        actionStatus.setAttribute('class', 'action-status error');
+        actionStatus.textContent =
+          'Opening Herdr only works on the Mini — open this dashboard at 127.0.0.1 locally.';
+        updateHerdrRemoteNote();
         return;
       }
       openingHerdr = true;
@@ -489,6 +589,8 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
 
     function renderDetail() {
       renderMemory();
+      syncHistoryPanel();
+      markSelectedRows();
       const item = findSelection();
       if (!item) {
         detailEl.innerHTML = '<div class="empty">select a project or session</div>';
@@ -780,9 +882,9 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       graphTooltip.hidden = !tooltipId;
       const html = renderGraphHint(project, session);
       if (graphTooltip.innerHTML !== html) graphTooltip.innerHTML = html;
-      hintEl.textContent = tooltipId
+      setHintText(tooltipId
         ? 'click for details · double-click an agent for Herdr · Esc to dismiss hint'
-        : 'hover a node · click for details · double-click an agent for Herdr';
+        : 'hover a node · click for details · double-click an agent for Herdr');
       positionGraphTooltip();
     }
 
@@ -973,18 +1075,798 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       positionGraphTooltip();
     }
 
+    /* ---------- history view ---------- */
+
+    function setShown(el, shown) {
+      if (!el) return;
+      el.hidden = !shown;
+      if (el.style) el.style.display = shown ? '' : 'none';
+    }
+
+    function timeMs(value) {
+      const t = Date.parse(value || '');
+      return isNaN(t) ? 0 : t;
+    }
+
+    function agoLabel(value) {
+      const t = Date.parse(value || '');
+      if (isNaN(t)) return '';
+      const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+      if (s < 60) return s + 's ago';
+      const m = Math.floor(s / 60);
+      if (m < 60) return m + 'm ago';
+      const h = Math.floor(m / 60);
+      if (h < 48) return h + 'h ago';
+      return Math.floor(h / 24) + 'd ago';
+    }
+
+    function sessionSortFn(mode) {
+      return function (a, b) {
+        if (mode === 'name') return String(a.title || '').localeCompare(String(b.title || ''));
+        if (mode === 'created') {
+          return timeMs(b.created) - timeMs(a.created) ||
+            String(a.title || '').localeCompare(String(b.title || ''));
+        }
+        return timeMs(b.lastActivity) - timeMs(a.lastActivity) ||
+          String(a.title || '').localeCompare(String(b.title || ''));
+      };
+    }
+
+    function sortSessionNodes(list, mode) {
+      return (list || []).slice().sort(sessionSortFn(mode)).map(function (node) {
+        return Object.assign({}, node, { children: sortSessionNodes(node.children, mode) });
+      });
+    }
+
+    function newestCreated(node) {
+      let best = node.kind === 'session' ? timeMs(node.created) : 0;
+      (node.children || []).forEach(function (c) {
+        best = Math.max(best, newestCreated(c));
+      });
+      return best;
+    }
+
+    function sortProjectNodes(projects, mode) {
+      const sorted = (projects || []).slice().sort(function (a, b) {
+        const byName = String(a.name || '').localeCompare(String(b.name || ''));
+        if (mode === 'name' || mode === 'project') return byName;
+        if (mode === 'created') {
+          return newestCreated(b) - newestCreated(a) ||
+            timeMs(b.lastActivity) - timeMs(a.lastActivity) || byName;
+        }
+        if (!!a.active !== !!b.active) return a.active ? -1 : 1;
+        return timeMs(b.lastActivity) - timeMs(a.lastActivity) || byName;
+      });
+      return sorted.map(function (p) {
+        return Object.assign({}, p, { children: sortSessionNodes(p.children, mode) });
+      });
+    }
+
+    function rollupFilterState(states) {
+      for (let i = 0; i < FILTER_PRIORITY.length; i++) {
+        if ((states || []).indexOf(FILTER_PRIORITY[i]) !== -1) return FILTER_PRIORITY[i];
+      }
+      return 'done';
+    }
+
+    function collectSessionFilterStates(node) {
+      const enriched = enrichHistoryNode(node);
+      const out = [];
+      if (enriched.kind === 'session') out.push(rowFilterState(enriched));
+      (enriched.children || []).forEach(function (c) {
+        Array.prototype.push.apply(out, collectSessionFilterStates(c));
+      });
+      return out;
+    }
+
+    function projectFilterRollup(node) {
+      // Live child roll-up so SSE session enrichments win over a stale project badge.
+      return rollupFilterState(collectSessionFilterStates(node));
+    }
+
+    function isCollapsed(node) {
+      if (collapseOverride.has(node.id)) return collapseOverride.get(node.id);
+      if (node && node.kind === 'project') {
+        const rollup = projectFilterRollup(node);
+        // Expand when any session is running or waiting; dormant projects start collapsed.
+        return !(rollup === 'waiting' || rollup === 'running');
+      }
+      return !!node.collapsed;
+    }
+
+    function collectSegments(node) {
+      let segs = (node.segments || []).slice();
+      (node.children || []).forEach(function (c) {
+        segs = segs.concat(collectSegments(c));
+      });
+      return segs;
+    }
+
+    function ganttHtml(segments, range) {
+      const start = range ? Date.parse(range.start) : NaN;
+      const end = range ? Date.parse(range.end) : NaN;
+      const span = end - start;
+      let html = '<div class="gantt-track" aria-hidden="true">';
+      if (span > 0) {
+        (segments || []).forEach(function (seg) {
+          const a = Date.parse(seg.start);
+          if (isNaN(a)) return;
+          const bRaw = seg.end ? Date.parse(seg.end) : end;
+          const b = isNaN(bRaw) ? end : bRaw;
+          let left = ((a - start) / span) * 100;
+          let width = ((b - a) / span) * 100;
+          if (left < 0) { width += left; left = 0; }
+          if (left > 100) return;
+          if (left + width > 100) width = 100 - left;
+          if (width < 0) return;
+          html += '<span class="gantt-seg ' + esc(seg.state || 'done') + '" style="left:' +
+            left.toFixed(2) + '%;width:' + width.toFixed(2) + '%" title="' +
+            esc((seg.state || 'done') + ' · ' + seg.start) + '"></span>';
+        });
+      }
+      return html + '</div>';
+    }
+
+    function renderGanttAxis(range) {
+      if (!ganttAxisEl) return;
+      const start = range ? Date.parse(range.start) : NaN;
+      const end = range ? Date.parse(range.end) : NaN;
+      const span = end - start;
+      if (!(span > 0)) {
+        ganttAxisEl.innerHTML = '';
+        return;
+      }
+      const short = span < 2 * 24 * 60 * 60 * 1000;
+      let html = '';
+      for (let i = 0; i <= 4; i++) {
+        const t = new Date(start + (span * i) / 4);
+        const label = short
+          ? String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0')
+          : (t.getMonth() + 1) + '/' + t.getDate();
+        html += '<span style="left:' + (i * 25) + '%">' + esc(label) + '</span>';
+      }
+      if (ganttAxisEl.innerHTML !== html) ganttAxisEl.innerHTML = html;
+    }
+
+    function enrichHistoryNode(node) {
+      if (!node || node.kind !== 'session' || !state) return node;
+      const sess = (state.sessions || []).find(function (s) { return s.id === node.id; });
+      if (!sess) return node;
+      return Object.assign({}, node, {
+        awaitingInput: !!sess.awaitingInput,
+        activityState: sess.activityState || node.activityState,
+        displayState: sess.displayState || node.displayState,
+        status: sess.status || node.status,
+        engine: sess.engine || node.engine,
+        herdr: sess.herdr || node.herdr || null,
+        title: sess.title || node.title,
+      });
+    }
+
+    function nodeMatchesFilter(node) {
+      if (!stateFilter) return true;
+      if (node.kind === 'project') {
+        return (node.children || []).some(function (c) {
+          return nodeMatchesFilter(enrichHistoryNode(c));
+        });
+      }
+      return rowFilterState(enrichHistoryNode(node)) === stateFilter;
+    }
+
+    function filterTree(nodes) {
+      return (nodes || []).map(function (n) {
+        if (n.kind === 'project') {
+          const kids = filterTree(n.children || []);
+          if (stateFilter && !kids.length) return null;
+          return Object.assign({}, n, { children: kids });
+        }
+        const enriched = enrichHistoryNode(n);
+        const kids = filterTree(enriched.children || []);
+        // Keep ancestors when a matching child is nested underneath.
+        if (stateFilter && !nodeMatchesFilter(enriched) && !kids.length) return null;
+        return Object.assign({}, enriched, { children: kids });
+      }).filter(Boolean);
+    }
+
+    function historyRowHtml(node, range) {
+      const enriched = enrichHistoryNode(node);
+      const isProject = enriched.kind === 'project';
+      const kids = enriched.children || [];
+      const collapsed = isCollapsed(enriched);
+      const depth = Math.max(0, enriched.depth || 0);
+      const label = isProject ? enriched.name : enriched.title || enriched.id;
+      const filterKey = isProject ? projectFilterRollup(enriched) : rowFilterState(enriched);
+      const bits = [];
+      if (isProject) {
+        bits.push((enriched.sessionCount != null ? enriched.sessionCount : kids.length) + ' sessions');
+        if (enriched.runningCount) bits.push(enriched.runningCount + ' running');
+      } else {
+        bits.push(enriched.engine || '');
+      }
+      const when = agoLabel(enriched.lastActivity);
+      if (when) bits.push(when);
+      const segments = isProject ? collectSegments(enriched) : enriched.segments;
+      const waiting = !isProject && (enriched.awaitingInput || enriched.activityState === 'waiting');
+      const working = !isProject && enriched.activityState === 'working';
+      const stateClass = filterKey +
+        (waiting ? ' waiting awaiting-input' : '') +
+        (working ? ' working' : '');
+      const ariaState = isProject
+        ? filterKey
+        : activityLabel(enriched);
+      let html = '<div class="history-row ' + (isProject ? 'project' : 'session') +
+        ' ' + stateClass +
+        (selectedId === enriched.id ? ' selected' : '') +
+        '" role="treeitem" tabindex="0" data-id="' + esc(enriched.id) +
+        '" data-kind="' + esc(enriched.kind) +
+        '" data-filter-state="' + esc(filterKey) +
+        '" aria-level="' + (depth + 1) +
+        '" aria-selected="' + String(selectedId === enriched.id) + '"' +
+        ' aria-label="' + esc((isProject ? label : enriched.id) + ' — ' + ariaState) + '"' +
+        (kids.length ? ' aria-expanded="' + String(!collapsed) + '"' : '') +
+        ' style="padding-left:' + (1 + depth * 1.25).toFixed(2) + 'rem">' +
+        '<div class="history-label"><button type="button" class="twist" data-twist="' + esc(enriched.id) +
+        '" tabindex="-1" aria-label="' + (collapsed ? 'Expand ' : 'Collapse ') + esc(label) + '"' +
+        (kids.length ? '' : ' disabled') + '>' +
+        (kids.length ? (collapsed ? '&#9656;' : '&#9662;') : '&middot;') + '</button>' +
+        '<span class="row-markers" aria-hidden="true">' +
+        '<span class="row-waiting-mark">?</span><span class="row-working-mark"></span></span>' +
+        '<span class="title" title="' + esc(label) + '">' + esc(label) + '</span>' +
+        '<span class="history-state ' + esc(filterKey) + '">' + esc(ariaState) + '</span>' +
+        '<span class="meta-bits">' + esc(bits.filter(Boolean).join(' · ')) + '</span></div>' +
+        ganttHtml(segments, range) +
+        // Issue #2: reserved lane for future message markers (messaging not implemented here).
+        '<div class="message-markers" hidden></div></div>';
+      if (!collapsed) {
+        kids.forEach(function (child) {
+          html += historyRowHtml(child, range);
+        });
+      }
+      return html;
+    }
+
+    function syncFilterChips() {
+      if (!historyFilterEl || typeof historyFilterEl.querySelectorAll !== 'function') return;
+      const chips = historyFilterEl.querySelectorAll('.filter-chip');
+      for (let i = 0; i < chips.length; i++) {
+        const on = (chips[i].getAttribute('data-state') || '') === stateFilter;
+        toggleBtnClass(chips[i], 'active', on);
+        chips[i].setAttribute('aria-pressed', String(on));
+      }
+    }
+
+    function renderHistoryTree() {
+      if (!state || !historyTreeEl) return;
+      const tree = state.historyTree;
+      if (!sortTouched) {
+        sortMode = (tree && tree.sort) || state.historySort || 'recent';
+        if (sortSelect && sortSelect.value !== sortMode) sortSelect.value = sortMode;
+      }
+      syncFilterChips();
+      updateHerdrRemoteNote();
+      if (!tree || !(tree.projects || []).length) {
+        renderGanttAxis(null);
+        const empty = '<p class="empty">No projects or sessions yet.</p>';
+        if (historyTreeEl.innerHTML !== empty) historyTreeEl.innerHTML = empty;
+        return;
+      }
+      renderGanttAxis(tree.range);
+      const projects = filterTree(sortProjectNodes(tree.projects, sortMode));
+      const html = projects.length
+        ? projects.map(function (p) { return historyRowHtml(p, tree.range); }).join('')
+        : '<p class="empty">No sessions match this state filter.</p>';
+      if (historyTreeEl.innerHTML === html) return;
+      const active = typeof document !== 'undefined' ? document.activeElement : null;
+      const keepFocus = active && typeof historyTreeEl.contains === 'function' && historyTreeEl.contains(active)
+        ? active.getAttribute('data-id')
+        : null;
+      historyTreeEl.innerHTML = html;
+      if (keepFocus && typeof historyTreeEl.querySelectorAll === 'function') {
+        const rows = historyTreeEl.querySelectorAll('.history-row');
+        for (let i = 0; i < rows.length; i++) {
+          if (rows[i].getAttribute('data-id') === keepFocus && typeof rows[i].focus === 'function') {
+            rows[i].focus();
+            break;
+          }
+        }
+      }
+    }
+
+    function markSelectedRows() {
+      if (!historyTreeEl || typeof historyTreeEl.querySelectorAll !== 'function') return;
+      const rows = historyTreeEl.querySelectorAll('.history-row');
+      for (let i = 0; i < rows.length; i++) {
+        const on = rows[i].getAttribute('data-id') === selectedId;
+        toggleBtnClass(rows[i], 'selected', on);
+        rows[i].setAttribute('aria-selected', String(on));
+      }
+    }
+
+    function toggleCollapse(id) {
+      let found = null;
+      (function walk(list) {
+        (list || []).forEach(function (n) {
+          if (n.id === id) found = n;
+          walk(n.children);
+        });
+      })(state && state.historyTree && state.historyTree.projects);
+      if (!found) return;
+      collapseOverride.set(id, !isCollapsed(found));
+      renderHistoryTree();
+    }
+
+    function selectRow(id) {
+      selectedId = id;
+      renderDetail();
+    }
+
+    function cancelHistoryTooltipHide() {
+      if (historyTooltipHideTimer !== null) clearTimeout(historyTooltipHideTimer);
+      historyTooltipHideTimer = null;
+    }
+
+    function dismissHistoryTooltip() {
+      cancelHistoryTooltipHide();
+      historyHoverId = null;
+      historyFocusId = null;
+      historyTooltipId = null;
+      historyTooltipHovered = false;
+      renderHistoryTooltip();
+    }
+
+    function scheduleHistoryTooltipHide() {
+      cancelHistoryTooltipHide();
+      if (historyHoverId || historyFocusId || historyTooltipHovered) return;
+      historyTooltipHideTimer = setTimeout(function () {
+        historyTooltipHideTimer = null;
+        if (!historyHoverId && !historyFocusId && !historyTooltipHovered) dismissHistoryTooltip();
+      }, 450);
+    }
+
+    function positionHistoryTooltip(row) {
+      if (!historyTooltip || !historyViewEl || !row || historyTooltipHovered) return;
+      const viewRect = historyViewEl.getBoundingClientRect
+        ? historyViewEl.getBoundingClientRect()
+        : { width: 800, height: 600, left: 0, top: 0 };
+      const rowRect = row.getBoundingClientRect
+        ? row.getBoundingClientRect()
+        : { left: 12, top: 12, width: 200, height: 28, right: 212, bottom: 40 };
+      const tipRect = historyTooltip.getBoundingClientRect
+        ? historyTooltip.getBoundingClientRect()
+        : { width: 320, height: 160 };
+      let left = rowRect.left - viewRect.left + 12;
+      let top = rowRect.bottom - viewRect.top + 6;
+      if (left + tipRect.width > viewRect.width - 12) {
+        left = Math.max(12, viewRect.width - tipRect.width - 12);
+      }
+      if (top + tipRect.height > viewRect.height - 12) {
+        top = Math.max(12, rowRect.top - viewRect.top - tipRect.height - 6);
+      }
+      historyTooltip.style.left = left + 'px';
+      historyTooltip.style.top = top + 'px';
+    }
+
+    function lookupHistorySelection(id) {
+      const session = state && (state.sessions || []).find(function (s) { return s.id === id; });
+      const project = state && (state.projects || []).find(function (p) {
+        return p.id === id || (session && p.name === session.project);
+      });
+      return { session: session, project: project };
+    }
+
+    function renderHistoryTooltip() {
+      if (!historyTooltip) return;
+      const id = historyHoverId || historyFocusId || historyTooltipId;
+      const found = lookupHistorySelection(id);
+      const nextId = found.session || found.project ? id : null;
+      if (historyTooltipHovered && nextId && historyTooltipId === nextId) return;
+      historyTooltipId = nextId;
+      if (!historyTooltipId) {
+        historyTooltipHovered = false;
+        cancelHistoryTooltipHide();
+      }
+      historyTooltip.hidden = !historyTooltipId;
+      const html = renderGraphHint(found.project, found.session);
+      if (historyTooltip.innerHTML !== html) historyTooltip.innerHTML = html;
+      if (historyHintEl) {
+        historyHintEl.textContent = historyTooltipId
+          ? 'click for details · double-click a session for Herdr · Esc to dismiss hint'
+          : 'click for details · double-click a session for Herdr · filter by state above';
+      }
+      if (historyTooltipId && historyTreeEl && typeof historyTreeEl.querySelector === 'function') {
+        const row = historyTreeEl.querySelector('.history-row[data-id="' + historyTooltipId + '"]');
+        if (row) positionHistoryTooltip(row);
+      }
+    }
+
+    if (historyTreeEl) {
+      historyTreeEl.addEventListener('click', function (ev) {
+        const target = ev.target;
+        const closest = target && typeof target.closest === 'function' ? target.closest.bind(target) : null;
+        if (!closest) return;
+        const twist = closest('button[data-twist]');
+        if (twist) {
+          if (typeof ev.stopPropagation === 'function') ev.stopPropagation();
+          if (!twist.disabled) toggleCollapse(twist.getAttribute('data-twist'));
+          return;
+        }
+        const row = closest('.history-row');
+        if (row) {
+          if (typeof ev.stopPropagation === 'function') ev.stopPropagation();
+          selectRow(row.getAttribute('data-id'));
+        }
+      });
+      historyTreeEl.addEventListener('dblclick', function (ev) {
+        const target = ev.target;
+        const closest = target && typeof target.closest === 'function' ? target.closest.bind(target) : null;
+        if (!closest) return;
+        const row = closest('.history-row');
+        if (!row || row.getAttribute('data-kind') !== 'session') return;
+        if (typeof ev.stopPropagation === 'function') ev.stopPropagation();
+        if (typeof ev.preventDefault === 'function') ev.preventDefault();
+        openInHerdr(row.getAttribute('data-id'));
+      });
+      historyTreeEl.addEventListener('mouseover', function (ev) {
+        const target = ev.target;
+        const closest = target && typeof target.closest === 'function' ? target.closest.bind(target) : null;
+        if (!closest) return;
+        const row = closest('.history-row');
+        if (!row) return;
+        cancelHistoryTooltipHide();
+        historyFocusId = null;
+        historyHoverId = row.getAttribute('data-id');
+        renderHistoryTooltip();
+      });
+      historyTreeEl.addEventListener('mouseout', function (ev) {
+        const target = ev.target;
+        const closest = target && typeof target.closest === 'function' ? target.closest.bind(target) : null;
+        if (!closest) return;
+        const row = closest('.history-row');
+        if (!row) return;
+        const related = ev.relatedTarget;
+        if (related && typeof row.contains === 'function' && row.contains(related)) return;
+        if (historyHoverId === row.getAttribute('data-id')) historyHoverId = null;
+        scheduleHistoryTooltipHide();
+      });
+      historyTreeEl.addEventListener('focusin', function (ev) {
+        const target = ev.target;
+        const closest = target && typeof target.closest === 'function' ? target.closest.bind(target) : null;
+        if (!closest) return;
+        const row = closest('.history-row');
+        if (!row || ev.target !== row) return;
+        cancelHistoryTooltipHide();
+        if (historyHoverId !== row.getAttribute('data-id')) {
+          historyFocusId = row.getAttribute('data-id');
+        }
+        renderHistoryTooltip();
+      });
+      historyTreeEl.addEventListener('focusout', function (ev) {
+        const target = ev.target;
+        const closest = target && typeof target.closest === 'function' ? target.closest.bind(target) : null;
+        if (!closest) return;
+        const row = closest('.history-row');
+        if (!row || ev.target !== row) return;
+        if (historyFocusId === row.getAttribute('data-id')) historyFocusId = null;
+        scheduleHistoryTooltipHide();
+      });
+      historyTreeEl.addEventListener('keydown', function (ev) {
+        const row = ev.target && typeof ev.target.closest === 'function'
+          ? ev.target.closest('.history-row')
+          : null;
+        if (!row || ev.target !== row) return;
+        const id = row.getAttribute('data-id');
+        const expanded = row.getAttribute('aria-expanded');
+        if (ev.key === 'Escape') {
+          dismissHistoryTooltip();
+        } else if (ev.key === 'Enter' || ev.key === ' ') {
+          if (typeof ev.preventDefault === 'function') ev.preventDefault();
+          selectRow(id);
+        } else if (ev.key === 'ArrowRight' && expanded === 'false') {
+          if (typeof ev.preventDefault === 'function') ev.preventDefault();
+          toggleCollapse(id);
+        } else if (ev.key === 'ArrowLeft' && expanded === 'true') {
+          if (typeof ev.preventDefault === 'function') ev.preventDefault();
+          toggleCollapse(id);
+        } else if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+          if (typeof ev.preventDefault === 'function') ev.preventDefault();
+          if (typeof historyTreeEl.querySelectorAll !== 'function') return;
+          const rows = Array.prototype.slice.call(historyTreeEl.querySelectorAll('.history-row'));
+          const next = rows[rows.indexOf(row) + (ev.key === 'ArrowDown' ? 1 : -1)];
+          if (next && typeof next.focus === 'function') next.focus();
+        }
+      });
+    }
+
+    if (historyTooltip) {
+      historyTooltip.addEventListener('mouseenter', function () {
+        cancelHistoryTooltipHide();
+        historyHoverId = null;
+        historyFocusId = null;
+        historyTooltipHovered = true;
+      });
+      historyTooltip.addEventListener('mouseleave', function () {
+        historyTooltipHovered = false;
+        scheduleHistoryTooltipHide();
+      });
+      historyTooltip.addEventListener('click', function (ev) {
+        if (typeof ev.stopPropagation === 'function') ev.stopPropagation();
+      });
+    }
+
+    if (historyFilterEl) {
+      historyFilterEl.addEventListener('click', function (ev) {
+        const target = ev.target;
+        const closest = target && typeof target.closest === 'function' ? target.closest.bind(target) : null;
+        if (!closest) return;
+        const chip = closest('.filter-chip');
+        if (!chip) return;
+        stateFilter = chip.getAttribute('data-state') || '';
+        renderHistoryTree();
+      });
+    }
+
+    if (sortSelect) {
+      sortSelect.addEventListener('change', function () {
+        sortTouched = true;
+        sortMode = sortSelect.value || 'recent';
+        renderHistoryTree();
+      });
+    }
+
+    /* ---------- history panel (left off + prompt history) ---------- */
+
+    function safeMarkdown(text) {
+      try {
+        return renderMarkdown(text, { documentLinks: false });
+      } catch (_) {
+        return '<pre class="markdown-source">' + esc(text) + '</pre>';
+      }
+    }
+
+    function previewLines(text, n) {
+      return String(text == null ? '' : text).split('\n').slice(0, n).join('\n');
+    }
+
+    function snapshotLeftOff(item, isProject) {
+      const project = isProject ? item : (state.projects || []).find(function (p) {
+        return p.name === item.project;
+      });
+      const note = project && project.memory && (project.memory.documents || []).find(function (d) {
+        return d.kind === 'status';
+      });
+      const cps = (state.checkpoints && state.checkpoints.projects) || [];
+      const cp = cps.find(function (c) {
+        return c && project && (c.project === project.name || c.name === project.name);
+      });
+      const open = cp && ((cp.state === 'requested' && !cp.completedAt) || cp.missing || cp.overdue);
+      return {
+        completion: item.completion || null,
+        statusNote: note
+          ? { path: note.path, title: note.title, date: note.date || null, preview: previewLines(note.content, 8) }
+          : null,
+        checkpoint: open ? cp : null,
+      };
+    }
+
+    function renderLeftOff(leftOff) {
+      if (!leftOff || (!leftOff.completion && !leftOff.statusNote && !leftOff.checkpoint)) {
+        return '<p class="empty">Nothing recorded yet for this selection.</p>';
+      }
+      let html = renderTaskCompletion(leftOff.completion);
+      const note = leftOff.statusNote;
+      if (note) {
+        html += '<section class="status-note-preview"><div class="label">Latest status note</div>' +
+          '<p class="completion-meta">' + esc(note.title || note.path || '') +
+          (note.date ? ' · ' + esc(note.date) : '') + '</p><div class="completion-body">' +
+          safeMarkdown(note.preview || '') + '</div></section>';
+      }
+      const cp = leftOff.checkpoint;
+      if (cp) {
+        const flags = [];
+        if (cp.state) flags.push(cp.state);
+        if (cp.missing) flags.push('missing');
+        if (cp.overdue) flags.push('overdue');
+        html += '<section class="checkpoint-preview"><div class="label">Doc checkpoint</div>' +
+          '<p class="completion-meta">' + esc(flags.join(' · ') || 'open') +
+          (cp.requestedAt ? ' · requested ' + esc(cp.requestedAt) : '') + '</p>' +
+          (cp.reason ? '<p>' + esc(cp.reason) + '</p>' : '') + '</section>';
+      }
+      return html;
+    }
+
+    function historyItemKey(ev, idx) {
+      return [ev.type, ev.at, ev.sessionId || '', ev.path || '', idx].join('|');
+    }
+
+    function renderHistoryItems(items) {
+      if (!items || !items.length) return '<p class="empty">No prompt history recorded.</p>';
+      return items.map(function (ev, idx) {
+        const key = historyItemKey(ev, idx);
+        const more = !!ev.replyTruncated || (ev.reply != null && ev.replyPreview != null &&
+          String(ev.reply) !== String(ev.replyPreview));
+        const expanded = expandedReplies.has(key);
+        const body = expanded ? ev.reply : (ev.replyPreview != null ? ev.replyPreview : ev.reply);
+        const when = String(ev.at || '').replace('T', ' ').slice(0, 19);
+        let html = '<article class="history-feed-item" data-key="' + esc(key) + '">' +
+          '<div class="when">' + esc(when) + (ev.sessionTitle ? ' · ' + esc(ev.sessionTitle) : '') +
+          '<span class="kind-tag">' + esc(ev.kind || ev.type || '') + '</span></div>';
+        if (ev.title) html += '<div class="label">' + esc(ev.title) + '</div>';
+        if (ev.prompt) html += '<div class="prompt">' + esc(ev.prompt) + '</div>';
+        if (body) {
+          html += '<div class="reply' + (more && !expanded ? ' collapsed' : '') + '">' +
+            safeMarkdown(body) + '</div>';
+          if (more) {
+            html += '<button type="button" class="expand-reply" data-key="' + esc(key) +
+              '" aria-expanded="' + String(expanded) + '">' + (expanded ? 'Collapse' : 'Expand') + '</button>';
+          }
+          if (expanded && ev.replyTruncated) {
+            html += '<p class="completion-meta">Reply truncated in the stored log.</p>';
+          }
+        }
+        return html + '</article>';
+      }).join('');
+    }
+
+    function renderHistoryPanel() {
+      const loaded = historyLoaded;
+      if (!loaded) return;
+      const data = loaded.data;
+      const leftHtml = data ? renderLeftOff(data.leftOff) : '<p class="empty">Loading…</p>';
+      if (leftoffEl && leftoffEl.innerHTML !== leftHtml) leftoffEl.innerHTML = leftHtml;
+      let feedHtml = '';
+      if (loaded.offline) {
+        feedHtml += '<p class="empty">Full prompt history requires the live dashboard server ' +
+          '(aflt dashboard --serve). This snapshot only includes the latest completion and status note.</p>';
+      } else if (loaded.error) {
+        feedHtml += '<p class="memory-error">' + esc(loaded.error) + '</p>';
+      } else if (loaded.loading && !data) {
+        feedHtml += '<p class="empty">Loading history…</p>';
+      }
+      if (data && !loaded.offline) feedHtml += renderHistoryItems(data.history);
+      if (historyFeed && historyFeed.innerHTML !== feedHtml) historyFeed.innerHTML = feedHtml;
+    }
+
+    function syncHistoryPanel() {
+      const item = findSelection();
+      if (!item) {
+        historyReq++;
+        historyLoaded = null;
+        setShown(leftoffPanel, false);
+        setShown(historyPanel, false);
+        return;
+      }
+      setShown(leftoffPanel, true);
+      setShown(historyPanel, true);
+      const isProject = item.sessionCount != null && !!item.name;
+      const sig = [item.id, item.lastUsed || item.lastActivity || '',
+        item.completion && item.completion.at || ''].join('|');
+      if (historyLoaded && historyLoaded.key === item.id && historyLoaded.sig === sig) return;
+      const prev = historyLoaded && historyLoaded.key === item.id ? historyLoaded.data : null;
+      if (snapshotData) {
+        historyLoaded = {
+          key: item.id, sig: sig, offline: true,
+          data: { leftOff: snapshotLeftOff(item, isProject), history: [], messages: null },
+        };
+        renderHistoryPanel();
+        return;
+      }
+      const token = ++historyReq;
+      historyLoaded = { key: item.id, sig: sig, loading: true, data: prev };
+      renderHistoryPanel();
+      const url = '/api/history?' + (isProject
+        ? 'project=' + encodeURIComponent(item.name)
+        : 'session=' + encodeURIComponent(item.id));
+      fetch(url)
+        .then(function (r) {
+          return r.json().then(function (body) {
+            if (!r.ok) throw new Error((body && body.error) || 'Unable to load history.');
+            return body;
+          });
+        })
+        .then(function (data) {
+          if (token !== historyReq) return;
+          historyLoaded = { key: item.id, sig: sig, data: data };
+          renderHistoryPanel();
+        })
+        .catch(function (err) {
+          if (token !== historyReq) return;
+          historyLoaded = { key: item.id, sig: sig, data: prev, error: String(err.message || err) };
+          renderHistoryPanel();
+        });
+    }
+
+    if (historyFeed) {
+      historyFeed.addEventListener('click', function (ev) {
+        const button = ev.target && typeof ev.target.closest === 'function'
+          ? ev.target.closest('button.expand-reply')
+          : null;
+        if (!button) return;
+        const key = button.getAttribute('data-key');
+        if (expandedReplies.has(key)) expandedReplies.delete(key);
+        else expandedReplies.add(key);
+        renderHistoryPanel();
+      });
+    }
+
+    /* ---------- view switching + graph loop ---------- */
+
     function loop() {
+      if (currentView !== 'graph') {
+        raf = 0;
+        return;
+      }
       if (sim && !reduced) stepSim(sim);
       drawGraph();
       raf = requestAnimationFrame(loop);
     }
+
+    function startLoop() {
+      if (currentView !== 'graph') return;
+      if (raf && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(loop);
+    }
+
+    function stopLoop() {
+      if (raf && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(raf);
+      raf = 0;
+    }
+
+    function updateSim(opts) {
+      if (!state) return;
+      const built = buildSim(state);
+      if (!sim || opts.forceRebuild || simStale) {
+        sim = Object.assign({}, built, { alpha: 1, nodeSetChanged: true });
+      } else {
+        sim = mergeSimPreserve(sim, built, { preserveAlpha: true, reheatAlpha: 0.85 });
+      }
+      simStale = false;
+      renderGraphTooltip();
+    }
+
+    function toggleBtnClass(btn, name, on) {
+      if (!btn) return;
+      if (btn.classList && typeof btn.classList.toggle === 'function') {
+        btn.classList.toggle(name, on);
+        return;
+      }
+      const cur = String(btn.className || '').split(/\s+/).filter(Boolean);
+      const has = cur.indexOf(name) !== -1;
+      if (on && !has) cur.push(name);
+      if (!on && has) cur.splice(cur.indexOf(name), 1);
+      btn.className = cur.join(' ');
+    }
+
+    function setView(name) {
+      currentView = name === 'graph' ? 'graph' : 'history';
+      const graph = currentView === 'graph';
+      setShown(historyViewEl, !graph);
+      setShown(graphViewEl, graph);
+      toggleBtnClass(viewHistoryBtn, 'active', !graph);
+      toggleBtnClass(viewGraphBtn, 'active', graph);
+      if (viewHistoryBtn) viewHistoryBtn.setAttribute('aria-pressed', String(!graph));
+      if (viewGraphBtn) viewGraphBtn.setAttribute('aria-pressed', String(graph));
+      if (stage) stage.setAttribute('aria-label', graph ? 'activity graph' : 'session history');
+      updateHerdrRemoteNote();
+      if (graph) {
+        updateSim({ forceRebuild: true });
+        startLoop();
+      } else {
+        stopLoop();
+        dismissGraphTooltip();
+        renderHistoryTree();
+      }
+    }
+
+    if (viewHistoryBtn) viewHistoryBtn.addEventListener('click', function () { setView('history'); });
+    if (viewGraphBtn) viewGraphBtn.addEventListener('click', function () { setView('graph'); });
+    setShown(graphViewEl, false);
 
     function applyState(next, opts) {
       opts = opts || {};
       state = next;
       if (!selectedId) {
         const first = (state.projects || []).find(function (p) {
-          return p.memory && (p.memory.summary || p.memory.documents.length);
+          return p.memory && (p.memory.summary || (p.memory.documents || []).length);
         });
         if (first) selectedId = first.id;
       }
@@ -994,14 +1876,25 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       drawSpark(spark24, state.sparkline24h, 'var(--cp-accent)');
       drawSpark(spark7, state.sparkline7d, 'var(--cp-link)');
       renderEvents(state);
+      renderHistoryTree();
       renderDetail();
-      const built = buildSim(state);
-      if (!sim || opts.forceRebuild) {
-        sim = Object.assign({}, built, { alpha: 1, nodeSetChanged: true });
-      } else {
-        sim = mergeSimPreserve(sim, built, { preserveAlpha: true, reheatAlpha: 0.85 });
+      updateHerdrRemoteNote();
+      if (historyTooltipId) renderHistoryTooltip();
+      // Always rebuild/draw the graph model so a later switch (or tests) have nodes.
+      updateSim(opts);
+      drawGraph();
+      if (currentView === 'graph') startLoop();
+      else {
+        // Keep a single queued frame so consumers that drain RAF still see an update
+        // while history is the default view; do not spin the force loop.
+        if (!raf) {
+          raf = requestAnimationFrame(function () {
+            raf = 0;
+            if (currentView === 'graph') startLoop();
+            else drawGraph();
+          });
+        }
       }
-      renderGraphTooltip();
     }
 
     graphTooltip.addEventListener('mouseenter', function () {
@@ -1017,17 +1910,37 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     graphTooltip.addEventListener('click', function (ev) {
       ev.stopPropagation();
     });
-    stage.addEventListener('click', function () {
+    // Empty graph background dismisses the popup (node clicks stopPropagation).
+    // Listen on svg, graph-view, and stage so clicks on the SVG/backdrop clear the
+    // selection in both the real DOM and the dashboard test harness.
+    function clearGraphSelection() {
+      if (currentView !== 'graph') return;
       selectedId = null;
       dismissGraphTooltip();
       renderDetail();
-    });
+    }
+    if (svg) svg.addEventListener('click', clearGraphSelection);
+    if (graphViewEl) graphViewEl.addEventListener('click', clearGraphSelection);
+    if (stage) stage.addEventListener('click', clearGraphSelection);
+    if (historyViewEl) {
+      historyViewEl.addEventListener('click', function (ev) {
+        const target = ev.target;
+        const closest = target && typeof target.closest === 'function' ? target.closest.bind(target) : null;
+        if (closest && closest('.history-row, .graph-tooltip, .filter-chip, .twist, button, a, select')) return;
+        selectedId = null;
+        dismissHistoryTooltip();
+        renderDetail();
+      });
+    }
     window.addEventListener('keydown', function (ev) {
-      if (ev.key === 'Escape') dismissGraphTooltip();
+      if (ev.key === 'Escape') {
+        dismissGraphTooltip();
+        dismissHistoryTooltip();
+      }
     });
 
     window.addEventListener('resize', function () {
-      if (state) applyState(state, { forceRebuild: true });
+      if (state && currentView === 'graph') applyState(state, { forceRebuild: true });
     });
 
     function connectSse() {
@@ -1044,9 +1957,13 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       };
     }
 
+    function firstState(data) {
+      applyState(data, { forceRebuild: true });
+      if (data && data.defaultView === 'graph') setView('graph');
+    }
+
     if (snapshotData) {
-      applyState(JSON.parse(snapshotData.textContent), { forceRebuild: true });
-      raf = requestAnimationFrame(loop);
+      firstState(JSON.parse(snapshotData.textContent));
       return;
     }
 
@@ -1055,14 +1972,12 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         return r.json();
       })
       .then(function (data) {
-        applyState(data, { forceRebuild: true });
-        if (!raf) raf = requestAnimationFrame(loop);
+        firstState(data);
         connectSse();
       })
       .catch(function () {
         metaEl.textContent = 'local · failed to load';
         connectSse();
-        if (!raf) raf = requestAnimationFrame(loop);
       });
   })();
 }
