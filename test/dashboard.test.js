@@ -1285,7 +1285,11 @@ describe('aflt dashboard', () => {
     assert.match(String(element('view-graph').className || ''), /active/);
     frames.shift()();
     const graph = element('graph');
-    const graphEdges = graph.children[1].children;
+    // Layers live under a .graph-world transform group: [stars, edges, nodes].
+    const graphWorld = graph.children[0];
+    assert.match(String(graphWorld.getAttribute('class') || ''), /graph-world/);
+    assert.match(String(graphWorld.getAttribute('transform') || ''), /translate\(|scale\(/);
+    const graphEdges = graphWorld.children[1].children;
     assert.equal(graphEdges.length, 3);
     assert.deepEqual(graphEdges.map((edge) => edge.getAttribute('class')), ['edge project', 'edge parent', 'edge project']);
     const css = fs.readFileSync(path.join(__dirname, '../templates/dashboard/dashboard.css'), 'utf8');
@@ -1293,7 +1297,7 @@ describe('aflt dashboard', () => {
     assert.match(edgeStyle, /stroke:\s*var\(--cp-border-strong\)/);
     assert.match(edgeStyle, /stroke-width:\s*1\.4/);
     assert.doesNotMatch(css, /\.edge\.parent\s*\{[^}]*stroke-dasharray/);
-    const nodeLayer = graph.children[2];
+    const nodeLayer = graphWorld.children[2];
     const longSession = nodeLayer.children.find((n) => n.getAttribute('data-id') === 'pla-funnel-lifecycle-29c501');
     assert.equal(longSession.children[1].textContent, 'pla-funne...29c501');
     assert.match(longSession.getAttribute('aria-label'), /^pla-funnel-lifecycle-29c501/);
@@ -1318,7 +1322,7 @@ describe('aflt dashboard', () => {
     assert.ok(parseFloat(element('graph-tooltip').style.top) >= 12);
     assert.ok(parseFloat(element('graph-tooltip').style.top) + 240 <= 588);
     frames.shift()();
-    assert.equal(graph.children[2], nodeLayer);
+    assert.equal(graphWorld.children[2], nodeLayer);
     assert.equal(nodeLayer.children.find((n) => n.getAttribute('data-id') === 'project:beta'), beta);
     assert.equal(beta.children[0], betaCircle);
     assert.equal(beta.children[1], betaLabel);
@@ -1441,7 +1445,7 @@ describe('aflt dashboard', () => {
     await new Promise((resolve) => setImmediate(resolve));
     element('view-graph').handlers.click();
     frames.shift()();
-    const liveNode = graph.children[2].children.find((n) => n.getAttribute('data-id') === 'waiting-session');
+    const liveNode = graph.children[0].children[2].children.find((n) => n.getAttribute('data-id') === 'waiting-session');
     assert.equal(liveNode.children[2].getAttribute('visibility'), 'visible');
     liveNode.dispatch('click', { stopPropagation() { this.stopped = true; } });
     assert.equal(focusRequests.length, 0);
@@ -1457,9 +1461,9 @@ describe('aflt dashboard', () => {
     await new Promise((resolve) => setImmediate(resolve));
     assert.match(element('action-status').textContent, /No unique live Herdr terminal/);
     assert.equal(element('action-status').getAttribute('class'), 'action-status error');
-    const liveProject = graph.children[2].children.find((n) => n.getAttribute('data-id') === 'project:alpha');
+    const liveProject = graph.children[0].children[2].children.find((n) => n.getAttribute('data-id') === 'project:alpha');
     assert.equal(liveProject.handlers.dblclick, undefined);
-    const liveLongSession = graph.children[2].children.find((n) => n.getAttribute('data-id') === 'pla-funnel-lifecycle-29c501');
+    const liveLongSession = graph.children[0].children[2].children.find((n) => n.getAttribute('data-id') === 'pla-funnel-lifecycle-29c501');
     liveLongSession.dispatch('dblclick', { stopPropagation() { this.stopped = true; } });
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(focusRequests.at(-1).url, '/api/herdr/focus/pla-funnel-lifecycle-29c501');
@@ -1468,7 +1472,7 @@ describe('aflt dashboard', () => {
     liveSession.activityState = 'working';
     source.onmessage({ data: JSON.stringify(state) });
     frames.shift()();
-    assert.equal(graph.children[2].children.find((n) => n.getAttribute('data-id') === 'waiting-session'), liveNode);
+    assert.equal(graph.children[0].children[2].children.find((n) => n.getAttribute('data-id') === 'waiting-session'), liveNode);
     assert.equal(liveNode.children[2].getAttribute('visibility'), 'hidden');
     assert.doesNotMatch(liveNode.getAttribute('aria-label'), /Waiting/);
     assert.doesNotMatch(liveNode.children[0].getAttribute('class'), /awaiting-input/);
@@ -1493,7 +1497,7 @@ describe('aflt dashboard', () => {
     };
     source.onmessage({ data: JSON.stringify(state) });
     frames.shift()();
-    assert.equal(graph.children[2].children.find((n) => n.getAttribute('data-id') === 'waiting-session'), liveNode);
+    assert.equal(graph.children[0].children[2].children.find((n) => n.getAttribute('data-id') === 'waiting-session'), liveNode);
     assert.equal(liveNode.children[3], spinner);
     assert.equal(spinner.getAttribute('visibility'), 'hidden');
     assert.equal(liveNode.children[2].getAttribute('visibility'), 'hidden');
@@ -2693,6 +2697,112 @@ describe('aflt dashboard', () => {
     } finally {
       await handle.close();
     }
+  });
+
+  it('graph force/spread helpers tighten layout and fit/zoom/pan the view', () => {
+    clearDashboardModules();
+    const ui = require('../templates/dashboard/dashboard.js');
+    assert.equal(ui.GRAPH_SPREAD_STORAGE_KEY, 'aflt.dashboard.graphSpread');
+    assert.equal(ui.DEFAULT_GRAPH_SPREAD, 0.3);
+
+    const tight = ui.graphForceParams(0);
+    const loose = ui.graphForceParams(1);
+    assert.ok(tight.linkIdealParent < loose.linkIdealParent);
+    assert.ok(tight.repulsion < loose.repulsion);
+    assert.ok(tight.hubRadiusFactor < loose.hubRadiusFactor);
+    assert.equal(ui.clampGraphSpread(2), 1);
+    assert.equal(ui.clampGraphSpread(-1), 0);
+
+    const fitted = ui.fitGraphView(
+      [
+        { x: 100, y: 100, r: 10 },
+        { x: 200, y: 180, r: 8 },
+      ],
+      800,
+      600,
+      { padding: 40 }
+    );
+    assert.ok(fitted.scale > 1);
+    assert.match(ui.graphViewTransform(fitted), /translate\(/);
+    assert.match(ui.graphViewTransform(fitted), /scale\(/);
+
+    const zoomed = ui.zoomGraphView({ scale: 1, tx: 0, ty: 0 }, 2, 100, 50);
+    assert.equal(zoomed.scale, 2);
+    assert.equal(zoomed.tx, -100);
+    assert.equal(zoomed.ty, -50);
+
+    const panned = ui.panGraphView(zoomed, 10, -5);
+    assert.equal(panned.tx, -90);
+    assert.equal(panned.ty, -55);
+    assert.equal(ui.clampGraphZoom(99), ui.GRAPH_ZOOM_MAX);
+  });
+
+  it('timeline scale helpers resolve presets, zoom/pan, and spread overlapping markers', () => {
+    clearDashboardModules();
+    const ui = require('../templates/dashboard/dashboard.js');
+    assert.equal(ui.TIMELINE_PRESET_STORAGE_KEY, 'aflt.dashboard.timelinePreset');
+    assert.equal(ui.TIMELINE_VIEW_STORAGE_KEY, 'aflt.dashboard.timelineView');
+    assert.equal(ui.DEFAULT_TIMELINE_PRESET, '7d');
+
+    const now = Date.parse('2024-06-15T12:00:00.000Z');
+    const full = { start: now - 40 * 24 * 60 * 60 * 1000, end: now };
+    const day = ui.resolveTimelineWindow(full, '24h', null, now);
+    assert.equal(day.end, now);
+    assert.equal(day.start, now - 24 * 60 * 60 * 1000);
+
+    const week = ui.resolveTimelineWindow(full, '7d', null, now);
+    assert.equal(week.end - week.start, 7 * 24 * 60 * 60 * 1000);
+
+    const all = ui.resolveTimelineWindow(full, 'all', null, now);
+    assert.equal(all.start, full.start);
+    assert.equal(all.end, full.end);
+
+    const override = ui.resolveTimelineWindow(
+      full,
+      '7d',
+      { start: now - 2 * 60 * 60 * 1000, end: now },
+      now
+    );
+    assert.equal(override.end - override.start, 2 * 60 * 60 * 1000);
+
+    const zoomed = ui.zoomTimelineWindow(week, 2, now - 3.5 * 24 * 60 * 60 * 1000, full.start, full.end);
+    assert.ok(zoomed.end - zoomed.start < week.end - week.start);
+    assert.ok(zoomed.end - zoomed.start >= ui.TIMELINE_MIN_SPAN_MS);
+
+    const panned = ui.panTimelineWindow(day, -12 * 60 * 60 * 1000, full.start, full.end);
+    assert.equal(panned.end - panned.start, day.end - day.start);
+    assert.ok(panned.start < day.start);
+
+    const base = now - 60 * 60 * 1000;
+    const markers = [
+      { at: new Date(base).toISOString(), state: 'completed', prompt: 'a', reply: '1' },
+      { at: new Date(base + 1000).toISOString(), state: 'completed', prompt: 'b', reply: '2' },
+      { at: new Date(base + 2000).toISOString(), state: 'failed', prompt: 'c', reply: '3' },
+      { at: new Date(base + 3000).toISOString(), state: 'completed', prompt: 'd', reply: '4' },
+      { at: new Date(base + 50 * 60 * 1000).toISOString(), state: 'completed', prompt: 'lonely', reply: '5' },
+    ];
+    const stacked = ui.layoutTimelineMarkers(markers, base - 1000, now, 400, {
+      minSepPx: 20,
+      maxStack: 3,
+    });
+    assert.ok(stacked.some((item) => item.kind === 'group' && item.count >= 4));
+    assert.ok(stacked.some((item) => item.kind === 'marker' && item.marker.prompt === 'lonely'));
+
+    const expanded = ui.layoutTimelineMarkers(markers, base - 1000, now, 400, {
+      minSepPx: 20,
+      maxStack: 3,
+      expandedGroupIds: new Set(['g0']),
+    });
+    assert.ok(expanded.every((item) => item.kind === 'marker'));
+    assert.ok(ui.maxTimelineLaneCount(expanded) >= 4);
+
+    const mild = ui.layoutTimelineMarkers(markers.slice(0, 2), base - 1000, now, 400, {
+      minSepPx: 20,
+      maxStack: 3,
+    });
+    assert.equal(mild.length, 2);
+    assert.ok(mild.every((item) => item.kind === 'marker'));
+    assert.ok(mild.some((item) => item.lane === 1) || mild[0].leftPct !== mild[1].leftPct);
   });
 });
 
