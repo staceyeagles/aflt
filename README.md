@@ -7,7 +7,7 @@
 <p align="center">
   <img alt="Node 18+" src="https://img.shields.io/badge/node-%3E%3D18-brightgreen?logo=node.js&logoColor=white"/>
   <img alt="version 1.3.0" src="https://img.shields.io/badge/version-1.3.0-blue"/>
-  <img alt="396 tests passing, 1 skipped" src="https://img.shields.io/badge/tests-396%20passing%20%7C%201%20skipped-success"/>
+  <img alt="522 tests passing, 1 skipped" src="https://img.shields.io/badge/tests-522%20passing%20%7C%201%20skipped-success"/>
   <img alt="macOS | Linux untested" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20untested-lightgrey"/>
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-yellow"/>
 </p>
@@ -16,7 +16,17 @@
 
 **For AI agents:** [AGENTS.md](AGENTS.md) — install, commands, engines, and how to delegate or orchestrate work from Cursor or Copilot CLI.
 
-Zero npm runtime dependencies beyond **Node ≥18**. Install the CLI (`npm install -g aflt`, or `npm install -g github:wwlib/aflt` before the first registry publish), then optionally run `aflt setup` for machine config. Engine × mode behavior (liveness, completion, handoffs, `aflt wait`): [docs/CAPABILITIES.md](docs/CAPABILITIES.md). Setup deep-dive: [docs/SETUP.md](docs/SETUP.md).
+Zero npm runtime dependencies beyond **Node ≥18**. Install the CLI (`npm install -g aflt`, or `npm install -g github:wwlib/aflt` before the first registry publish), then optionally run `aflt setup` for machine config. Engine × mode behavior (liveness, completion, handoffs, `aflt wait`): [docs/CAPABILITIES.md](docs/CAPABILITIES.md). Setup deep-dive: [docs/SETUP.md](docs/SETUP.md). Full history: [CHANGELOG.md](CHANGELOG.md).
+
+## What's new (2026-11-20)
+
+- **Direct messaging** — opt-in `aflt msg` / `aflt inbox` / `aflt thread` + MCP `read_inbox` / `post_message` (`aflt msg enable`, `--messaging`, or `.agentfleet.json` `{"messaging": true}`).
+- **Project↔repo metadata** — portable mappings in `<memoryRepo>/<project>/.agentfleet.json`; inspect with `aflt projects [--json]`.
+- **Interactive turn capture** — redacted turns in `runs/<id>/turns.jsonl`; backfill with `aflt turns backfill [--apply]`.
+- **`aflt purge` / `aflt orphans`** — full delete (dry-run unless `--apply`) and orphan/stale scan (`orphans --purge --ids … [--apply]`).
+- **Turns → Doc Bot** — `emitTurnCaptured` DMs `doc-bot` when both sides have messaging enabled (else no-op).
+- **Notify webhook** — opt-in `config.json` `notify` or `AFLT_NOTIFY_URL`/`KEY`/`HEADER`; events `run.completed` / `run.failed` / `turn.captured`; `aflt notify test`; flushed before `aflt run` exits.
+- **Dashboard UX** — Graph zoom/pan/Fit/Spread; History Gantt presets (24h/7d/30d/all), zoom/scroll, marker stacking and count badges (`aflt dashboard --serve`).
 
 ## Why AgentFleet
 
@@ -37,7 +47,7 @@ CLI coding agents are powerful but ephemeral: chat IDs live in engine-local stor
 | **Messaging** | Opt-in `aflt msg` / `inbox` / `thread` + stdio MCP (`aflt mcp`) for Copilot & Cursor |
 | **Documentarian** | Opt-in `aflt docs`; auto once after headless master / `aflt wait --docs` |
 | **Agent docs** | Opt-in `agentDocs`: shared `DOCUMENTATION-PROCESS.md` + project `AGENT-DOCS.md`, launch path delivery, checkpoint status (Doc Bot notify = issue #2) |
-| **Ops** | `aflt setup`, `aflt import`, `aflt doctor`, `--json` / `--dry-run` on mutating paths |
+| **Ops** | `aflt setup`, `aflt import`, `aflt doctor`, `aflt notify test`, `aflt purge` / `aflt orphans`, `aflt turns backfill`, `--json` / `--dry-run` on mutating paths |
 
 ## Architecture
 
@@ -131,11 +141,12 @@ Home directory: **`$AGENTFLEET_HOME`** (default `~/.agentfleet`). Override regis
 | Path | Role |
 |------|------|
 | `sessions.json` | Atomic registry (temp + rename; cross-process `.lock` for RMW) |
-| `config.json` | Fleet defaults (`defaultEngine`, optional `memoryRepo`, `project`, `notify`) |
-| `runs/<id>/` | Captured headless stdout |
+| `config.json` | Fleet defaults (`defaultEngine`, optional `memoryRepo`, `project`, `notify`, `repositories`) |
+| `runs/<id>/` | Captured headless stdout + interactive `turns.jsonl` / `turns-index.json` |
 | `results/` | Worker/master handoffs (`$AGENTFLEET_RESULT`) |
 | `plans/` | Master plans (`$AGENTFLEET_PLAN`) |
 | `messages/<masterId>.jsonl` | Team message log |
+| `messages/dm__<idA>__<idB>.jsonl` | Cross-session direct-message log (sorted ids) |
 | `docs/<hash>.json` | Documentarian since-tracking |
 | `doc-checkpoints/<project>.json` | Opt-in agentDocs checkpoint state |
 
@@ -153,7 +164,9 @@ Each session stores identity (`id`, `title`, `chatId`, `cwd`, `branch`, `model`,
 | `aflt add` | Register an existing chat / Copilot UUID |
 | `aflt ls` / `aflt sync` | List (optional `--project`); persist Herdr evidence |
 | `aflt timeline` | Read-only project session tree (+ best-effort commits) |
+| `aflt projects` | Read-only project↔repo mappings + checkout validation |
 | `aflt dashboard` | Live local activity UI (`--serve`) or SVG/HTML snapshot (`--snapshot`); read-only; not `aflt memory dashboard` |
+| `aflt turns backfill` | Import interactive turns into `runs/<id>/turns.jsonl` (dry-run unless `--apply`) |
 | `aflt memory` | Opt-in project-memory git repo (`init` / `sync --commit --push` / `dashboard` / `doc` / `status` / `where`) |
 | `aflt run` / `aflt log` | Headless create-or-resume; print last capture |
 | `aflt resume` / `aflt pick` | Resume one, interactive pick, or `--all` |
@@ -179,7 +192,7 @@ Each session stores identity (`id`, `title`, `chatId`, `cwd`, `branch`, `model`,
 - **`aflt archive` / `aflt unarchive`** — set/clear `archived` + `archivedAt` (status unchanged). `--with-children` includes descendants. Refuses running/waiting (live `runPid` or Herdr working/blocked) unless `--force`. Run logs untouched.
 - **`aflt rm`** — exact id/title preferred (multi-arg); TTY confirms/picks fuzzy matches (agents: exact only); `--keep-files` `--force` `--dry-run`; or `--children <master> [--with-master]`. Never deletes `runs/<id>/` logs; clears `parent` on remaining children. `aflt rm --purge` is a synonym for `aflt purge`.
 - **`aflt purge <title|id>…`** — full delete: registry row, `runs/<id>/`, results/plans, master message log, and the engine Copilot/Cursor chat directory when the path mapping is unique/certain. **Dry-run by default**; pass `--apply` to mutate. Never touches Herdr panes. Refuses busy sessions unless `--force` (prefer `aflt stop` first). `--yes` skips typed confirm (required for non-TTY apply). `--aflt-only` / `--no-engine` skips engine files; `--engine-only` skips af files; `--no-transcripts` skips Cursor `agent-transcripts/`.
-- **`aflt orphans`** — scan-only by default (`--days N`, `--engine`, `--category`, `--json`). Categories include `orphan-runs`, `missing-cwd`, `archived-old`, `stale-empty`, best-effort `orphan-engine-chat`, and report-only `herdr-orphan-pane`. Selective purge: `aflt orphans --purge --ids <id,…> [--apply] [--yes]` (never auto-kills Herdr panes; never purges all orphans without selection).
+- **`aflt orphans`** — scan-only by default (`--days N`, `--engine cursor|copilot|all`, `--category`, `--json`, `--allow-uncertain-engine`, `--include-interactive`). Categories include `orphan-runs`, `missing-cwd`, `archived-old`, `stale-empty`, best-effort `orphan-engine-chat`, and report-only `herdr-orphan-pane`. Selective purge: `aflt orphans --purge --ids <id,…> [--apply] [--yes] [--force]` (never auto-kills Herdr panes; never purges all orphans without selection).
 
 </details>
 
@@ -337,7 +350,7 @@ aflt rm --children <master> [--with-master] …
 - **`aflt wait` exits:** `0` all done · `1` failed/stopped · `2` timeout · `3` waiting (needs input). Precedence: timeout → failed/stopped → waiting → ok. See [CAPABILITIES.md](docs/CAPABILITIES.md) for Cursor (no OSC 7501) vs Copilot interactive waiting.
 - **`--detach`:** headless only; returns immediately; supervisor records exit/handoff. Prefer over shell `&`.
 - **Handoffs:** workers write `$AGENTFLEET_RESULT` (default `$AGENTFLEET_HOME/results/<id>.md`). Headless success with missing/stale file → **af-fallback** from stdout. Freshness uses `runStartedAt` / `resultMtimeAtStart`; `aflt result --require-fresh` exits 1 if stale. HANDOFF column: `yes` / `af` / `stale` / `no`.
-- **Env on launch:** `AGENTFLEET_ID` always; workers `AGENTFLEET_PARENT` / `AGENTFLEET_RESULT`; masters `AGENTFLEET_ROLE=master` / `AGENTFLEET_PLAN` / `AGENTFLEET_RESULT`. Messaging also sets `AGENTFLEET_SESSION` (= id) and `AGENTFLEET_MASTER` when known. Opt-in `agentDocs` also sets `AFLT_PROJECT` / `AFLT_MEMORY_REPO` / `AFLT_DOCS_PROCESS` / `AFLT_AGENT_DOCS` (and reports missing memory clearly).
+- **Env on launch:** `AGENTFLEET_ID` always; workers `AGENTFLEET_PARENT` / `AGENTFLEET_RESULT`; masters `AGENTFLEET_ROLE=master` / `AGENTFLEET_PLAN` / `AGENTFLEET_RESULT`. Messaging also sets `AGENTFLEET_SESSION` (= id) and `AGENTFLEET_MASTER` when known. Opt-in `agentDocs` also sets `AFLT_PROJECT` / `AFLT_MEMORY_REPO` / `AFLT_DOCS_PROCESS` / `AFLT_AGENT_DOCS` / `AFLT_AGENTS_MD` / `AFLT_MEMORY_PROJECT` (and `AFLT_MEMORY_MISSING=1` when memory is required but unset).
 
 ## Agent documentation (opt-in)
 
@@ -348,7 +361,7 @@ aflt rm --children <master> [--with-master] …
 aflt docs checkpoint request [--reason …] [--json]
 aflt docs checkpoint complete [--note path] [--json]
 aflt docs --status --json   # includes agentDocs.checkpoint missing/overdue
-aflt dashboard --snapshot out.json  # JSON state includes checkpoints{}
+aflt dashboard --snapshot out.html --json  # SVG/HTML file; stdout JSON includes checkpoints{}
 ```
 
 - Delivers project identity + memory/instruction paths on launch/resume for **Cursor and Copilot** without replacing `AGENTS.md`.
@@ -428,7 +441,7 @@ aflt import copilot <uuid|prefix>…   # register; --title (single id), --tag, -
 - **`aflt doctor [--json]`** — read-only checks: node, home, registry, default engine, `hc`, engines, MCP wiring hints, notify status (never prints the notify key).
 - **`aflt notify test [--json]`** — send a sample opt-in webhook event (`run.completed`). Requires `config.json` `notify.url` or `AFLT_NOTIFY_URL`.
 - **`--json`** — machine-readable stdout on supporting commands (single JSON object where applicable).
-- **`--dry-run`** — plan only; no registry/state mutation (new, run, spawn, master, docs, msg enable, adopt, cwd, rm, sync, herdr-*, mcp install, …).
+- **`--dry-run`** — plan only; no registry/state mutation (new, run, spawn, master, docs, msg enable, adopt, cwd, rm, turns backfill, sync, herdr-*, mcp install, …). `aflt purge` / `aflt orphans` / `aflt turns backfill` are dry-run by default unless `--apply`.
 
 ## Configuration
 
@@ -442,11 +455,13 @@ aflt import copilot <uuid|prefix>…   # register; --title (single id), --tag, -
   "docsPaths": ["README.md", "docs/"],
   "docsInstructions": ["docs/DOCS_STYLE.md", "~/notes/af-docs.md"],
   "docsEngine": "cursor",
-  "docsForce": false
+  "docsForce": false,
+  "agentDocs": true,
+  "docCheckpointHours": 4
 }
 ```
 
-Resolved by walking cwd → ancestors until the git root (or filesystem root). Optional `"project"` / `"projectId"` is a create-time launch default referencing the **project id** (not a checkout path).
+Resolved by walking cwd → ancestors until the git root (or filesystem root). Optional `"project"` / `"projectId"` is a create-time launch default referencing the **project id** (not a checkout path). Optional `"agentDocs": true` delivers docs-process paths on launch and tracks checkpoints (`docCheckpointHours` is overdue labeling only).
 
 ### Memory project metadata: `<memoryRepo>/<project>/.agentfleet.json`
 
@@ -478,7 +493,7 @@ aflt projects my-app --json
 
 Optional `"project"` is a create-time default for non-repo agent groups (after `AFLT_PROJECT`, before mapping inference / basename/`adhoc`). Optional `"memoryRepo"` is set by `aflt memory init` (override with `AFLT_MEMORY_REPO`). Optional `"memoryActiveDays"` sets the Active/Dormant threshold for root `DASHBOARD.md` (overridden by `--active-days`; default 14). Optional `"repositories"` maps normalized remote identities → local checkout paths (per machine; never commit these into the memory repo).
 
-Optional `"notify"` enables fire-and-forget webhook POSTs when a headless `aflt run` finishes or fails (`run.completed` / `run.failed`) and when an interactive turn is captured (`turn.captured`). Off unless `notify.url` or `AFLT_NOTIFY_URL` is set. Optional `key` is sent as a header (`header` name defaults to `Authorization` with value `Bearer <key>`; custom header names get the raw key). Env overrides config (`AFLT_NOTIFY_URL` / `AFLT_NOTIFY_KEY` / `AFLT_NOTIFY_HEADER`). Bodies are small JSON (event, session id, title, project, engine, redacted cwd, exit status, timestamp, short redacted summary). Failures are logged and never break the run. Probe with `aflt notify test`; `aflt doctor` shows status without printing the key.
+Optional `"notify"` enables fire-and-forget webhook POSTs when a headless `aflt run` finishes or fails (`run.completed` / `run.failed`) and when an interactive turn is captured (`turn.captured`). Off unless `notify.url` or `AFLT_NOTIFY_URL` is set. Optional `key` is sent as a header (`header` name defaults to `Authorization` with value `Bearer <key>`; custom header names get the raw key). Env overrides config (`AFLT_NOTIFY_URL` / `AFLT_NOTIFY_KEY` / `AFLT_NOTIFY_HEADER`). Bodies are small JSON (event, session id, title, project, engine, redacted cwd, exit status, timestamp, short redacted summary). Failures are logged and never break the run. Headless `aflt run` awaits the webhook before exit; pending `turn.captured` posts are flushed on CLI shutdown. Probe with `aflt notify test`; `aflt doctor` shows status without printing the key.
 
 ### Environment
 
@@ -522,7 +537,9 @@ Optional `"notify"` enables fire-and-forget webhook POSTs when a headless `aflt 
 | `aflt import` / `aflt import-file` | Discover local sessions / merge backup |
 | `aflt ls` / `aflt sync` | List sessions / persist Herdr evidence |
 | `aflt timeline` | Read-only project session tree |
+| `aflt projects` | Read-only project↔repo mappings + validation |
 | `aflt dashboard` | Live local activity UI (`--serve`) or SVG/HTML snapshot (read-only; ≠ memory dashboard) |
+| `aflt turns backfill` | Import interactive turns into `runs/<id>/turns.jsonl` |
 | `aflt memory` | Opt-in project-memory repo (init / sync / dashboard / doc / status; sync `--commit`/`--push`) |
 | `aflt run` / `aflt log` | Headless prompt / last capture |
 | `aflt spawn` / `aflt master` | Worker under master / bootstrap orchestrator |
@@ -565,8 +582,10 @@ See `af --help` / `aflt help` for the authoritative flag list. Long-form help co
 ## More docs
 
 - [AGENTS.md](AGENTS.md) — guide for AI coding agents (Copilot CLI, Cursor, orchestrators)
+- [CHANGELOG.md](CHANGELOG.md) — release notes
 - [docs/CAPABILITIES.md](docs/CAPABILITIES.md) — engine × mode capability matrix and `aflt wait` outcomes
 - [docs/SETUP.md](docs/SETUP.md) — environment setup, Herdr, troubleshooting
+- [docs/PROJECT-REPO-METADATA.md](docs/PROJECT-REPO-METADATA.md) — project↔repo schema
 - [completions/af.bash](completions/af.bash) — bash completion
 - [herdr/mods/af-sessions](herdr/mods/af-sessions) — Herdr desktop panel mod (`RECIPE.md`)
 - [herdr/layouts/af.json](herdr/layouts/af.json) — layout that includes the panel
@@ -577,7 +596,7 @@ See `af --help` / `aflt help` for the authoritative flag list. Long-form help co
 npm test
 ```
 
-412 tests (Node test runner): all passing in the hermetic suite (a live `create-chat` smoke test only runs with a real `cursor-agent`). Coverage includes registry, engines, Herdr backends, orchestration, messaging, MCP, docs, project/timeline, project memory, live dashboard, dry-run purity, interactive rm/stop pickers, and hermetic `AGENTFLEET_HOME` fixtures.
+522 tests (Node test runner): all passing in the hermetic suite (a live `create-chat` smoke test only runs with a real `cursor-agent`). Coverage includes registry, engines, Herdr backends, orchestration, messaging, MCP, docs, project/timeline, project memory, live dashboard, dry-run purity, interactive rm/stop pickers, and hermetic `AGENTFLEET_HOME` fixtures.
 
 ## License
 

@@ -6,6 +6,18 @@ This guide is for **AI coding agents** (GitHub Copilot CLI, Cursor CLI / `cursor
 
 Prefer **`aflt help`** (or `aflt` with no args) for the full usage text. **`aflt <command> --help` is not a dedicated help path** — some commands print a short usage error, and others (`ls`, `sync`, `import`, `doctor`, `setup`, `version`) may **run the command**.
 
+Human overview: [README.md](README.md). Release notes: [CHANGELOG.md](CHANGELOG.md).
+
+## What's new (2026-11-20)
+
+- **Direct messaging** — opt-in `aflt msg` / `aflt inbox` / `aflt thread` + MCP `read_inbox` / `post_message` (`aflt msg enable`, `--messaging`, or `.agentfleet.json` `{"messaging": true}`).
+- **Project↔repo metadata** — portable mappings in `<memoryRepo>/<project>/.agentfleet.json`; inspect with `aflt projects [--json]`.
+- **Interactive turn capture** — redacted turns in `runs/<id>/turns.jsonl`; backfill with `aflt turns backfill [--apply]`.
+- **`aflt purge` / `aflt orphans`** — full delete (dry-run unless `--apply`) and orphan/stale scan (`orphans --purge --ids … [--apply]`).
+- **Turns → Doc Bot** — `emitTurnCaptured` DMs `doc-bot` when both sides have messaging enabled (else no-op).
+- **Notify webhook** — opt-in `config.json` `notify` or `AFLT_NOTIFY_URL`/`KEY`/`HEADER`; events `run.completed` / `run.failed` / `turn.captured`; `aflt notify test`; flushed before `aflt run` exits.
+- **Dashboard UX** — Graph zoom/pan/Fit/Spread; History Gantt presets (24h/7d/30d/all), zoom/scroll, marker stacking and count badges (`aflt dashboard --serve`).
+
 ---
 
 ## What AgentFleet is
@@ -435,7 +447,9 @@ aflt purge <title|id>... [--with-children] [--apply] [--force] [--yes] [--json]
 # --yes skips typed confirm (required for non-TTY / agent apply).
 
 aflt orphans [--days N] [--engine cursor|copilot|all] [--category C]... [--json]
+           [--allow-uncertain-engine] [--include-interactive]
 aflt orphans --purge --ids id,… [--apply] [--yes] [--force] [--json]
+           [--days N] [--allow-uncertain-engine]
 # Scan orphan/stale artifacts (default non-destructive). --purge requires --ids
 # selection; never auto-kills herdr-orphan-pane. Dry-run unless --apply.
 
@@ -680,7 +694,7 @@ Portable mappings (many-to-many projects↔repos). Template: `templates/project-
 
 Optional `"project"` is a create-time default when `--project` / `AFLT_PROJECT` / source `.agentfleet.json` are unset (useful for non-repo agent groups). Optional `"memoryRepo"` comes from `aflt memory init` (override with `AFLT_MEMORY_REPO`). Optional `"memoryActiveDays"` sets the Active/Dormant threshold for root `DASHBOARD.md` (positive integer; overridden by `--active-days`; default 14). Optional `"repositories"` maps normalized remotes → machine-local checkout paths (not portable; inspect with `aflt projects`).
 
-Optional `"notify"` (or `AFLT_NOTIFY_URL` / `AFLT_NOTIFY_KEY` / `AFLT_NOTIFY_HEADER`) enables fire-and-forget webhook POSTs on headless run completion/failure (`run.completed` / `run.failed`) and interactive turn capture (`turn.captured` via `emitTurnCaptured`). Off unless a URL is set. Default auth header is `Authorization: Bearer <key>`; a custom `header` / `AFLT_NOTIFY_HEADER` sends the raw key. Bodies include event, session id, title, project, engine, redacted cwd, exit status, timestamp, and a short redacted summary (reuses `memory.redactSensitive`; never include secrets). Short timeout; failures log to stderr and never break the run. `aflt notify test` sends a sample event; `aflt doctor` reports notify status without printing the key.
+Optional `"notify"` (or `AFLT_NOTIFY_URL` / `AFLT_NOTIFY_KEY` / `AFLT_NOTIFY_HEADER`) enables fire-and-forget webhook POSTs on headless run completion/failure (`run.completed` / `run.failed`) and interactive turn capture (`turn.captured` via `emitTurnCaptured`). Off unless a URL is set. Default auth header is `Authorization: Bearer <key>`; a custom `header` / `AFLT_NOTIFY_HEADER` sends the raw key. Bodies include event, session id, title, project, engine, redacted cwd, exit status, timestamp, and a short redacted summary (reuses `memory.redactSensitive`; never include secrets). Short timeout; failures log to stderr and never break the run. Headless `aflt run` awaits the webhook before exit; pending `turn.captured` posts are flushed on CLI shutdown. `aflt notify test` sends a sample event; `aflt doctor` reports notify status without printing the key.
 
 ---
 
@@ -746,6 +760,7 @@ Injected on launch (do not overwrite casually inside a session):
 ## Further reading
 
 - [README.md](README.md) — product overview and command summary
+- [CHANGELOG.md](CHANGELOG.md) — release notes
 - [docs/CAPABILITIES.md](docs/CAPABILITIES.md) — engine × mode matrix and `aflt wait` outcomes
 - [docs/SETUP.md](docs/SETUP.md) — environment setup, Herdr, work-computer install, troubleshooting
 - [docs/PROJECT-REPO-METADATA.md](docs/PROJECT-REPO-METADATA.md) — project↔repo schema (issue #1)
