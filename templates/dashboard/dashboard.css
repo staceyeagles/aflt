@@ -131,6 +131,24 @@ body {
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
+.hide-dormant-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  color: var(--cp-text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+.hide-dormant-control input {
+  margin: 0;
+  accent-color: var(--cp-link);
+}
+.dormant-hidden-count {
+  font-size: 0.72rem;
+  color: var(--cp-text-muted);
+  letter-spacing: 0.02em;
+}
 .sort-control select {
   padding: 0.35rem 0.5rem;
   border: 1px solid var(--cp-border-strong);
@@ -336,6 +354,15 @@ body {
 .history-state.failed { color: var(--cp-danger); border-color: var(--cp-danger); }
 .history-row.session.waiting .history-state,
 .history-row.session.awaiting-input .history-state { border-style: dashed; }
+.history-row.group.no-sessions {
+  color: var(--cp-text-muted);
+  opacity: 0.92;
+}
+.history-row.group.no-sessions .title {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.history-row.project[data-kind="project"] .meta-bits:empty { display: none; }
 .row-markers {
   flex: 0 0 auto;
   display: inline-flex;

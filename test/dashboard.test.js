@@ -428,10 +428,11 @@ describe('aflt dashboard', () => {
       ['blocked', 'active', null, { runtime: 'running', status: { state: 'blocked' } }, true, 'waiting'],
       ['turn-complete', 'active', null, { runtime: 'running', status: 'done' }, false, 'completed'],
       ['working', 'active', 'waiting', { runtime: 'running', status: { state: 'working' } }, false, 'working'],
-      ['fresh-idle', 'active', null, { runtime: 'running', status: { state: 'idle' } }, false, 'running'],
-      ['no-signal', 'active', 'waiting', { runtime: 'running', status: null }, false, 'running'],
+      // Pane-alive + OSC idle/null is idle (Herdr Agents panel), not Running.
+      ['fresh-idle', 'active', null, { runtime: 'running', status: { state: 'idle' } }, false, 'idle'],
+      ['no-signal', 'active', 'waiting', { runtime: 'running', status: null }, false, 'idle'],
       ['exited', 'active', 'waiting', { runtime: 'exited', status: 'blocked' }, false, 'idle'],
-      ['shell', 'active', 'waiting', { runtime: 'shell', status: 'blocked' }, false, 'running'],
+      ['shell', 'active', 'waiting', { runtime: 'shell', status: 'blocked' }, false, 'idle'],
       ['missing', 'active', 'waiting', { runtime: 'missing' }, false, 'idle'],
       ['completed', 'done', 'waiting', { runtime: 'running', status: 'blocked' }, false, 'completed'],
     ];
@@ -449,7 +450,9 @@ describe('aflt dashboard', () => {
       assert.equal(session.status, status);
       assert.equal(session.activityState, activityState, id);
     }
-    assert.equal(state.sessions.find((s) => s.id === 'blocked').displayState, 'running');
+    assert.equal(state.sessions.find((s) => s.id === 'blocked').displayState, 'idle');
+    assert.equal(state.sessions.find((s) => s.id === 'working').displayState, 'running');
+    assert.equal(state.sessions.find((s) => s.id === 'fresh-idle').displayState, 'idle');
     const svg = dash.renderSvg(state);
     assert.match(svg, /<title>State: waiting\nSession ID: blocked\n/);
     assert.match(svg, /stroke-dasharray="3 3"/);
@@ -481,14 +484,14 @@ describe('aflt dashboard', () => {
       session.lastSendAt = opts.now;
       enrichment.status = { state: 'done' };
       assert.equal(waiting(), false, 'ignore the previous turn after a new send');
-      assert.equal(activity(), 'running');
+      assert.equal(activity(), 'idle', 'pane-alive without working is idle during send grace');
       opts.now = '2024-06-10T12:00:16.000Z';
       assert.equal(activity(), 'completed', 'recognize an instant turn after send grace');
       assert.equal(waiting(), false, 'a completed turn is not an input request');
       enrichment.status = { state: 'idle' };
       assert.equal(activity(), 'completed', 'retain completion when a finished agent becomes idle');
       session.lastSendAt = opts.now;
-      assert.equal(activity(), 'running', 'a new prompt clears the previous completion');
+      assert.equal(activity(), 'idle', 'a new prompt clears completion; still idle until working');
       enrichment.status = { state: 'working' };
       assert.equal(waiting(), false);
       assert.equal(activity(), 'working');
@@ -744,6 +747,138 @@ describe('aflt dashboard', () => {
     assert.equal(fs.readFileSync(path.join(repo, 'DASHBOARD.md'), 'utf8'), before);
   });
 
+  it('groups sessionless memory projects at the bottom and excludes them from Graph and Active', () => {
+    const dash = loadDashboard(home);
+    const state = dash.aggregateDashboard({
+      sessions: [
+        {
+          id: 'live-sess', title: 'Live', project: 'aflt', status: 'active',
+          runPid: process.pid,
+          created: '2026-11-19T00:00:00.000Z', lastUsed: '2026-11-19T12:00:00.000Z',
+        },
+      ],
+      memoryProjects: [
+        {
+          project: 'aflt', folder: 'aflt', summary: null, errors: [],
+          documents: [{ path: 'aflt/README.md', kind: 'readme', title: 'Aflt', content: '# Aflt' }],
+        },
+        {
+          project: 'graph-memory', folder: 'graph-memory', summary: null, errors: [],
+          documents: [{ path: 'graph-memory/README.md', kind: 'readme', title: 'Graph', content: '# Graph' }],
+        },
+        {
+          project: 'reasongraph', folder: 'reasongraph', summary: null, errors: [],
+          documents: [{ path: 'reasongraph/README.md', kind: 'readme', title: 'Reason', content: '# Reason' }],
+        },
+      ],
+      now: '2026-11-19T18:00:00.000Z',
+      isAlive: (pid) => Number(pid) === process.pid,
+    });
+
+    const byName = Object.fromEntries(state.projects.map((p) => [p.name, p]));
+    assert.equal(byName.aflt.fromMemoryOnly, false);
+    assert.equal(byName.aflt.sessionCount, 1);
+    assert.equal(byName['graph-memory'].fromMemoryOnly, true);
+    assert.equal(byName['graph-memory'].sessionCount, 0);
+    assert.equal(byName['graph-memory'].active, false);
+    assert.equal(byName.reasongraph.active, false);
+    assert.equal(state.stats.activeProjects, 1);
+
+    const tree = state.historyTree;
+    assert.ok(tree.projects.every((p) => !p.fromMemoryOnly));
+    assert.ok(tree.projects.some((p) => p.name === 'aflt'));
+    assert.ok(tree.noSessions);
+    assert.equal(tree.noSessions.kind, 'no-sessions-group');
+    assert.equal(tree.noSessions.id, 'group:no-sessions');
+    assert.equal(tree.noSessions.collapsed, true);
+    assert.match(tree.noSessions.label, /No sessions \(2\)/);
+    assert.deepEqual(
+      tree.noSessions.children.map((c) => c.name).sort(),
+      ['graph-memory', 'reasongraph']
+    );
+    assert.ok(tree.noSessions.children.every((c) => c.fromMemoryOnly && c.depth === 1));
+
+    const layout = dash.layoutGraph(state, 800, 600);
+    assert.ok(layout.nodes.some((n) => n.id === 'project:aflt'));
+    assert.ok(!layout.nodes.some((n) => n.id === 'project:graph-memory'));
+    assert.ok(!layout.nodes.some((n) => n.id === 'project:reasongraph'));
+
+    // Client: group starts collapsed; expand shows projects; click still opens notes.
+    const elements = new Map();
+    function makeElement(_ns, tagName) {
+      return {
+        html: '', handlers: {}, attributes: {}, style: {}, hidden: false, children: [], tagName,
+        get innerHTML() { return this.html; },
+        set innerHTML(v) { this.html = v; },
+        textContent: '',
+        setAttribute(name, value) { this.attributes[name] = String(value); },
+        getAttribute(name) { return this.attributes[name]; },
+        appendChild(child) { this.children.push(child); child.parent = this; return child; },
+        removeChild(child) {
+          this.children.splice(this.children.indexOf(child), 1);
+          child.parent = null;
+          return child;
+        },
+        addEventListener(type, listener) { this.handlers[type] = listener; },
+        getBoundingClientRect() { return { width: 800, height: 600, left: 0, top: 0 }; },
+      };
+    }
+    function element(id) {
+      if (!elements.has(id)) elements.set(id, makeElement());
+      return elements.get(id);
+    }
+    element('aflt-dashboard-data').textContent = JSON.stringify(state);
+    element('graph').parent = element('graph-view');
+    element('graph-view').parent = element('stage');
+    const browser = vm.createContext({
+      document: { getElementById: element, createElementNS: makeElement },
+      window: { addEventListener() {} },
+      location: { hostname: '127.0.0.1' },
+      URL,
+      matchMedia: () => ({ matches: true }),
+      setInterval() {}, setTimeout() {}, clearTimeout() {},
+      requestAnimationFrame() { return 1; },
+      cancelAnimationFrame() {},
+      fetch() { assert.fail('no fetch'); },
+      EventSource() { assert.fail('no SSE'); },
+    });
+    const scripts = [...dash.renderHtmlDocument(state).matchAll(/<script>([\s\S]*?)<\/script>/g)];
+    scripts.slice(1).forEach((script) => vm.runInContext(script[1], browser));
+    assert.match(element('history-tree').innerHTML, /No sessions \(2\)/);
+    assert.match(element('history-tree').innerHTML, /data-id="group:no-sessions"[^>]*aria-expanded="false"/);
+    assert.doesNotMatch(element('history-tree').innerHTML, /data-id="project:graph-memory"/);
+    element('history-tree').handlers.click({
+      target: {
+        closest: (sel) => {
+          if (sel === 'button[data-twist]') {
+            return { disabled: false, getAttribute: () => 'group:no-sessions' };
+          }
+          return null;
+        },
+      },
+      stopPropagation() {},
+    });
+    assert.match(element('history-tree').innerHTML, /data-id="project:graph-memory"/);
+    assert.match(element('history-tree').innerHTML, /data-id="group:no-sessions"[^>]*aria-expanded="true"/);
+    element('history-tree').handlers.click({
+      target: {
+        closest: (sel) => {
+          if (sel === 'button[data-twist]') return null;
+          if (sel === '.history-row') {
+            return {
+              getAttribute: (k) =>
+                (k === 'data-id' ? 'project:graph-memory' : k === 'data-kind' ? 'project' : null),
+            };
+          }
+          return null;
+        },
+      },
+      stopPropagation() {},
+    });
+    assert.match(element('detail').innerHTML, /graph-memory/);
+    assert.match(element('project-memory').innerHTML, /Graph|graph-memory|README/i);
+  });
+
   it('bounds and redacts document previews, excludes archives and rejects escaped symlinks', () => {
     const dash = loadDashboard(home);
     const repo = path.join(home, 'memory');
@@ -802,7 +937,11 @@ describe('aflt dashboard', () => {
       }],
       errors: [],
     };
-    const state = dash.aggregateDashboard({ memoryProjects: [project] });
+    // Give alpha a session so it remains a Graph hub (sessionless memory folders are omitted).
+    const state = dash.aggregateDashboard({
+      sessions: [{ id: 's1', project: 'alpha', title: 'Seed', status: 'done' }],
+      memoryProjects: [project],
+    });
     const markup = client.renderProjectMemory(state.projects[0], state.memory);
     assert.match(markup, /&lt;img/);
     assert.match(markup, /&lt;script&gt;/);
@@ -1542,12 +1681,13 @@ describe('aflt dashboard', () => {
       engine: 'cursor',
       status: 'done',
       lastExit: 0,
-      lastUsed: '2024-06-01T00:00:00.000Z',
-      created: '2024-06-01T00:00:00.000Z',
+      lastUsed: '2026-11-19T12:00:00.000Z',
+      created: '2026-11-19T00:00:00.000Z',
     });
     const dash = loadDashboard(home);
     const state = dash.collectState({
-      herdrFetch: { ok: false, error: 'stub', terminals: [], checkedAt: '2024-06-01T00:00:00.000Z' },
+      now: '2026-11-19T18:00:00.000Z',
+      herdrFetch: { ok: false, error: 'stub', terminals: [], checkedAt: '2026-11-19T18:00:00.000Z' },
     });
 
     const svgPath = path.join(home, 'out', 'dash.svg');
@@ -1578,8 +1718,9 @@ describe('aflt dashboard', () => {
       project: 'cliproj',
       status: 'done',
       lastExit: 0,
-      lastUsed: '2024-06-01T00:00:00.000Z',
-      created: '2024-06-01T00:00:00.000Z',
+      // Recent enough that Hide dormant (default on) still includes the hub in the SVG.
+      lastUsed: new Date().toISOString(),
+      created: new Date().toISOString(),
     });
     const out = path.join(home, 'cli.svg');
     const r = af(['dashboard', '--snapshot', out, '--json'], env());
@@ -1649,6 +1790,114 @@ describe('aflt dashboard', () => {
     assert.match(r.stderr, /--serve|--snapshot/);
   });
 
+  it('isDormantProject matches the 24h active window and never hides running/waiting/failed', () => {
+    const dash = loadDashboard(home);
+    const now = Date.parse('2026-11-19T18:00:00.000Z');
+    const day = dash.ACTIVE_PROJECT_MS;
+    assert.equal(dash.isDormantProject({ displayState: 'running', lastActivity: '2020-01-01T00:00:00.000Z' }, now), false);
+    assert.equal(dash.isDormantProject({ filterState: 'waiting', lastActivity: '2020-01-01T00:00:00.000Z' }, now), false);
+    assert.equal(dash.isDormantProject({ displayState: 'failed', lastActivity: '2020-01-01T00:00:00.000Z' }, now), false);
+    assert.equal(dash.isDormantProject({ displayState: 'idle', lastActivity: new Date(now - day + 60_000).toISOString() }, now), false);
+    assert.equal(dash.isDormantProject({ displayState: 'idle', lastActivity: new Date(now - day - 60_000).toISOString() }, now), true);
+    assert.equal(dash.isDormantProject({ displayState: 'done', lastActivity: null }, now), false);
+    assert.equal(dash.isDormantProject({ filterState: 'done', lastActivity: '2026-11-01T00:00:00.000Z' }, now), true);
+
+    const state = dash.aggregateDashboard({
+      sessions: [
+        {
+          id: 'fresh-idle', title: 'Fresh', project: 'fresh', status: 'active',
+          created: '2026-11-19T10:00:00.000Z', lastUsed: '2026-11-19T12:00:00.000Z',
+        },
+        {
+          id: 'stale-done', title: 'Stale', project: 'stale', status: 'done',
+          created: '2026-10-01T00:00:00.000Z', lastUsed: '2026-10-02T00:00:00.000Z',
+        },
+        {
+          id: 'live-run', title: 'Live', project: 'live', status: 'active',
+          runPid: process.pid,
+          created: '2026-10-01T00:00:00.000Z', lastUsed: '2026-10-02T00:00:00.000Z',
+        },
+      ],
+      now: '2026-11-19T18:00:00.000Z',
+      isAlive: (pid) => Number(pid) === process.pid,
+    });
+    assert.equal(state.dormantAfterMs, dash.ACTIVE_PROJECT_MS);
+    const byName = Object.fromEntries(state.projects.map((p) => [p.name, p]));
+    assert.equal(dash.isDormantProject(byName.fresh, now, state.dormantAfterMs), false);
+    assert.equal(dash.isDormantProject(byName.stale, now, state.dormantAfterMs), true);
+    assert.equal(dash.isDormantProject(byName.live, now, state.dormantAfterMs), false);
+
+    const hidden = dash.layoutGraph(state, 800, 600);
+    assert.ok(hidden.nodes.some((n) => n.id === 'project:fresh'));
+    assert.ok(hidden.nodes.some((n) => n.id === 'project:live'));
+    assert.ok(!hidden.nodes.some((n) => n.id === 'project:stale'));
+    const shown = dash.layoutGraph(state, 800, 600, { hideDormant: false });
+    assert.ok(shown.nodes.some((n) => n.id === 'project:stale'));
+
+    clearDashboardModules();
+    const ui = require('../templates/dashboard/dashboard.js');
+    assert.equal(ui.isDormantProject(byName.stale, now, state.dormantAfterMs), true);
+    assert.equal(ui.HIDE_DORMANT_STORAGE_KEY, 'aflt.dashboard.hideDormant');
+
+    const elements = new Map();
+    const storage = { 'aflt.dashboard.hideDormant': '1' };
+    function makeElement(_ns, tagName) {
+      return {
+        html: '', handlers: {}, attributes: {}, style: {}, hidden: false, children: [],
+        checked: tagName === 'input' ? true : undefined, tagName, value: '',
+        get innerHTML() { return this.html; },
+        set innerHTML(v) { this.html = v; },
+        textContent: '',
+        setAttribute(name, value) { this.attributes[name] = String(value); },
+        getAttribute(name) { return this.attributes[name]; },
+        appendChild(child) { this.children.push(child); return child; },
+        removeChild(child) {
+          this.children.splice(this.children.indexOf(child), 1);
+          return child;
+        },
+        addEventListener(type, listener) { this.handlers[type] = listener; },
+        getBoundingClientRect() { return { width: 800, height: 600, left: 0, top: 0 }; },
+      };
+    }
+    function element(id) {
+      if (!elements.has(id)) elements.set(id, makeElement(null, id === 'hide-dormant' ? 'input' : 'div'));
+      return elements.get(id);
+    }
+    element('aflt-dashboard-data').textContent = JSON.stringify(state);
+    element('hide-dormant').checked = true;
+    element('graph').parent = element('graph-view');
+    element('graph-view').parent = element('stage');
+    const browser = vm.createContext({
+      document: { getElementById: element, createElementNS: makeElement },
+      window: { addEventListener() {} },
+      location: { hostname: '127.0.0.1' },
+      localStorage: {
+        getItem: (k) => (Object.prototype.hasOwnProperty.call(storage, k) ? storage[k] : null),
+        setItem: (k, v) => { storage[k] = String(v); },
+      },
+      URL,
+      matchMedia: () => ({ matches: true }),
+      setInterval() {}, setTimeout() {}, clearTimeout() {},
+      requestAnimationFrame() { return 1; },
+      cancelAnimationFrame() {},
+      fetch() { assert.fail('no fetch'); },
+      EventSource() { assert.fail('no SSE'); },
+    });
+    const scripts = [...dash.renderHtmlDocument(state).matchAll(/<script>([\s\S]*?)<\/script>/g)];
+    scripts.slice(1).forEach((script) => vm.runInContext(script[1], browser));
+    assert.match(element('history-tree').innerHTML, /data-id="project:fresh"/);
+    assert.doesNotMatch(element('history-tree').innerHTML, /data-id="project:stale"/);
+    assert.match(element('dormant-hidden-count').textContent, /1 dormant hidden/);
+    assert.equal(element('dormant-hidden-count').hidden, false);
+    element('view-graph').handlers.click();
+    assert.ok(element('graph').children.length >= 1);
+    element('hide-dormant').checked = false;
+    element('hide-dormant').handlers.change();
+    assert.equal(storage['aflt.dashboard.hideDormant'], '0');
+    assert.match(element('history-tree').innerHTML, /data-id="project:stale"/);
+    assert.equal(element('dormant-hidden-count').hidden, true);
+  });
+
   it('rowFilterState and isHerdrFocusLocal match graph display-state rules', () => {
     clearDashboardModules();
     const ui = require('../templates/dashboard/dashboard.js');
@@ -1658,6 +1907,9 @@ describe('aflt dashboard', () => {
     assert.equal(ui.rowFilterState({ displayState: 'idle', activityState: 'waiting' }), 'waiting');
     assert.equal(ui.rowFilterState({ displayState: 'idle' }), 'idle');
     assert.equal(ui.rowFilterState({ displayState: 'done', activityState: 'completed' }), 'done');
+    // Completed turn on a still-live pid/pane → idle for filters, not running.
+    assert.equal(ui.rowFilterState({ displayState: 'running', activityState: 'completed' }), 'idle');
+    assert.equal(ui.rowFilterState({ displayState: 'idle', activityState: 'completed' }), 'idle');
     assert.equal(ui.rowFilterState({ displayState: 'failed' }), 'failed');
     assert.equal(ui.isHerdrFocusLocal({ hostname: '127.0.0.1' }), true);
     assert.equal(ui.isHerdrFocusLocal({ hostname: 'localhost' }), true);
@@ -1708,7 +1960,12 @@ describe('aflt dashboard', () => {
     assert.equal(dash.rollupProjectFilterState(['done', 'idle', 'waiting']), 'waiting');
     assert.equal(dash.rollupProjectFilterState(['failed', 'running']), 'running');
     assert.equal(dash.rollupProjectFilterState(['done', 'idle']), 'idle');
+    assert.equal(dash.rollupProjectFilterState([]), 'idle');
     assert.equal(dash.sessionFilterState({ displayState: 'idle', awaitingInput: true }), 'waiting');
+    assert.equal(
+      dash.sessionFilterState({ displayState: 'running', activityState: 'completed' }),
+      'idle'
+    );
 
     const state = dash.aggregateDashboard({
       sessions: [
@@ -1737,6 +1994,188 @@ describe('aflt dashboard', () => {
     assert.equal(byName.beta.collapsed, true);
     assert.equal(byName.gamma.displayState, 'idle');
     assert.equal(byName.gamma.collapsed, true, 'idle-only project starts collapsed');
+  });
+
+  it('project state and Running count ignore open/active when sessions are completed or idle', () => {
+    const dash = loadDashboard(home);
+    const state = dash.aggregateDashboard({
+      sessions: [
+        {
+          id: 'cred-cleaner', title: 'cred-cleaner', project: 'aflt', status: 'active',
+          created: '2026-11-18T00:00:00.000Z', lastUsed: '2026-11-19T00:00:00.000Z',
+        },
+        {
+          id: 'aflt-expert', title: 'aflt-expert', project: 'aflt', status: 'active',
+          runPid: process.pid,
+          created: '2026-11-18T01:00:00.000Z', lastUsed: '2026-11-19T01:00:00.000Z',
+        },
+        {
+          id: 'af-herdr-expert', title: 'af-herdr-expert', project: 'aflt', status: 'active',
+          created: '2026-11-18T02:00:00.000Z', lastUsed: '2026-11-19T02:00:00.000Z',
+        },
+        {
+          id: 'dxs-only', title: 'dxs worker', project: 'dxs-session-memory', status: 'done',
+          created: '2026-11-18T03:00:00.000Z', lastUsed: '2026-11-19T03:00:00.000Z',
+        },
+      ],
+      enrichmentById: {
+        // Still-live Herdr tabs must not make the project/Running card "running"
+        // when the turn is completed or the session is idle.
+        'cred-cleaner': { runtime: 'exited' },
+        'aflt-expert': { runtime: 'running' },
+        'af-herdr-expert': { runtime: 'missing' },
+      },
+      sessionActivityById: {
+        'cred-cleaner': { working: false, awaitingInput: false, completed: false },
+        'aflt-expert': { working: false, awaitingInput: false, completed: true },
+        'af-herdr-expert': { working: false, awaitingInput: false, completed: false },
+      },
+      now: '2026-11-19T04:00:00.000Z',
+      isAlive: (pid) => Number(pid) === process.pid,
+    });
+
+    const byId = Object.fromEntries(state.sessions.map((s) => [s.id, s]));
+    assert.equal(byId['cred-cleaner'].displayState, 'idle');
+    assert.equal(byId['cred-cleaner'].status, 'active');
+    assert.equal(byId['aflt-expert'].displayState, 'running');
+    assert.equal(byId['aflt-expert'].activityState, 'completed');
+    assert.equal(dash.sessionFilterState(byId['aflt-expert']), 'idle');
+    assert.equal(byId['af-herdr-expert'].displayState, 'idle');
+    assert.equal(byId['dxs-only'].displayState, 'done');
+
+    const projects = Object.fromEntries(state.projects.map((p) => [p.name, p]));
+    assert.equal(projects.aflt.displayState, 'idle');
+    assert.equal(projects.aflt.filterState, 'idle');
+    assert.equal(projects.aflt.runningCount, 0);
+    assert.equal(projects.aflt.active, true, 'recent activity may still mark the project active');
+    assert.equal(projects['dxs-session-memory'].displayState, 'done');
+    assert.equal(projects['dxs-session-memory'].runningCount, 0);
+
+    const hist = Object.fromEntries(state.historyTree.projects.map((p) => [p.name, p]));
+    assert.equal(hist.aflt.displayState, 'idle');
+    assert.equal(hist['dxs-session-memory'].displayState, 'done');
+
+    assert.equal(state.stats.runningSessions, 0);
+    assert.equal(state.stats.open, 0);
+    assert.ok(state.stats.idle >= 2);
+  });
+
+  it('treats Herdr pane-alive runtime as idle unless OSC working or live runPid', () => {
+    const dash = loadDashboard(home);
+    // Mini repro: status active, runPid null, stale lastUsed, herdr.runtime running.
+    const paneOnly = [
+      'name-live-c2c154',
+      'shell-live-c8eb24',
+      'lyra-face-repro-08db25',
+      'img2img-upscale-workflow-3570cb',
+    ].map((id, i) => ({
+      id,
+      title: id,
+      project: 'mini-fleet',
+      status: 'active',
+      runPid: null,
+      created: '2026-11-12T00:00:00.000Z',
+      lastUsed: `2026-11-1${2 + (i % 2)}T12:00:00.000Z`,
+      cwd: path.join(home, 'proj'),
+      herdr: { runtime: 'running', checkedAt: '2026-11-19T00:00:00.000Z' },
+    }));
+    const working = {
+      id: 'copilot-working',
+      title: 'copilot-working',
+      project: 'mini-fleet',
+      status: 'active',
+      created: '2026-11-19T00:00:00.000Z',
+      lastUsed: '2026-11-19T12:00:00.000Z',
+      cwd: path.join(home, 'proj'),
+    };
+    const headless = {
+      id: 'headless-live',
+      title: 'headless-live',
+      project: 'mini-fleet',
+      status: 'active',
+      workerStatus: 'running',
+      runPid: process.pid,
+      created: '2026-11-19T00:00:00.000Z',
+      lastUsed: '2026-11-19T12:00:00.000Z',
+      cwd: path.join(home, 'proj'),
+    };
+
+    const state = dash.aggregateDashboard({
+      sessions: [...paneOnly, working, headless],
+      enrichmentById: {
+        'name-live-c2c154': { runtime: 'running', status: { state: 'idle' } },
+        'shell-live-c8eb24': { runtime: 'running', status: 'idle' },
+        'lyra-face-repro-08db25': { runtime: 'running', status: null },
+        'img2img-upscale-workflow-3570cb': { runtime: 'running' },
+        'copilot-working': { runtime: 'running', status: { state: 'working' } },
+        'headless-live': { runtime: 'running', status: null },
+      },
+      now: '2026-11-19T18:00:00.000Z',
+      isAlive: (pid) => Number(pid) === process.pid,
+    });
+
+    const byId = Object.fromEntries(state.sessions.map((s) => [s.id, s]));
+    for (const id of paneOnly.map((s) => s.id)) {
+      assert.equal(byId[id].displayState, 'idle', id);
+      assert.equal(byId[id].activityState, 'idle', id);
+      assert.equal(dash.sessionFilterState(byId[id]), 'idle', id);
+    }
+    assert.equal(byId['copilot-working'].displayState, 'running');
+    assert.equal(byId['copilot-working'].activityState, 'working');
+    assert.equal(dash.sessionFilterState(byId['copilot-working']), 'running');
+    assert.equal(byId['headless-live'].displayState, 'running');
+    assert.equal(byId['headless-live'].activityState, 'working');
+    assert.equal(dash.sessionFilterState(byId['headless-live']), 'running');
+
+    assert.equal(state.stats.runningSessions, 2);
+    assert.equal(state.stats.open, 2);
+    const project = state.projects.find((p) => p.name === 'mini-fleet');
+    assert.equal(project.displayState, 'running');
+    assert.equal(project.runningCount, 2);
+
+    // collectState with mocked hc ls — same pane-alive vs working distinction.
+    const collected = dash.collectState({
+      enrichmentById: undefined,
+      herdrFetch: {
+        ok: true,
+        checkedAt: '2026-11-19T18:00:00.000Z',
+        terminals: [
+          {
+            address: 't1',
+            name: 'af-name-live',
+            state: 'live',
+            afId: 'name-live-c2c154',
+            labels: { af_id: 'name-live-c2c154' },
+            status: { state: 'idle' },
+            agent: 'copilot',
+            argv: ['copilot'],
+          },
+          {
+            address: 't2',
+            name: 'af-working',
+            state: 'live',
+            afId: 'copilot-working',
+            labels: { af_id: 'copilot-working' },
+            status: { state: 'working' },
+            agent: 'copilot',
+            argv: ['copilot'],
+          },
+        ],
+      },
+      sessions: [
+        { ...paneOnly[0], herdr: undefined },
+        { ...working, herdr: undefined },
+      ],
+      memoryProjects: [],
+      memoryRecords: [],
+      now: '2026-11-19T18:00:00.000Z',
+      isAlive: () => false,
+    });
+    const cById = Object.fromEntries(collected.sessions.map((s) => [s.id, s]));
+    assert.equal(cById['name-live-c2c154'].displayState, 'idle');
+    assert.equal(cById['name-live-c2c154'].herdr.status.state, 'idle');
+    assert.equal(cById['copilot-working'].displayState, 'running');
+    assert.equal(collected.stats.runningSessions, 1);
   });
 
   it('builds a history tree with dormant projects collapsed and exposes /api/history', async () => {
