@@ -29,6 +29,7 @@ const agentDocs = require('../lib/agent-docs');
 const setup = require('../lib/setup');
 const resolveSession = require('../lib/resolve-session');
 const archiveLib = require('../lib/archive');
+const purgeLib = require('../lib/purge');
 const turns = require('../lib/turns');
 const {
   parseArgs,
@@ -342,6 +343,22 @@ Usage:
                             Remove all workers of a master; --with-master also
                             removes the master. Master resolution matches rm/stop
                             (TTY picker when no exact match). --dry-run lists actions.
+  aflt rm --purge <title|id>… Same as aflt purge (full delete; dry-run unless --apply).
+  aflt purge <title|id>... [--with-children] [--apply] [--force] [--yes] [--json]
+                            [--no-engine|--aflt-only] [--engine-only] [--no-transcripts]
+                            Full delete: registry row, runs/<id>/, results/plans,
+                            master messages log, and the engine Copilot/Cursor chat
+                            dir when the path mapping is certain. Dry-run by default;
+                            pass --apply to mutate. Never touches Herdr panes.
+                            Refuses busy sessions unless --force (stop first).
+                            --yes skips typed confirm (required for non-TTY apply).
+  aflt orphans [--days N] [--engine cursor|copilot|all] [--category C]...
+                            [--json] [--allow-uncertain-engine] [--include-interactive]
+                            Scan for orphan/stale sessions and chats (dry-run).
+  aflt orphans --purge [--ids id,…] [--category C]... [--apply] [--yes] [--force]
+                            [--json] [--days N] [--allow-uncertain-engine]
+                            Purge selected orphan items only (never herdr panes).
+                            Dry-run unless --apply; --ids required (or TTY pick).
   aflt note <title|id> "<text>"
   aflt export [file]          Write registry JSON (default: stdout)
   aflt import-file <file>     Merge sessions from a backup file
@@ -554,6 +571,12 @@ async function main() {
     case 'rm':
     case 'remove':
       await cmdRm(rest);
+      break;
+    case 'purge':
+      await cmdPurge(rest);
+      break;
+    case 'orphans':
+      await cmdOrphans(rest);
       break;
     case 'note':
       cmdNote(rest);
@@ -2815,7 +2838,17 @@ async function cmdRm(argv) {
     recoverBoolFlag(flags, 'force', args) || recoverBoolFlag(flags, 'f', args);
   const dryRun = recoverBoolFlag(flags, 'dry-run', args);
   const asJson = recoverBoolFlag(flags, 'json', args);
+  const doPurge = recoverBoolFlag(flags, 'purge', args);
   flags['with-master'] = recoverBoolFlag(flags, 'with-master', args);
+  if (doPurge) {
+    // Synonym: aflt rm --purge … → same as aflt purge
+    const purgeArgv = [];
+    for (const a of argv) {
+      if (a === '--purge') continue;
+      purgeArgv.push(a);
+    }
+    return cmdPurge(purgeArgv);
+  }
   const { targets } = await collectRmTargets(flags, args, { json: asJson });
 
   const home = fleetDir();
@@ -2870,6 +2903,309 @@ async function cmdRm(argv) {
     }
     const removed = registry.remove(s.id);
     process.stdout.write(`removed ${removed.title} (${removed.id})\n`);
+  }
+}
+
+async function confirmPurgeApply(targets, { yes, asJson }) {
+  if (yes) return true;
+  if (asJson || !process.stdin.isTTY || !process.stdout.isTTY) {
+    fail(
+      'aflt purge --apply requires --yes when not on a TTY (or pass --json with --yes)',
+      { json: asJson }
+    );
+  }
+  const readline = require('readline/promises');
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const expect =
+      targets.length === 1
+        ? String(targets[0].id)
+        : 'PURGE';
+    const prompt =
+      targets.length === 1
+        ? `Type the session id (${targets[0].id}) to permanently purge "${targets[0].title}": `
+        : `Type PURGE to permanently purge ${targets.length} sessions: `;
+    const answer = String(await rl.question(prompt)).trim();
+    if (answer !== expect) {
+      fail('confirmation did not match; aborted');
+    }
+    return true;
+  } finally {
+    rl.close();
+  }
+}
+
+async function cmdPurge(argv) {
+  const { args, flags } = parseArgs(argv);
+  const force =
+    recoverBoolFlag(flags, 'force', args) || recoverBoolFlag(flags, 'f', args);
+  const apply = recoverBoolFlag(flags, 'apply', args);
+  const dryRunFlag = recoverBoolFlag(flags, 'dry-run', args);
+  const yes = recoverBoolFlag(flags, 'yes', args) || recoverBoolFlag(flags, 'y', args);
+  const asJson = recoverBoolFlag(flags, 'json', args);
+  const withChildren = recoverBoolFlag(flags, 'with-children', args);
+  const noEngine = recoverBoolFlag(flags, 'no-engine', args);
+  const afltOnly = recoverBoolFlag(flags, 'aflt-only', args);
+  const engineOnly = recoverBoolFlag(flags, 'engine-only', args);
+  const noTranscripts = recoverBoolFlag(flags, 'no-transcripts', args);
+
+  if (dryRunFlag && apply) {
+    fail('--apply cannot be combined with --dry-run', { json: asJson });
+  }
+  if (engineOnly && (afltOnly || noEngine)) {
+    fail('--engine-only cannot be combined with --aflt-only/--no-engine', { json: asJson });
+  }
+  if (!args[0]) {
+    fail(
+      'usage: aflt purge <title|id>... [--with-children] [--apply] [--force] [--yes] [--json]\n' +
+        '       [--no-engine|--aflt-only] [--engine-only] [--no-transcripts]\n' +
+        '  Dry-run by default. Pass --apply to delete registry + runs/ + engine chat.',
+      { json: asJson }
+    );
+  }
+
+  const targets = [];
+  const seen = new Set();
+  for (const q of args) {
+    const s = await requireSessionExact(q, {
+      command: 'purge',
+      verb: 'Purge',
+      json: asJson,
+    });
+    if (seen.has(s.id)) continue;
+    seen.add(s.id);
+    targets.push(s);
+  }
+
+  if (apply) {
+    await confirmPurgeApply(targets, { yes, asJson });
+  }
+
+  const allResults = [];
+  let ok = true;
+  let lastError = null;
+  for (const s of targets) {
+    const run = sessionLooksRunning(s);
+    const result = purgeLib.purgeSession(s, {
+      apply,
+      force,
+      withChildren,
+      noEngine: noEngine || afltOnly,
+      afltOnly: afltOnly || noEngine,
+      engineOnly,
+      noTranscripts,
+      home: fleetDir(),
+      env: process.env,
+      enrichment: run.running
+        ? { status: run.reason === 'waiting' ? 'blocked' : 'working' }
+        : null,
+    });
+    allResults.push(result);
+    if (!result.ok) {
+      ok = false;
+      lastError = result.error;
+      if (!apply) {
+        // still report dry-run paths for others? fail closed on busy
+        break;
+      }
+    }
+  }
+
+  const payload = {
+    ok,
+    apply: Boolean(apply),
+    dryRun: !apply,
+    error: lastError,
+    results: allResults,
+  };
+
+  if (asJson) {
+    emitJson(payload);
+    if (!ok) process.exitCode = 1;
+    return;
+  }
+
+  if (!ok && lastError) {
+    fail(`aflt purge: ${lastError}`);
+  }
+
+  const mode = apply ? 'apply' : 'dry-run';
+  for (const result of allResults) {
+    for (const row of result.results || []) {
+      const s = row.session;
+      process.stdout.write(
+        `[${mode}] ${apply ? 'purged' : 'would purge'} ${s.title} (${s.id}) engine=${s.engine || '?'} chatId=${s.chatId || '-'}\n`
+      );
+      for (const pr of row.pathResults || []) {
+        const label = pr.action || 'path';
+        const p = pr.path != null ? pr.path : '-';
+        const extra = pr.reason ? ` (${pr.reason})` : pr.error ? ` ERROR: ${pr.error}` : '';
+        process.stdout.write(`  ${label}  ${p}${extra}\n`);
+      }
+      if (row.paths && row.paths.engine && row.paths.engine.chat) {
+        const chat = row.paths.engine.chat;
+        process.stdout.write(
+          `  engineChat: ${chat.status}${chat.path ? ` ${chat.path}` : ''}\n`
+        );
+      }
+    }
+  }
+  if (!ok) process.exitCode = 1;
+}
+
+async function cmdOrphans(argv) {
+  const { args, flags } = parseArgs(argv);
+  const asJson = recoverBoolFlag(flags, 'json', args);
+  const apply = recoverBoolFlag(flags, 'apply', args);
+  const dryRunFlag = recoverBoolFlag(flags, 'dry-run', args);
+  const doPurge = recoverBoolFlag(flags, 'purge', args);
+  const yes = recoverBoolFlag(flags, 'yes', args) || recoverBoolFlag(flags, 'y', args);
+  const force =
+    recoverBoolFlag(flags, 'force', args) || recoverBoolFlag(flags, 'f', args);
+  const allowUncertain = recoverBoolFlag(flags, 'allow-uncertain-engine', args);
+  const includeInteractive = recoverBoolFlag(flags, 'include-interactive', args);
+
+  if (dryRunFlag && apply) {
+    fail('--apply cannot be combined with --dry-run', { json: asJson });
+  }
+
+  let days = purgeLib.DEFAULT_ORPHAN_DAYS;
+  if (flags.days != null && flags.days !== true) {
+    days = Number(flags.days);
+    if (!Number.isFinite(days) || days < 0) {
+      fail('--days must be a non-negative number', { json: asJson });
+    }
+  }
+
+  let engineFilter = 'all';
+  if (flags.engine != null && flags.engine !== true) {
+    engineFilter = String(flags.engine).toLowerCase();
+    if (!['cursor', 'copilot', 'all'].includes(engineFilter)) {
+      fail('--engine must be cursor, copilot, or all', { json: asJson });
+    }
+  }
+
+  const categories = [];
+  if (flags.category != null && flags.category !== true) {
+    for (const part of String(flags.category).split(',')) {
+      const c = part.trim();
+      if (c) categories.push(c);
+    }
+  }
+  // parseArgs keeps last --category; also accept repeated via comma
+  for (const a of args) {
+    if (a && !String(a).startsWith('-')) {
+      // positional unused in scan mode
+    }
+  }
+
+  const ids = [];
+  if (flags.ids != null && flags.ids !== true) {
+    for (const part of String(flags.ids).split(',')) {
+      const id = part.trim();
+      if (id) ids.push(id);
+    }
+  }
+
+  const scan = purgeLib.scanOrphans({
+    days,
+    engine: engineFilter,
+    categories: categories.length ? categories : undefined,
+    home: fleetDir(),
+    env: process.env,
+    allowUncertainEngine: allowUncertain,
+    includeInteractive,
+  });
+
+  if (!doPurge) {
+    if (asJson) {
+      emitJson({
+        ok: true,
+        dryRun: true,
+        ...scan,
+        items: scan.items.map(purgeLib.summarizeOrphan),
+      });
+      return;
+    }
+    process.stdout.write(
+      `orphans scan (days=${scan.days}, engine=${scan.engine}): ${scan.count} item(s)\n`
+    );
+    if (scan.count === 0) return;
+    const cols = ['CATEGORY', 'AF_ID', 'ENGINE', 'CHAT_ID', 'AGE_DAYS', 'RISK', 'PURGEABLE', 'NOTES'];
+    process.stdout.write(cols.join('\t') + '\n');
+    for (const it of scan.items) {
+      process.stdout.write(
+        [
+          it.category,
+          it.afId || '-',
+          it.engine || '-',
+          it.chatId || '-',
+          it.ageDays != null ? String(it.ageDays) : '-',
+          it.risk || '-',
+          it.purgeable ? 'yes' : 'no',
+          (it.notes || '').replace(/\s+/g, ' '),
+        ].join('\t') + '\n'
+      );
+    }
+    process.stdout.write(
+      '\nPurge selected items: aflt orphans --purge --ids <id,…> [--apply] [--yes]\n'
+    );
+    return;
+  }
+
+  if (ids.length === 0) {
+    fail(
+      'aflt orphans --purge requires --ids <id,…> (select from scan). Never purges all orphans blindly.',
+      { json: asJson }
+    );
+  }
+
+  if (apply && !yes && (!process.stdin.isTTY || asJson)) {
+    fail('aflt orphans --purge --apply requires --yes when not on a TTY', { json: asJson });
+  }
+  if (apply && !yes && process.stdin.isTTY && process.stdout.isTTY) {
+    const readline = require('readline/promises');
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      const answer = String(
+        await rl.question(`Type PURGE to delete ${ids.length} selected orphan item(s): `)
+      ).trim();
+      if (answer !== 'PURGE') fail('confirmation did not match; aborted');
+    } finally {
+      rl.close();
+    }
+  }
+
+  const result = purgeLib.purgeOrphanItems(scan.items, {
+    apply,
+    force,
+    ids,
+    home: fleetDir(),
+    env: process.env,
+  });
+
+  if (asJson) {
+    emitJson({ ok: result.ok, ...result, scanCount: scan.count });
+    if (!result.ok) process.exitCode = 1;
+    return;
+  }
+
+  const mode = apply ? 'apply' : 'dry-run';
+  process.stdout.write(
+    `orphans purge (${mode}): selected ${result.selected} of ${scan.count}\n`
+  );
+  for (const row of result.results || []) {
+    const it = row.item || {};
+    process.stdout.write(
+      `  ${it.category}  ${it.afId || it.chatId || '-'}  ${row.purge && row.purge.ok ? 'ok' : 'FAIL'}\n`
+    );
+    const prs = (row.purge && (row.purge.pathResults || (row.purge.results || []).flatMap((r) => r.pathResults || []))) || [];
+    for (const pr of prs) {
+      process.stdout.write(`    ${pr.action}  ${pr.path || '-'}${pr.error ? ` ERROR: ${pr.error}` : ''}\n`);
+    }
+  }
+  if (!result.ok) {
+    fail(`aflt orphans --purge: ${result.error || 'failed'}`);
   }
 }
 

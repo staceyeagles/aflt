@@ -138,7 +138,7 @@ If you *are* the master (launched via `aflt master`), your env already has `AGEN
 - **Parse `--json`**, not table text. Confirm flags with `aflt help` or `--dry-run`.
 - **`--force` is an explicit tool/write grant**, not “skip the prompt.” Cursor: `--force` auto-approves tools/shell. Copilot: `--force` maps to `--allow-all-tools`. Interactive Cursor `new`/`resume` does **not** change Cursor `--force` behavior. Omit `--force` for text-only / read-only prompts.
 - **`--trust` is not `--force`.** `aflt run` / `aflt resume` pass Cursor `--trust` by default (skips the workspace-trust dialog). Use `--no-trust` to keep the dialog.
-- **Do not commit, push, stash, reset, switch branches, or delete files** unless the user explicitly authorized that exact action. `aflt rm` removes registry rows and af-owned files under `$AGENTFLEET_HOME` (results/, plans/) only — never `runs/<id>/` logs, the project, `~/.cursor`, or `~/.copilot`. Prefer `aflt rm --dry-run` first. `aflt archive` / `aflt unarchive` soft-hide sessions without deleting logs. If a session is running/waiting (live `runPid` or Herdr working/blocked), `aflt stop` first; `--force` on `rm`/`archive` does **not** stop the process. **`aflt rm` and `aflt stop` prefer an exact id or title.** On a human TTY, a fuzzy-only query may prompt to confirm/pick; **agents and scripts never get prompts** (non-TTY / `--json` stay exact-only with a did-you-mean hint) — always pass exact ids/titles. Pass multiple `rm` targets as separate args.
+- **Do not commit, push, stash, reset, switch branches, or delete files** unless the user explicitly authorized that exact action. `aflt rm` removes registry rows and af-owned files under `$AGENTFLEET_HOME` (results/, plans/) only — never `runs/<id>/` logs, the project, `~/.cursor`, or `~/.copilot`. Prefer `aflt rm --dry-run` first. **`aflt purge`** (or `aflt rm --purge`) is the full-delete path: registry + `runs/<id>/` + engine chat when mapping is certain; **dry-run by default**, pass `--apply` to mutate; never touches Herdr. Prefer `aflt purge` dry-run before `--apply --yes`. `aflt orphans` scans for orphan/stale artifacts (non-destructive); selective purge requires `--purge --ids … [--apply]`. `aflt archive` / `aflt unarchive` soft-hide sessions without deleting logs. If a session is running/waiting (live `runPid` or Herdr working/blocked), `aflt stop` first; `--force` on `rm`/`archive`/`purge` does **not** stop the process. **`aflt rm` / `aflt purge` / `aflt stop` prefer an exact id or title.** On a human TTY, a fuzzy-only query may prompt to confirm/pick; **agents and scripts never get prompts** (non-TTY / `--json` stay exact-only with a did-you-mean hint) — always pass exact ids/titles. Pass multiple `rm`/`purge` targets as separate args.
 - **Never print secrets** (tokens, `CURSOR_API_KEY`, MCP auth, `.env`).
 - **Keep tests hermetic** if you work in this repo: use a temp `AGENTFLEET_HOME`. Never point tests at the real `~/.agentfleet` or the live Herdr.
 - **Resume with the same cwd/workspace** the chat was created in. `aflt cwd` updates the registry folder/branch but does **not** move a live Herdr tab — `aflt resume` (and optionally `aflt adopt`) after.
@@ -216,7 +216,8 @@ aflt dashboard --snapshot <file.svg|html>
 aflt turns backfill [<id|title>...] [--engine copilot|cursor|all] [--apply] [--json]
 # Import interactive Copilot (events.jsonl) / Cursor (unique transcript) turns into
 # runs/<id>/turns.jsonl. Dry-run by default; --apply writes. Idempotent (dedupe).
-# Does not write memory status-notes. emitTurnCaptured is the hook for direct messaging (#2).
+# Does not write memory status-notes. emitTurnCaptured sends redacted turns to
+# doc-bot via sendDirectMessage when both sides opted into messaging (else no-op).
 
 aflt memory | aflt memory where [--json]
 # Resolved memory repo path + source (env|config), or hint to run init (exit 1).
@@ -423,6 +424,19 @@ aflt rm --children <master> [--with-master] [--keep-files] [--force] [--dry-run]
 # Master resolution matches rm/stop (TTY picker when no exact match). --with-master
 # also removes the master.
 
+aflt rm --purge <title|id>…           # synonym for aflt purge
+aflt purge <title|id>... [--with-children] [--apply] [--force] [--yes] [--json]
+           [--no-engine|--aflt-only] [--engine-only] [--no-transcripts]
+# Full delete: registry + runs/<id>/ + results/plans + master messages log +
+# engine Copilot/Cursor chat dir when mapping is certain. Dry-run by default;
+# --apply mutates. Never touches Herdr. Refuses busy unless --force.
+# --yes skips typed confirm (required for non-TTY / agent apply).
+
+aflt orphans [--days N] [--engine cursor|copilot|all] [--category C]... [--json]
+aflt orphans --purge --ids id,… [--apply] [--yes] [--force] [--json]
+# Scan orphan/stale artifacts (default non-destructive). --purge requires --ids
+# selection; never auto-kills herdr-orphan-pane. Dry-run unless --apply.
+
 aflt rename <title|id> "<new title>"
 aflt note <title|id> "<text>"
 aflt done <title|id>                  # set lifecycle status to done
@@ -442,7 +456,7 @@ aflt cursor | aflt copilot  # aliases
 
 ### Messaging (opt-in)
 
-Off by default. Enable with `aflt msg enable <session>`, `--messaging` on `new`/`run`/`master`/`spawn`, or project `.agentfleet.json` `{"messaging": true}` (ancestor walk to the git root). Session `messaging: false` overrides the project. Messaging-enabled masters pass `messaging: true` to workers unless `--no-messaging`. **Both sender and recipient must be opted in** (explicit `messaging: false` always wins). Team aliases (`master` / `all-siblings`) stay team-scoped; direct targets use **exact id or unique exact title** (ambiguous rejected) and may be cross-session DMs. Messages are durable context only — never wake agents, inject prompts, change lifecycle/role/parent/project, or grant permissions. Status: `queued` → `read` → `completed`. Library: `messages.sendDirectMessage(from, to, body, meta)` (e.g. future turn-capture → Doc Bot).
+Off by default. Enable with `aflt msg enable <session>`, `--messaging` on `new`/`run`/`master`/`spawn`, or project `.agentfleet.json` `{"messaging": true}` (ancestor walk to the git root). Session `messaging: false` overrides the project. Messaging-enabled masters pass `messaging: true` to workers unless `--no-messaging`. **Both sender and recipient must be opted in** (explicit `messaging: false` always wins). Team aliases (`master` / `all-siblings`) stay team-scoped; direct targets use **exact id or unique exact title** (ambiguous rejected) and may be cross-session DMs. Messages are durable context only — never wake agents, inject prompts, change lifecycle/role/parent/project, or grant permissions. Status: `queued` → `read` → `completed`. Library: `messages.sendDirectMessage(from, to, body, meta)` (turn-capture → Doc Bot via `emitTurnCaptured`, and `notifyDocBot`).
 
 ```bash
 aflt msg <to> <text...> [--type T] [--reply <msgId>] [--from S] [--json] [--dry-run]
@@ -463,7 +477,7 @@ Limits: `AGENTFLEET_MSG_MAX_THREAD` (default 6), `AGENTFLEET_MSG_RATE` (default 
 
 From a non-af shell you must pass `--from <session>`. Inside an af-launched session, identity comes from `AGENTFLEET_SESSION` / `AGENTFLEET_ID`.
 
-**Doc Bot inbox:** enable messaging on `doc-bot` (or legacy `memory-doc`); poll `aflt inbox` / MCP `read_inbox` when idle; mark handled with `--mark-complete`. Checkpoints call `notifyDocBot` → `sendDirectMessage` when both sides are opted in (never interrupts a busy agent).
+**Doc Bot inbox:** enable messaging on `doc-bot` (or legacy `memory-doc`); poll `aflt inbox` / MCP `read_inbox` when idle; mark handled with `--mark-complete`. Checkpoints call `notifyDocBot` → `sendDirectMessage` when both sides are opted in (never interrupts a busy agent). Captured interactive turns call `turns.emitTurnCaptured` → `sendDirectMessage` the same way (opt-in only; quiet no-op otherwise).
 
 ### MCP server
 
@@ -524,7 +538,7 @@ aflt docs --status --json
 - On launch/resume (`new` / `resume` / `run` / Herdr backends) for **Cursor and Copilot**: when enabled, sets `AFLT_PROJECT`, `AFLT_MEMORY_REPO`, `AFLT_DOCS_PROCESS`, `AFLT_AGENT_DOCS`, `AFLT_AGENTS_MD` and may prepend a short preamble. Existing `AGENTS.md` instructions are preserved (pointed at, not replaced). Works with no memory repo; missing required memory is reported (`AFLT_MEMORY_MISSING=1` + WARNING).
 - Checkpoints live under `$AGENTFLEET_HOME/doc-checkpoints/`. Progress is **requested → completed** only; overdue uses age for status/dashboard labels and never interrupts busy agents. Dashboard JSON includes `checkpoints` + per-project `checkpoint`.
 - Archive convention: live status notes ignore `status-notes/archive/`; **aflt never auto-moves or deletes documents**.
-- Doc Bot notifications use opted-in direct messaging (`agentDocs.notifyDocBot` → `messages.sendDirectMessage`) when both the requester and `doc-bot` have messaging enabled. Do not reimplement Copilot completion capture (`aflt dashboard --capture-completions` / `lib/task-completions.js`). Interactive Gantt history uses `lib/turns.js` → `runs/<id>/turns.jsonl` (always local; separate from memory notes); `turns.emitTurnCaptured` is the hook for sending captured turns via direct messaging.
+- Doc Bot notifications use opted-in direct messaging (`agentDocs.notifyDocBot` → `messages.sendDirectMessage`) when both the requester and `doc-bot` have messaging enabled. Do not reimplement Copilot completion capture (`aflt dashboard --capture-completions` / `lib/task-completions.js`). Interactive Gantt history uses `lib/turns.js` → `runs/<id>/turns.jsonl` (always local; separate from memory notes); `turns.emitTurnCaptured` sends each captured turn to doc-bot via direct messaging when both sides are opted in (otherwise no-op; never wakes agents).
 
 ### Doctor and Herdr helpers
 

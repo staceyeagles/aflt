@@ -574,19 +574,50 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     async function deleteSession(id, title) {
       const label = title || id;
       const ok = await confirmAction({
-        title: 'Delete session?',
+        title: 'Remove from registry?',
         body:
           'Remove "' +
           label +
           '" from the registry? Run logs under ~/.agentfleet/runs/ are kept. This cannot be undone from the dashboard.',
-        okLabel: 'Delete',
+        okLabel: 'Remove',
       });
       if (!ok) return;
-      setActionMessage('Deleting…', false);
+      setActionMessage('Removing…', false);
       try {
         await postDashboardAction('/api/session/delete', { id: id });
         if (selectedId === id) selectedId = null;
-        setActionMessage('Deleted ' + label + ' (logs kept).', false);
+        setActionMessage('Removed ' + label + ' (logs kept).', false);
+      } catch (err) {
+        setActionMessage(String(err.message || err), true);
+      }
+    }
+
+    async function purgeSession(id, title) {
+      const label = title || id;
+      const ok = await confirmAction({
+        title: 'Delete everything?',
+        body:
+          'Permanently purge "' +
+          label +
+          '" — registry row, runs/<id>/ logs, results/plans, and the engine Copilot/Cursor chat when mapped. Never touches Herdr. Type the session id in the next prompt.',
+        okLabel: 'Continue',
+      });
+      if (!ok) return;
+      let typed = '';
+      if (typeof window !== 'undefined' && typeof window.prompt === 'function') {
+        typed = String(
+          window.prompt('Type the session id to confirm full purge:\n' + id, '') || ''
+        ).trim();
+      }
+      if (typed !== id) {
+        setActionMessage('Purge cancelled — session id did not match.', true);
+        return;
+      }
+      setActionMessage('Purging…', false);
+      try {
+        await postDashboardAction('/api/session/purge', { id: id, confirmId: typed });
+        if (selectedId === id) selectedId = null;
+        setActionMessage('Purged ' + label + '.', false);
       } catch (err) {
         setActionMessage(String(err.message || err), true);
       }
@@ -635,7 +666,14 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
           esc(session.title || session.id) +
           '"' +
           disabled +
-          '>Delete</button></div>'
+          '>Remove</button>' +
+          '<button type="button" class="danger" data-action="purge" data-id="' +
+          esc(session.id) +
+          '" data-title="' +
+          esc(session.title || session.id) +
+          '"' +
+          disabled +
+          '>Delete everything</button></div>'
         );
       }
       const kids = (session.children || []).length;
@@ -659,7 +697,14 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         esc(session.title || session.id) +
         '"' +
         disabled +
-        '>Delete</button></div>'
+        '>Remove</button>' +
+        '<button type="button" class="danger" data-action="purge" data-id="' +
+        esc(session.id) +
+        '" data-title="' +
+        esc(session.title || session.id) +
+        '"' +
+        disabled +
+        '>Delete everything</button></div>'
       );
     }
 
@@ -706,7 +751,14 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
           esc(enriched.title || enriched.id) +
           '"' +
           disabled +
-          '>Delete</button></span>'
+          '>Remove</button>' +
+          '<button type="button" class="danger" data-action="purge" data-id="' +
+          esc(enriched.id) +
+          '" data-title="' +
+          esc(enriched.title || enriched.id) +
+          '"' +
+          disabled +
+          '>Purge</button></span>'
         );
       }
       const kids = (enriched.children || []).length;
@@ -730,7 +782,14 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         esc(enriched.title || enriched.id) +
         '"' +
         disabled +
-        '>Delete</button></span>'
+        '>Remove</button>' +
+        '<button type="button" class="danger" data-action="purge" data-id="' +
+        esc(enriched.id) +
+        '" data-title="' +
+        esc(enriched.title || enriched.id) +
+        '"' +
+        disabled +
+        '>Purge</button></span>'
       );
     }
 
@@ -2477,6 +2536,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       else if (action === 'archive-children' && id) await archiveSession(id, true);
       else if (action === 'unarchive' && id) await unarchiveSession(id, false);
       else if (action === 'delete' && id) await deleteSession(id, title);
+      else if (action === 'purge' && id) await purgeSession(id, title);
       else if (action === 'archive-idle' && project) await archiveIdleInProject(project);
       else return false;
       return true;

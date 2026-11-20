@@ -159,7 +159,7 @@ describe('interactive turn capture', () => {
     assert.equal(turns.readTurns(session.id).length, 2);
   });
 
-  it('emitTurnCaptured is deferred and only invokes a configured handler', () => {
+  it('emitTurnCaptured no-ops without messaging; invokes configured handler', () => {
     const turns = loadTurns(home);
     const seen = [];
     const envelope = turns.emitTurnCaptured(
@@ -167,9 +167,11 @@ describe('interactive turn capture', () => {
       { project: 'demo' }
     );
     assert.equal(envelope.deferred, true);
+    assert.equal(envelope.sent, false);
     assert.equal(envelope.issue, 2);
     assert.equal(envelope.type, 'turn-captured');
     assert.equal(envelope.project, 'demo');
+    assert.match(String(envelope.reason || ''), /doc-bot|messaging|registry/i);
     assert.equal(seen.length, 0);
 
     turns.setTurnCapturedHandler((e) => seen.push(e));
@@ -177,6 +179,60 @@ describe('interactive turn capture', () => {
     assert.equal(seen.length, 1);
     assert.equal(seen[0].sessionId, 's1');
     turns.setTurnCapturedHandler(null);
+  });
+
+  it('emitTurnCaptured sends to doc-bot when both sides opt into messaging', () => {
+    clearMods();
+    for (const m of ['../lib/messages', '../lib/registry', '../lib/project']) {
+      try {
+        delete require.cache[require.resolve(m)];
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    process.env.AGENTFLEET_HOME = home;
+    process.env.HOME = home;
+    const registry = require('../lib/registry');
+    const messages = require('../lib/messages');
+    const turns = require('../lib/turns');
+
+    const doc = registry.add({
+      title: 'doc-bot',
+      chatId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0d01',
+      cwd: home,
+      engine: 'cursor',
+      status: 'active',
+      project: 'aflt-memory',
+      messaging: true,
+    });
+    const worker = registry.add({
+      title: 'turn-worker',
+      chatId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0d02',
+      cwd: home,
+      engine: 'copilot',
+      status: 'active',
+      messaging: true,
+    });
+
+    const envelope = turns.emitTurnCaptured(
+      {
+        sessionId: worker.id,
+        turnId: 'turn-1',
+        prompt: 'do the thing',
+        reply: 'done the thing',
+      },
+      { project: 'demo' }
+    );
+    assert.equal(envelope.sent, true, envelope.reason);
+    assert.equal(envelope.deferred, false);
+    assert.ok(envelope.message && envelope.message.id);
+
+    const inbox = messages.inboxForSession(doc, { unreadOnly: true });
+    const hit = inbox.find((m) => m.id === envelope.message.id);
+    assert.ok(hit);
+    assert.equal(hit.meta && hit.meta.source, 'emitTurnCaptured');
+    assert.match(hit.text, /do the thing/);
+    assert.match(hit.text, /done the thing/);
   });
 
   it('backfill dry-run does not write; --apply writes', () => {
