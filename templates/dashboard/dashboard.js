@@ -104,20 +104,45 @@ function activityLabel(item) {
 }
 
 /**
- * Filter / badge key aligned with graph display-state (+ waiting overlay).
- * running = live/working; waiting = awaiting input; idle/done/failed = displayState.
+ * Per-session live filter/badge state (must match lib/dashboard.sessionFilterState).
+ * "running" = actually working (working overlay / displayState running from OSC
+ * working or live runPid) — not merely herdr.runtime pane-alive.
  */
 function rowFilterState(item) {
   if (!item) return 'done';
   if (item.awaitingInput || item.activityState === 'waiting') return 'waiting';
+  if (item.activityState === 'completed') {
+    if (item.displayState === 'failed') return 'failed';
+    if (item.displayState === 'running' || item.displayState === 'idle') return 'idle';
+    return 'done';
+  }
   if (item.activityState === 'working' || item.displayState === 'running') return 'running';
   if (item.displayState === 'failed') return 'failed';
   if (item.displayState === 'idle') return 'idle';
   return 'done';
 }
 
-/** Project roll-up priority: waiting > running > failed > idle > done. */
+/** Project roll-up priority: waiting > running > failed > idle > done (empty → idle). */
 const FILTER_PRIORITY = ['waiting', 'running', 'failed', 'idle', 'done'];
+
+const HIDE_DORMANT_STORAGE_KEY = 'aflt.dashboard.hideDormant';
+const DEFAULT_DORMANT_AFTER_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Dormant = idle/done roll-up and last activity older than dormantAfterMs
+ * (must match lib/dashboard.isDormantProject). running/waiting/failed never dormant.
+ * Missing lastActivity is not dormant (nothing older-than to compare).
+ */
+function isDormantProject(p, nowMs, dormantAfterMs) {
+  if (!p) return false;
+  const live = p.filterState || p.displayState || 'idle';
+  if (live === 'running' || live === 'waiting' || live === 'failed') return false;
+  const last = p.lastActivity != null ? Date.parse(String(p.lastActivity)) : NaN;
+  const windowMs = dormantAfterMs != null ? Number(dormantAfterMs) : DEFAULT_DORMANT_AFTER_MS;
+  const threshold = Number.isFinite(windowMs) && windowMs >= 0 ? windowMs : DEFAULT_DORMANT_AFTER_MS;
+  if (!Number.isFinite(last)) return false;
+  return nowMs - last > threshold;
+}
 
 function isHerdrFocusLocal(loc) {
   const source = loc || (typeof location !== 'undefined' ? location : null);
@@ -238,7 +263,8 @@ function mergeSimPreserve(prevSim, nextBuilt, opts) {
 if (typeof module !== 'undefined' && module.exports && typeof document === 'undefined') {
   module.exports = {
     mergeSimPreserve, renderProjectMemory, renderGraphHint, renderMarkdown, resolveDocumentLink,
-    renderTaskCompletion, activityLabel, rowFilterState, isHerdrFocusLocal,
+    renderTaskCompletion, activityLabel, rowFilterState, isHerdrFocusLocal, isDormantProject,
+    HIDE_DORMANT_STORAGE_KEY, DEFAULT_DORMANT_AFTER_MS,
   };
 } else {
   (function () {
@@ -273,6 +299,8 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     const viewHistoryBtn = document.getElementById('view-history');
     const viewGraphBtn = document.getElementById('view-graph');
     const sortSelect = document.getElementById('history-sort');
+    const hideDormantEl = document.getElementById('hide-dormant');
+    const dormantHiddenCountEl = document.getElementById('dormant-hidden-count');
     const leftoffPanel = document.getElementById('leftoff-panel');
     const leftoffEl = document.getElementById('leftoff');
     const historyPanel = document.getElementById('history-panel');
@@ -281,6 +309,18 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     const historyTooltip = document.getElementById('history-tooltip');
     const historyHintEl = document.getElementById('history-hint');
     const herdrRemoteNote = document.getElementById('herdr-remote-note');
+
+    let hideDormant = true;
+    try {
+      if (typeof localStorage !== 'undefined' && localStorage) {
+        const stored = localStorage.getItem(HIDE_DORMANT_STORAGE_KEY);
+        if (stored === '0' || stored === 'false') hideDormant = false;
+        else if (stored === '1' || stored === 'true') hideDormant = true;
+      }
+    } catch (_) {
+      /* ignore quota / private mode */
+    }
+    if (hideDormantEl) hideDormantEl.checked = hideDormant;
 
     // Prefer updating a trailing text node so the legend element stays intact.
     // Fall back to textContent when the host DOM is a minimal test double.
@@ -597,13 +637,14 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         return;
       }
       if (item.sessionCount != null && item.name) {
+        const projectState = item.filterState || item.displayState || 'idle';
         detailEl.innerHTML =
           '<div class="label">project</div><h2>' +
           esc(item.name) +
           '</h2><span class="badge ' +
-          esc(item.displayState) +
+          esc(projectState) +
           '">' +
-          esc(item.displayState) +
+          esc(projectState) +
           '</span><dl>' +
           row('sessions', item.sessionCount) +
           row('running', item.runningCount) +
@@ -644,6 +685,60 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       return '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>';
     }
 
+    function stateNowMs(s) {
+      const t = s && s.generatedAt != null ? Date.parse(String(s.generatedAt)) : NaN;
+      return Number.isFinite(t) ? t : Date.now();
+    }
+
+    function dormantWindowMs(s) {
+      const n = s && s.dormantAfterMs != null ? Number(s.dormantAfterMs) : DEFAULT_DORMANT_AFTER_MS;
+      return Number.isFinite(n) && n >= 0 ? n : DEFAULT_DORMANT_AFTER_MS;
+    }
+
+    function countDormantProjects(list, s) {
+      const nowMs = stateNowMs(s);
+      const windowMs = dormantWindowMs(s);
+      let n = 0;
+      (list || []).forEach(function (p) {
+        if (isDormantProject(p, nowMs, windowMs)) n += 1;
+      });
+      return n;
+    }
+
+    function filterGraphProjects(list, s) {
+      const nowMs = stateNowMs(s);
+      const windowMs = dormantWindowMs(s);
+      return (list || []).filter(function (p) {
+        if (!p) return false;
+        if (p.fromMemoryOnly || !(p.sessionCount > 0)) return false;
+        if (hideDormant && isDormantProject(p, nowMs, windowMs)) return false;
+        return true;
+      });
+    }
+
+    function updateDormantHiddenCount() {
+      if (!dormantHiddenCountEl) return;
+      if (!hideDormant || !state) {
+        dormantHiddenCountEl.hidden = true;
+        dormantHiddenCountEl.textContent = '';
+        return;
+      }
+      // Count session-bearing dormant hubs removed from Graph/History (not the No-sessions group).
+      const n = countDormantProjects(
+        (state.projects || []).filter(function (p) {
+          return p && !p.fromMemoryOnly && p.sessionCount > 0;
+        }),
+        state
+      );
+      if (n <= 0) {
+        dormantHiddenCountEl.hidden = true;
+        dormantHiddenCountEl.textContent = '';
+        return;
+      }
+      dormantHiddenCountEl.hidden = false;
+      dormantHiddenCountEl.textContent = n === 1 ? '1 dormant hidden' : n + ' dormant hidden';
+    }
+
     function buildSim(s) {
       const rect = svg.getBoundingClientRect();
       const w = Math.max(rect.width || 800, 320);
@@ -652,8 +747,13 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
 
       const nodes = [];
       const links = [];
-      const projects = s.projects || [];
-      const sessions = s.sessions || [];
+      // Sessionless memory-only projects stay out; optionally hide dormant hubs.
+      const projects = filterGraphProjects(s.projects || [], s);
+      const visibleNames = {};
+      projects.forEach(function (p) { visibleNames[p.name] = true; });
+      const sessions = (s.sessions || []).filter(function (sess) {
+        return sess && visibleNames[sess.project];
+      });
       const n = Math.max(projects.length, 1);
       const hubR = Math.min(w, h) * 0.28;
       const cx = w * 0.5;
@@ -661,11 +761,13 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
 
       projects.forEach(function (p, i) {
         const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
+        const projectState = p.filterState || p.displayState || 'idle';
         nodes.push({
           id: p.id,
           kind: 'project',
           label: p.name,
-          displayState: p.displayState,
+          displayState: projectState,
+          filterState: projectState,
           x: cx + Math.cos(angle) * hubR,
           y: cy + Math.sin(angle) * hubR,
           vx: 0,
@@ -1143,10 +1245,11 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     }
 
     function rollupFilterState(states) {
+      if (!states || !states.length) return 'idle';
       for (let i = 0; i < FILTER_PRIORITY.length; i++) {
-        if ((states || []).indexOf(FILTER_PRIORITY[i]) !== -1) return FILTER_PRIORITY[i];
+        if (states.indexOf(FILTER_PRIORITY[i]) !== -1) return FILTER_PRIORITY[i];
       }
-      return 'done';
+      return 'idle';
     }
 
     function collectSessionFilterStates(node) {
@@ -1166,12 +1269,23 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
 
     function isCollapsed(node) {
       if (collapseOverride.has(node.id)) return collapseOverride.get(node.id);
+      if (node && node.kind === 'no-sessions-group') {
+        // Sessionless memory projects: collapsed by default; override survives SSE.
+        return node.collapsed !== false;
+      }
       if (node && node.kind === 'project') {
         const rollup = projectFilterRollup(node);
         // Expand when any session is running or waiting; dormant projects start collapsed.
         return !(rollup === 'waiting' || rollup === 'running');
       }
       return !!node.collapsed;
+    }
+
+    function historyRoots() {
+      const tree = state && state.historyTree;
+      const list = (tree && tree.projects) || [];
+      if (tree && tree.noSessions) return list.concat([tree.noSessions]);
+      return list;
     }
 
     function collectSegments(node) {
@@ -1255,9 +1369,22 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
 
     function filterTree(nodes) {
       return (nodes || []).map(function (n) {
-        if (n.kind === 'project') {
+        if (n.kind === 'no-sessions-group') {
           const kids = filterTree(n.children || []);
           if (stateFilter && !kids.length) return null;
+          return Object.assign({}, n, { children: kids });
+        }
+        if (n.kind === 'project') {
+          const kids = filterTree(n.children || []);
+          if (stateFilter) {
+            const sessionless = n.fromMemoryOnly || !(n.sessionCount > 0);
+            if (sessionless) {
+              const fs = n.filterState || n.displayState || 'idle';
+              if (fs !== stateFilter) return null;
+              return Object.assign({}, n, { children: kids });
+            }
+            if (!kids.length) return null;
+          }
           return Object.assign({}, n, { children: kids });
         }
         const enriched = enrichHistoryNode(n);
@@ -1270,14 +1397,25 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
 
     function historyRowHtml(node, range) {
       const enriched = enrichHistoryNode(node);
+      const isGroup = enriched.kind === 'no-sessions-group';
       const isProject = enriched.kind === 'project';
       const kids = enriched.children || [];
       const collapsed = isCollapsed(enriched);
       const depth = Math.max(0, enriched.depth || 0);
-      const label = isProject ? enriched.name : enriched.title || enriched.id;
-      const filterKey = isProject ? projectFilterRollup(enriched) : rowFilterState(enriched);
+      const label = isGroup
+        ? (enriched.label || 'No sessions')
+        : isProject
+          ? enriched.name
+          : enriched.title || enriched.id;
+      const filterKey = isGroup
+        ? 'idle'
+        : isProject
+          ? projectFilterRollup(enriched)
+          : rowFilterState(enriched);
       const bits = [];
-      if (isProject) {
+      if (isGroup) {
+        bits.push((kids.length || 0) + ' projects');
+      } else if (isProject) {
         bits.push((enriched.sessionCount != null ? enriched.sessionCount : kids.length) + ' sessions');
         if (enriched.runningCount) bits.push(enriched.runningCount + ' running');
       } else {
@@ -1285,16 +1423,15 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       }
       const when = agoLabel(enriched.lastActivity);
       if (when) bits.push(when);
-      const segments = isProject ? collectSegments(enriched) : enriched.segments;
-      const waiting = !isProject && (enriched.awaitingInput || enriched.activityState === 'waiting');
-      const working = !isProject && enriched.activityState === 'working';
-      const stateClass = filterKey +
+      const segments = isProject || isGroup ? collectSegments(enriched) : enriched.segments;
+      const waiting = !isProject && !isGroup && (enriched.awaitingInput || enriched.activityState === 'waiting');
+      const working = !isProject && !isGroup && enriched.activityState === 'working';
+      const stateClass = (isGroup ? 'muted' : filterKey) +
         (waiting ? ' waiting awaiting-input' : '') +
         (working ? ' working' : '');
-      const ariaState = isProject
-        ? filterKey
-        : activityLabel(enriched);
-      let html = '<div class="history-row ' + (isProject ? 'project' : 'session') +
+      const ariaState = isGroup ? 'no sessions' : isProject ? filterKey : activityLabel(enriched);
+      let html = '<div class="history-row ' +
+        (isGroup ? 'group no-sessions' : isProject ? 'project' : 'session') +
         ' ' + stateClass +
         (selectedId === enriched.id ? ' selected' : '') +
         '" role="treeitem" tabindex="0" data-id="' + esc(enriched.id) +
@@ -1302,7 +1439,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         '" data-filter-state="' + esc(filterKey) +
         '" aria-level="' + (depth + 1) +
         '" aria-selected="' + String(selectedId === enriched.id) + '"' +
-        ' aria-label="' + esc((isProject ? label : enriched.id) + ' — ' + ariaState) + '"' +
+        ' aria-label="' + esc((isProject || isGroup ? label : enriched.id) + ' — ' + ariaState) + '"' +
         (kids.length ? ' aria-expanded="' + String(!collapsed) + '"' : '') +
         ' style="padding-left:' + (1 + depth * 1.25).toFixed(2) + 'rem">' +
         '<div class="history-label"><button type="button" class="twist" data-twist="' + esc(enriched.id) +
@@ -1312,7 +1449,9 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         '<span class="row-markers" aria-hidden="true">' +
         '<span class="row-waiting-mark">?</span><span class="row-working-mark"></span></span>' +
         '<span class="title" title="' + esc(label) + '">' + esc(label) + '</span>' +
-        '<span class="history-state ' + esc(filterKey) + '">' + esc(ariaState) + '</span>' +
+        (isGroup
+          ? ''
+          : '<span class="history-state ' + esc(filterKey) + '">' + esc(ariaState) + '</span>') +
         '<span class="meta-bits">' + esc(bits.filter(Boolean).join(' · ')) + '</span></div>' +
         ganttHtml(segments, range) +
         // Issue #2: reserved lane for future message markers (messaging not implemented here).
@@ -1344,17 +1483,36 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       }
       syncFilterChips();
       updateHerdrRemoteNote();
-      if (!tree || !(tree.projects || []).length) {
+      const hasSessionProjects = tree && (tree.projects || []).length > 0;
+      const hasNoSessions = tree && tree.noSessions && (tree.noSessions.children || []).length > 0;
+      if (!tree || (!hasSessionProjects && !hasNoSessions)) {
         renderGanttAxis(null);
         const empty = '<p class="empty">No projects or sessions yet.</p>';
         if (historyTreeEl.innerHTML !== empty) historyTreeEl.innerHTML = empty;
         return;
       }
       renderGanttAxis(tree.range);
-      const projects = filterTree(sortProjectNodes(tree.projects, sortMode));
-      const html = projects.length
-        ? projects.map(function (p) { return historyRowHtml(p, tree.range); }).join('')
-        : '<p class="empty">No sessions match this state filter.</p>';
+      const nowMs = stateNowMs(state);
+      const windowMs = dormantWindowMs(state);
+      let projectNodes = sortProjectNodes(tree.projects || [], sortMode);
+      if (hideDormant) {
+        projectNodes = projectNodes.filter(function (p) {
+          return !isDormantProject(p, nowMs, windowMs);
+        });
+      }
+      const projects = filterTree(projectNodes);
+      let html = projects.map(function (p) { return historyRowHtml(p, tree.range); }).join('');
+      // Sessionless folders keep their own bottom group (still reachable for notes).
+      if (tree.noSessions) {
+        const groupFiltered = filterTree([tree.noSessions])[0];
+        if (groupFiltered) html += historyRowHtml(groupFiltered, tree.range);
+      }
+      if (!html) {
+        html = hideDormant && !stateFilter
+          ? '<p class="empty">No active projects — turn off Hide dormant to see older ones.</p>'
+          : '<p class="empty">No sessions match this state filter.</p>';
+      }
+      updateDormantHiddenCount();
       if (historyTreeEl.innerHTML === html) return;
       const active = typeof document !== 'undefined' ? document.activeElement : null;
       const keepFocus = active && typeof historyTreeEl.contains === 'function' && historyTreeEl.contains(active)
@@ -1389,7 +1547,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
           if (n.id === id) found = n;
           walk(n.children);
         });
-      })(state && state.historyTree && state.historyTree.projects);
+      })(historyRoots());
       if (!found) return;
       collapseOverride.set(id, !isCollapsed(found));
       renderHistoryTree();
@@ -1493,6 +1651,12 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         const row = closest('.history-row');
         if (row) {
           if (typeof ev.stopPropagation === 'function') ev.stopPropagation();
+          const kind = row.getAttribute('data-kind');
+          if (kind === 'no-sessions-group') {
+            toggleCollapse(row.getAttribute('data-id'));
+            return;
+          }
+          // Project rows (including sessionless memory folders) stay clickable for notes/docs.
           selectRow(row.getAttribute('data-id'));
         }
       });
@@ -1859,6 +2023,24 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
 
     if (viewHistoryBtn) viewHistoryBtn.addEventListener('click', function () { setView('history'); });
     if (viewGraphBtn) viewGraphBtn.addEventListener('click', function () { setView('graph'); });
+    if (hideDormantEl) {
+      hideDormantEl.addEventListener('change', function () {
+        hideDormant = !!hideDormantEl.checked;
+        try {
+          if (typeof localStorage !== 'undefined' && localStorage) {
+            localStorage.setItem(HIDE_DORMANT_STORAGE_KEY, hideDormant ? '1' : '0');
+          }
+        } catch (_) {
+          /* ignore */
+        }
+        renderHistoryTree();
+        updateDormantHiddenCount();
+        simStale = true;
+        updateSim({ forceRebuild: true });
+        drawGraph();
+        if (currentView === 'graph') startLoop();
+      });
+    }
     setShown(graphViewEl, false);
 
     function applyState(next, opts) {
