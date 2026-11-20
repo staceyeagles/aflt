@@ -119,4 +119,46 @@ describe('run-history', () => {
     const tokens = runHistory.splitShellArgv('# argv: ' + line);
     assert.deepEqual(tokens, ['bin', '-p', prompt]);
   });
+
+  it('sessionActivityMarkers emits completed/failed finished-turn points only', () => {
+    const session = { id: 'marker-sess', title: 'Markers', engine: 'cursor' };
+    const dir = runHistory.runLogDir(session.id);
+    fs.mkdirSync(dir, { recursive: true });
+    runlib.writeRunLog(path.join(dir, '2026-01-01T00-00-00-000Z.cursor.txt'), {
+      argv: ['bin', '-p', 'ok prompt'],
+      cwd: home,
+      stdout: 'all good\n',
+      code: 0,
+      prompt: 'ok prompt',
+    });
+    runlib.writeRunLog(path.join(dir, '2026-01-02T00-00-00-000Z.cursor.txt'), {
+      argv: ['bin', '-p', `secret=sk-abcdefghijklmnopqrstuvwxyz012345`],
+      cwd: home,
+      stdout: 'boom\n',
+      code: 1,
+      prompt: 'secret=sk-abcdefghijklmnopqrstuvwxyz012345',
+    });
+    // Interactive receipt without exit/reply must not become a marker.
+    runlib.recordInteractiveLaunch(session.id, {
+      engine: 'cursor',
+      argv: ['cursor-agent', '--resume', 'chat', '--trust', 'pending'],
+      cwd: home,
+      prompt: 'pending',
+      kind: 'interactive',
+    });
+
+    const markers = runHistory.sessionActivityMarkers(session, { redact: true });
+    assert.equal(runHistory.sessionActivitySegments(session).length, 0);
+    assert.ok(markers.length >= 2);
+    assert.ok(markers.every((m) => m.state === 'completed' || m.state === 'failed'));
+    const failed = markers.find((m) => m.state === 'failed');
+    const ok = markers.find((m) => m.state === 'completed');
+    assert.ok(failed);
+    assert.ok(ok);
+    assert.match(ok.prompt || '', /ok prompt/);
+    assert.match(ok.reply || '', /all good/);
+    assert.match(failed.prompt || '', /\[redacted\]/);
+    assert.equal(failed.sessionId, session.id);
+    assert.ok(String(ok.prompt || '').length <= runHistory.MARKER_TEXT_MAX + 1);
+  });
 });

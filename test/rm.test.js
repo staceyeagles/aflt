@@ -97,7 +97,7 @@ esac
     return { registry: loadRegistry(), parent, worker: loadRegistry().find(w.id) };
   }
 
-  it('removes result file and runs/<id>/ dir', () => {
+  it('removes result file but keeps runs/<id>/ logs', () => {
     const { worker } = seedWorker();
     assert.ok(fs.existsSync(worker.result));
     assert.ok(fs.existsSync(path.join(home, 'runs', worker.id)));
@@ -105,7 +105,7 @@ esac
     assert.equal(r.status, 0, r.stderr);
     assert.ok(!loadRegistry().find(worker.id));
     assert.ok(!fs.existsSync(worker.result));
-    assert.ok(!fs.existsSync(path.join(home, 'runs', worker.id)));
+    assert.ok(fs.existsSync(path.join(home, 'runs', worker.id, 'log.txt')));
   });
 
   it('--keep-files leaves files, removes registry row', () => {

@@ -33,6 +33,7 @@ function clearDashboardModules() {
     '../lib/run',
     '../lib/run-history',
     '../lib/agent-docs',
+    '../lib/archive',
     '../lib/dashboard',
   ];
   for (const m of mods) {
@@ -77,8 +78,9 @@ function seedSession(home, partial) {
 
 function httpRequest(port, pathname, opts = {}) {
   return new Promise((resolve, reject) => {
+    const { body, ...reqOpts } = opts;
     const req = http.request(
-      { hostname: '127.0.0.1', port, path: pathname, timeout: 5000, ...opts },
+      { hostname: '127.0.0.1', port, path: pathname, timeout: 5000, ...reqOpts },
       (res) => {
         const chunks = [];
         res.on('data', (c) => chunks.push(c));
@@ -96,7 +98,8 @@ function httpRequest(port, pathname, opts = {}) {
       req.destroy();
       reject(new Error('timeout'));
     });
-    req.end();
+    if (body != null) req.end(typeof body === 'string' ? body : JSON.stringify(body));
+    else req.end();
   });
 }
 
@@ -275,7 +278,8 @@ describe('aflt dashboard', () => {
     const projects = Object.fromEntries(payload.projects.map((p) => [p.name, p]));
     assert.ok(projects.alpha);
     assert.ok(projects.beta);
-    assert.equal(projects.alpha.displayState, 'running');
+    assert.equal(projects.alpha.displayState, 'working');
+    assert.equal(projects.alpha.filterState, 'working');
     assert.ok(payload.links.some((l) => l.kind === 'parent' && l.from === master.id));
     assert.equal(payload.sparkline24h.length, 24);
     assert.equal(payload.sparkline7d.length, 7);
@@ -454,12 +458,14 @@ describe('aflt dashboard', () => {
     assert.equal(state.sessions.find((s) => s.id === 'working').displayState, 'running');
     assert.equal(state.sessions.find((s) => s.id === 'fresh-idle').displayState, 'idle');
     const svg = dash.renderSvg(state);
-    assert.match(svg, /<title>State: waiting\nSession ID: blocked\n/);
+    assert.match(svg, /<title>State: Waiting\nSession ID: blocked\n/);
     assert.match(svg, /stroke-dasharray="3 3"/);
-    assert.doesNotMatch(svg, /State: waiting\nSession ID: working\n/);
-    assert.match(svg, /<title>State: working\nSession ID: working\n/);
+    assert.doesNotMatch(svg, /State: Waiting\nSession ID: working\n/);
+    assert.match(svg, /<title>State: Working\nSession ID: working\n/);
     assert.match(svg, /pathLength="100" stroke-dasharray="25 75"/);
-    assert.match(svg, /<title>State: completed\nSession ID: turn-complete\n[^<]+<\/title>\s*<circle[^>]+fill="#4da6ff"/);
+    assert.match(svg, /<title>State: Idle\nSession ID: turn-complete\n/);
+    // Completed turn on a still-live pane: filter/badge Idle; fill uses activity completed blue.
+    assert.match(svg, /Session ID: turn-complete\n[^<]+<\/title>\s*<circle[^>]+fill="#0078d4"/);
   });
 
   it('tracks working, completion and input transitions without persisting dashboard state', () => {
@@ -1067,7 +1073,7 @@ describe('aflt dashboard', () => {
     assert.match(html, /Herdr status: <strong>&lt;running&gt;<\/strong>/);
     assert.doesNotMatch(html, /project-private|Project progress|Long note|Session title|Long completion|Doc Bot|<copilot>|<running>/);
     const missing = client.renderGraphHint(null, { id: 'unreported', displayState: 'idle' });
-    assert.match(missing, /State: <strong>idle<\/strong>/);
+    assert.match(missing, /State: <strong>Idle<\/strong>/);
     assert.match(missing, /Herdr status: <strong>unknown<\/strong>/);
   });
 
@@ -1229,6 +1235,7 @@ describe('aflt dashboard', () => {
     assert.match(element('project-memory').innerHTML, /Select a project/);
 
     // History is the default view — graph-parity: badges, waiting marker, filter, Herdr dblclick.
+    // Row hover does not open popups (only timeline markers do).
     assert.match(element('history-tree').innerHTML, /history-row/);
     assert.match(element('history-tree').innerHTML, /history-state/);
     assert.match(
@@ -1236,16 +1243,21 @@ describe('aflt dashboard', () => {
       /history-row session[^"]*awaiting-input[^"]*"[^>]*data-id="waiting-session"/
     );
     assert.match(element('history-tree').innerHTML, /row-waiting-mark/);
+    assert.match(element('history-tree').innerHTML, />Waiting</);
+    element('history-tooltip').hidden = true;
+    element('history-tooltip').innerHTML = '';
     element('history-tree').handlers.mouseover({
       target: {
-        closest: () => ({
-          getAttribute: (k) => (k === 'data-id' ? 'waiting-session' : k === 'data-kind' ? 'session' : null),
-        }),
+        closest: (sel) => {
+          if (sel === '.gantt-marker') return null;
+          return {
+            getAttribute: (k) => (k === 'data-id' ? 'waiting-session' : k === 'data-kind' ? 'session' : null),
+          };
+        },
       },
     });
-    assert.equal(element('history-tooltip').hidden, false);
-    assert.match(element('history-tooltip').innerHTML, /Session ID: <code>waiting-session<\/code>/);
-    assert.match(element('history-tooltip').innerHTML, /Awaiting input/);
+    assert.equal(element('history-tooltip').hidden, true);
+    assert.equal(element('history-tooltip').innerHTML, '');
     element('history-filter').handlers.click({
       target: {
         closest: () => ({
@@ -1362,7 +1374,7 @@ describe('aflt dashboard', () => {
     session.dispatch('dblclick', { stopPropagation() { this.stopped = true; } });
     assert.match(element('action-status').textContent, /live local dashboard/);
     assert.match(session.children[0].getAttribute('class'), /completed/);
-    assert.match(session.children[0].getAttribute('style'), /--cp-link/);
+    assert.match(session.children[0].getAttribute('style'), /--state-completed/);
     assert.match(session.getAttribute('aria-label'), /Completed/);
     session.dispatch('mouseenter', {});
     assert.match(element('graph-tooltip').innerHTML, /Session ID: <code>beta-session<\/code>/);
@@ -1378,12 +1390,12 @@ describe('aflt dashboard', () => {
 
     const waiting = nodeLayer.children.find((n) => n.getAttribute('data-id') === 'waiting-session');
     assert.equal(waiting.children[2].getAttribute('visibility'), 'visible');
-    assert.match(waiting.getAttribute('aria-label'), /Awaiting input/);
     assert.match(waiting.children[0].getAttribute('class'), /awaiting-input/);
+    assert.match(waiting.getAttribute('aria-label'), /Waiting/);
     waiting.dispatch('mouseenter', {});
-    assert.match(element('graph-tooltip').innerHTML, /State: <strong>Awaiting input<\/strong>/);
+    assert.match(element('graph-tooltip').innerHTML, /State: <strong>Waiting<\/strong>/);
     waiting.dispatch('click', { stopPropagation() { this.stopped = true; } });
-    assert.match(element('detail').innerHTML, /class="badge waiting">Awaiting input/);
+    assert.match(element('detail').innerHTML, /class="badge waiting">Waiting/);
 
     graph.children = [];
     frames.length = 0;
@@ -1457,7 +1469,7 @@ describe('aflt dashboard', () => {
     frames.shift()();
     assert.equal(graph.children[2].children.find((n) => n.getAttribute('data-id') === 'waiting-session'), liveNode);
     assert.equal(liveNode.children[2].getAttribute('visibility'), 'hidden');
-    assert.doesNotMatch(liveNode.getAttribute('aria-label'), /Awaiting input/);
+    assert.doesNotMatch(liveNode.getAttribute('aria-label'), /Waiting/);
     assert.doesNotMatch(liveNode.children[0].getAttribute('class'), /awaiting-input/);
     const spinner = liveNode.children[3];
     assert.equal(spinner.getAttribute('visibility'), 'visible');
@@ -1484,17 +1496,18 @@ describe('aflt dashboard', () => {
     assert.equal(liveNode.children[3], spinner);
     assert.equal(spinner.getAttribute('visibility'), 'hidden');
     assert.equal(liveNode.children[2].getAttribute('visibility'), 'hidden');
-    assert.match(liveNode.children[0].getAttribute('class'), /completed/);
-    assert.match(liveNode.children[0].getAttribute('style'), /--cp-link/);
-    assert.match(liveNode.getAttribute('aria-label'), /Completed/);
+    // Completed turn on a still-live pane → Idle (not Working, not Completed) for badges/colors.
+    assert.match(liveNode.children[0].getAttribute('class'), /idle/);
+    assert.match(liveNode.children[0].getAttribute('style'), /--state-idle/);
+    assert.match(liveNode.getAttribute('aria-label'), /Idle/);
     assert.match(element('graph-tooltip').innerHTML, /State: <strong>Working<\/strong>/);
     assert.equal(element('graph-tooltip').htmlWrites, tooltipWrites, 'refresh must not replace selectable popup text');
     element('graph-tooltip').dispatch('mouseleave', {});
     liveNode.dispatch('mouseenter', {});
     flushTimeouts();
     assert.equal(element('graph-tooltip').hidden, false);
-    assert.match(element('graph-tooltip').innerHTML, /State: <strong>Completed<\/strong>/);
-    assert.match(element('detail').innerHTML, /class="badge completed">Completed/);
+    assert.match(element('graph-tooltip').innerHTML, /State: <strong>Idle<\/strong>/);
+    assert.match(element('detail').innerHTML, /class="badge idle">Idle/);
     assert.match(element('detail').innerHTML, /<strong>Finished task<\/strong>/);
     assert.doesNotMatch(element('graph-tooltip').innerHTML, /Latest Task Complete|Finished task/);
 
@@ -1504,7 +1517,7 @@ describe('aflt dashboard', () => {
     frames.shift()();
     assert.equal(spinner.getAttribute('visibility'), 'hidden');
     assert.equal(liveNode.children[2].getAttribute('visibility'), 'visible');
-    assert.doesNotMatch(liveNode.children[0].getAttribute('class'), /completed/);
+    assert.doesNotMatch(liveNode.children[0].getAttribute('class'), /idle/);
     liveNode.dispatch('mouseleave', {});
     liveNode.dispatch('focus', {});
     element('graph-tooltip').dispatch('mouseenter', {});
@@ -1790,6 +1803,395 @@ describe('aflt dashboard', () => {
     assert.match(r.stderr, /--serve|--snapshot/);
   });
 
+  it('archive/delete endpoints require loopback token and refresh SSE state', async () => {
+    const parent = seedSession(home, {
+      title: 'ParentA',
+      project: 'archui',
+      status: 'done',
+      id: 'parent-a-111111',
+      lastUsed: '2026-11-19T12:00:00.000Z',
+    });
+    const child = seedSession(home, {
+      title: 'ChildA',
+      project: 'archui',
+      status: 'done',
+      id: 'child-a-222222',
+      parent: parent.id,
+      lastUsed: '2026-11-19T12:00:00.000Z',
+    });
+    const busy = seedSession(home, {
+      title: 'BusyA',
+      project: 'archui',
+      status: 'active',
+      id: 'busy-a-333333',
+      runPid: process.pid,
+      runHost: os.hostname(),
+      lastUsed: '2026-11-19T12:00:00.000Z',
+    });
+    const runDir = path.join(home, 'runs', child.id);
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'log.txt'), 'keep\n', 'utf8');
+
+    const dash = loadDashboard(home);
+    const handle = dash.createDashboardServer({
+      now: '2026-11-19T18:00:00.000Z',
+      isAlive: (pid) => Number(pid) === process.pid,
+      herdrFetch: { ok: true, terminals: [], checkedAt: '2026-11-19T18:00:00.000Z' },
+    });
+    handle.server.listen(0, '127.0.0.1');
+    await new Promise((resolve) => handle.server.once('listening', resolve));
+    const port = handle.server.address().port;
+    try {
+      const state = JSON.parse((await httpGet(port, '/api/state')).body);
+      assert.ok(state.actions.actionToken);
+      assert.equal(state.actions.actionToken, state.actions.herdrFocusToken);
+      assert.ok(state.sessions.some((s) => s.id === child.id && !s.archived));
+
+      const headers = {
+        'Content-Type': 'application/json',
+        'X-Aflt-Action-Token': state.actions.actionToken,
+      };
+      assert.equal(
+        (await httpRequest(port, '/api/session/archive', { method: 'POST', body: { id: child.id } })).status,
+        403
+      );
+      assert.equal(
+        (
+          await httpRequest(port, '/api/session/archive', {
+            method: 'POST',
+            headers: { ...headers, 'X-Aflt-Action-Token': 'nope' },
+            body: { id: child.id },
+          })
+        ).status,
+        403
+      );
+
+      const busyDenied = await httpRequest(port, '/api/session/archive', {
+        method: 'POST',
+        headers,
+        body: { id: busy.id },
+      });
+      assert.equal(busyDenied.status, 409, busyDenied.body);
+
+      const archived = await httpRequest(port, '/api/session/archive', {
+        method: 'POST',
+        headers,
+        body: { id: child.id },
+      });
+      assert.equal(archived.status, 200, archived.body);
+      const archivedBody = JSON.parse(archived.body);
+      assert.equal(archivedBody.ok, true);
+      assert.equal(archivedBody.archived[0].id, child.id);
+      assert.ok(archivedBody.state.sessions.find((s) => s.id === child.id).archived);
+
+      const hist = await httpGet(port, '/api/history?session=' + encodeURIComponent(child.id));
+      assert.equal(hist.status, 404);
+
+      const histOk = await httpGet(
+        port,
+        '/api/history?session=' + encodeURIComponent(child.id) + '&includeArchived=1'
+      );
+      assert.equal(histOk.status, 200);
+
+      const un = await httpRequest(port, '/api/session/unarchive', {
+        method: 'POST',
+        headers,
+        body: { id: child.id },
+      });
+      assert.equal(un.status, 200, un.body);
+
+      const idle = await httpRequest(port, '/api/project/archive-idle', {
+        method: 'POST',
+        headers,
+        body: { project: 'archui' },
+      });
+      assert.equal(idle.status, 200, idle.body);
+      const idleBody = JSON.parse(idle.body);
+      assert.ok(idleBody.archived.some((s) => s.id === child.id || s.id === parent.id));
+      assert.ok(!idleBody.archived.some((s) => s.id === busy.id));
+
+      assert.ok(loadRegistry(home).findExact(child.id).archived);
+      const del = await httpRequest(port, '/api/session/delete', {
+        method: 'POST',
+        headers,
+        body: { id: child.id },
+      });
+      assert.equal(del.status, 200, del.body);
+      assert.ok(!loadRegistry(home).findExact(child.id));
+      assert.ok(fs.existsSync(path.join(runDir, 'log.txt')));
+      // Parent links: deleting parent clears child parent — seed a fresh child of parent.
+      const orphan = seedSession(home, {
+        title: 'OrphanA',
+        project: 'archui',
+        status: 'done',
+        id: 'orphan-a-444444',
+        parent: parent.id,
+      });
+      const delParent = await httpRequest(port, '/api/session/delete', {
+        method: 'POST',
+        headers,
+        body: { id: parent.id },
+      });
+      assert.equal(delParent.status, 200, delParent.body);
+      assert.equal(loadRegistry(home).findExact(orphan.id).parent, null);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('Show archived toggle hides archived rows until enabled; actions post with token', async () => {
+    const live = seedSession(home, {
+      title: 'LiveDom',
+      project: 'domarch',
+      status: 'done',
+      id: 'live-dom-555555',
+      lastUsed: '2026-11-19T12:00:00.000Z',
+    });
+    const archived = seedSession(home, {
+      title: 'ArchDom',
+      project: 'domarch',
+      status: 'done',
+      id: 'arch-dom-666666',
+      archived: true,
+      archivedAt: '2026-11-18T00:00:00.000Z',
+      lastUsed: '2026-11-18T12:00:00.000Z',
+    });
+    const dash = loadDashboard(home);
+    const state = {
+      ...dash.collectState({
+        now: '2026-11-19T18:00:00.000Z',
+        herdrFetch: { ok: true, terminals: [], checkedAt: '2026-11-19T18:00:00.000Z' },
+        isAlive: () => false,
+      }),
+      actions: { herdrFocusToken: 'tok', actionToken: 'tok' },
+    };
+    assert.ok(state.sessions.find((s) => s.id === archived.id).archived);
+    assert.equal(state.stats.done >= 1, true);
+    // Archived sessions do not inflate done counts.
+    assert.ok(!state.sessions.filter((s) => !s.archived).every((s) => s.id === archived.id));
+
+    clearDashboardModules();
+    const ui = require('../templates/dashboard/dashboard.js');
+    assert.equal(ui.SHOW_ARCHIVED_STORAGE_KEY, 'aflt.dashboard.showArchived');
+
+    const elements = new Map();
+    const storage = { 'aflt.dashboard.hideDormant': '0' };
+    const fetchCalls = [];
+    function makeElement(_ns, tagName) {
+      return {
+        html: '',
+        handlers: {},
+        attributes: {},
+        style: {},
+        hidden: false,
+        children: [],
+        checked: tagName === 'input' ? false : undefined,
+        tagName,
+        value: '',
+        open: false,
+        className: '',
+        get innerHTML() {
+          return this.html;
+        },
+        set innerHTML(v) {
+          this.html = String(v);
+        },
+        textContent: '',
+        setAttribute(name, value) {
+          this.attributes[name] = String(value);
+        },
+        getAttribute(name) {
+          return this.attributes[name] || null;
+        },
+        appendChild(child) {
+          this.children.push(child);
+          return child;
+        },
+        removeChild(child) {
+          this.children.splice(this.children.indexOf(child), 1);
+          return child;
+        },
+        addEventListener(type, listener) {
+          this.handlers[type] = listener;
+        },
+        removeEventListener() {},
+        showModal() {
+          this.open = true;
+        },
+        close() {
+          this.open = false;
+        },
+        getBoundingClientRect() {
+          return { width: 800, height: 600, left: 0, top: 0, right: 800, bottom: 600 };
+        },
+        querySelectorAll() {
+          return [];
+        },
+        querySelector() {
+          return null;
+        },
+        contains() {
+          return false;
+        },
+        focus() {},
+        closest(sel) {
+          if (sel === '[data-action]' && this.attributes['data-action']) return this;
+          return null;
+        },
+      };
+    }
+    function element(id) {
+      if (id === 'aflt-dashboard-data') return null; // live mode
+      if (!elements.has(id)) {
+        const tag =
+          id === 'hide-dormant' || id === 'show-archived'
+            ? 'input'
+            : id.includes('dialog')
+              ? 'dialog'
+              : 'div';
+        elements.set(id, makeElement(null, tag));
+      }
+      return elements.get(id);
+    }
+    element('graph').parent = element('graph-view');
+    element('graph-view').parent = element('stage');
+    element('hide-dormant').checked = false;
+    element('show-archived').checked = false;
+
+    let resolveBoot;
+    const booted = new Promise((r) => {
+      resolveBoot = r;
+    });
+    const browser = vm.createContext({
+      document: {
+        getElementById: element,
+        createElementNS: makeElement,
+        createElement: (tag) => makeElement(null, tag),
+        activeElement: null,
+      },
+      window: { addEventListener() {}, confirm: () => true },
+      location: { hostname: '127.0.0.1' },
+      localStorage: {
+        getItem: (k) => (Object.prototype.hasOwnProperty.call(storage, k) ? storage[k] : null),
+        setItem: (k, v) => {
+          storage[k] = String(v);
+        },
+      },
+      URL,
+      matchMedia: () => ({ matches: true }),
+      setInterval() {},
+      setTimeout(fn) {
+        if (typeof fn === 'function') setImmediate(fn);
+        return 1;
+      },
+      clearTimeout() {},
+      requestAnimationFrame(fn) {
+        if (typeof fn === 'function') setImmediate(fn);
+        return 1;
+      },
+      cancelAnimationFrame() {},
+      fetch(url, opts) {
+        fetchCalls.push({ url: String(url), opts });
+        if (String(url) === '/api/state') {
+          return Promise.resolve({ ok: true, json: async () => state }).then((r) => {
+            setImmediate(() => resolveBoot());
+            return r;
+          });
+        }
+        if (String(url) === '/api/session/archive') {
+          const next = {
+            ...state,
+            sessions: state.sessions.map((s) =>
+              s.id === live.id ? { ...s, archived: true, archivedAt: '2026-11-19T18:01:00.000Z' } : s
+            ),
+          };
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              ok: true,
+              archived: [{ id: live.id, title: live.title }],
+              state: next,
+            }),
+          });
+        }
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      },
+      EventSource: function EventSource() {
+        this.onmessage = null;
+        this.onerror = null;
+        this.close = () => {};
+      },
+    });
+    const src = fs.readFileSync(path.join(__dirname, '..', 'templates', 'dashboard', 'dashboard.js'), 'utf8');
+    vm.runInContext(src, browser);
+    await booted;
+    await new Promise((r) => setImmediate(r));
+
+    assert.match(element('history-tree').innerHTML, /data-id="project:domarch"/);
+    assert.doesNotMatch(element('history-tree').innerHTML, /data-id="arch-dom-666666"/);
+    // Expand project to reveal session rows + Archive button.
+    element('history-tree').handlers.click({
+      target: {
+        closest: (sel) => {
+          if (sel === '[data-action]') return null;
+          if (sel === 'button[data-twist]') {
+            return { disabled: false, getAttribute: () => 'project:domarch' };
+          }
+          return null;
+        },
+      },
+      stopPropagation() {},
+      preventDefault() {},
+    });
+    assert.match(element('history-tree').innerHTML, /data-id="live-dom-555555"/);
+    assert.match(element('history-tree').innerHTML, /data-action="archive"/);
+    assert.doesNotMatch(element('history-tree').innerHTML, /data-id="arch-dom-666666"/);
+
+    element('show-archived').checked = true;
+    element('show-archived').handlers.change();
+    assert.equal(storage['aflt.dashboard.showArchived'], '1');
+    // Ensure expanded so archived session rows are in the DOM.
+    for (let i = 0; i < 2; i++) {
+      if (/data-id="arch-dom-666666"/.test(element('history-tree').innerHTML)) break;
+      element('history-tree').handlers.click({
+        target: {
+          closest: (sel) => {
+            if (sel === '[data-action]') return null;
+            if (sel === 'button[data-twist]') {
+              return { disabled: false, getAttribute: () => 'project:domarch' };
+            }
+            return null;
+          },
+        },
+        stopPropagation() {},
+        preventDefault() {},
+      });
+    }
+    assert.match(element('history-tree').innerHTML, /data-id="arch-dom-666666"/);
+    assert.match(element('history-tree').innerHTML, /data-archived="1"/);
+
+    const archiveBtn = {
+      getAttribute(name) {
+        if (name === 'data-action') return 'archive';
+        if (name === 'data-id') return live.id;
+        return null;
+      },
+      attributes: { 'data-action': 'archive', 'data-id': live.id },
+      closest(sel) {
+        return sel === '[data-action]' ? this : null;
+      },
+    };
+    await element('history-tree').handlers.click({
+      target: archiveBtn,
+      preventDefault() {},
+      stopPropagation() {},
+    });
+    await new Promise((r) => setImmediate(r));
+    assert.ok(fetchCalls.some((c) => c.url === '/api/session/archive'));
+    const archiveCall = fetchCalls.find((c) => c.url === '/api/session/archive');
+    assert.equal(archiveCall.opts.headers['X-Aflt-Action-Token'], 'tok');
+  });
+
   it('isDormantProject matches the 24h active window and never hides running/waiting/failed', () => {
     const dash = loadDashboard(home);
     const now = Date.parse('2026-11-19T18:00:00.000Z');
@@ -1901,16 +2303,21 @@ describe('aflt dashboard', () => {
   it('rowFilterState and isHerdrFocusLocal match graph display-state rules', () => {
     clearDashboardModules();
     const ui = require('../templates/dashboard/dashboard.js');
-    assert.equal(ui.rowFilterState({ displayState: 'running' }), 'running');
-    assert.equal(ui.rowFilterState({ displayState: 'idle', activityState: 'working' }), 'running');
+    assert.equal(ui.rowFilterState({ displayState: 'running' }), 'working');
+    assert.equal(ui.rowFilterState({ displayState: 'idle', activityState: 'working' }), 'working');
     assert.equal(ui.rowFilterState({ displayState: 'idle', awaitingInput: true }), 'waiting');
     assert.equal(ui.rowFilterState({ displayState: 'idle', activityState: 'waiting' }), 'waiting');
     assert.equal(ui.rowFilterState({ displayState: 'idle' }), 'idle');
-    assert.equal(ui.rowFilterState({ displayState: 'done', activityState: 'completed' }), 'done');
-    // Completed turn on a still-live pid/pane → idle for filters, not running.
+    assert.equal(ui.rowFilterState({ displayState: 'done', activityState: 'completed' }), 'completed');
+    // Completed turn on a still-live pid/pane → idle for filters, not working.
     assert.equal(ui.rowFilterState({ displayState: 'running', activityState: 'completed' }), 'idle');
     assert.equal(ui.rowFilterState({ displayState: 'idle', activityState: 'completed' }), 'idle');
     assert.equal(ui.rowFilterState({ displayState: 'failed' }), 'failed');
+    assert.equal(ui.stateLabel('working'), 'Working');
+    assert.equal(ui.stateLabel('waiting'), 'Waiting');
+    assert.equal(ui.stateLabel('completed'), 'Completed');
+    assert.equal(ui.stateLabel('running'), 'Working');
+    assert.equal(ui.stateLabel('done'), 'Completed');
     assert.equal(ui.isHerdrFocusLocal({ hostname: '127.0.0.1' }), true);
     assert.equal(ui.isHerdrFocusLocal({ hostname: 'localhost' }), true);
     assert.equal(ui.isHerdrFocusLocal({ hostname: '' }), true);
@@ -1955,17 +2362,22 @@ describe('aflt dashboard', () => {
     assert.equal(waiting.activityState, 'waiting');
   });
 
-  it('rolls up project state waiting>running>failed>idle>done and auto-expands live attention', () => {
+  it('rolls up project state waiting>working>failed>idle>completed and auto-expands live attention', () => {
     const dash = loadDashboard(home);
-    assert.equal(dash.rollupProjectFilterState(['done', 'idle', 'waiting']), 'waiting');
-    assert.equal(dash.rollupProjectFilterState(['failed', 'running']), 'running');
-    assert.equal(dash.rollupProjectFilterState(['done', 'idle']), 'idle');
+    assert.equal(dash.rollupProjectFilterState(['completed', 'idle', 'waiting']), 'waiting');
+    assert.equal(dash.rollupProjectFilterState(['failed', 'working']), 'working');
+    assert.equal(dash.rollupProjectFilterState(['completed', 'idle']), 'idle');
     assert.equal(dash.rollupProjectFilterState([]), 'idle');
     assert.equal(dash.sessionFilterState({ displayState: 'idle', awaitingInput: true }), 'waiting');
     assert.equal(
       dash.sessionFilterState({ displayState: 'running', activityState: 'completed' }),
       'idle'
     );
+    assert.equal(dash.sessionFilterState({ displayState: 'running', activityState: 'working' }), 'working');
+    assert.equal(dash.sessionFilterState({ displayState: 'done', activityState: 'completed' }), 'completed');
+    assert.deepEqual(dash.LIVE_STATES, ['waiting', 'working', 'failed', 'idle', 'completed']);
+    assert.equal(dash.STATE_LABELS.working, 'Working');
+    assert.equal(dash.STATE_LABELS.waiting, 'Waiting');
 
     const state = dash.aggregateDashboard({
       sessions: [
@@ -1990,7 +2402,8 @@ describe('aflt dashboard', () => {
     assert.equal(byName.alpha.collapsed, false, 'waiting project starts expanded');
     assert.ok(byName.alpha.children.some((c) => c.id === 'wait-a'));
     assert.equal(byName.alpha.children.find((c) => c.id === 'wait-a').awaitingInput, true);
-    assert.equal(byName.beta.displayState, 'done');
+    assert.equal(byName.beta.displayState, 'completed');
+    assert.equal(byName.beta.filterState, 'completed');
     assert.equal(byName.beta.collapsed, true);
     assert.equal(byName.gamma.displayState, 'idle');
     assert.equal(byName.gamma.collapsed, true, 'idle-only project starts collapsed');
@@ -2048,14 +2461,16 @@ describe('aflt dashboard', () => {
     assert.equal(projects.aflt.filterState, 'idle');
     assert.equal(projects.aflt.runningCount, 0);
     assert.equal(projects.aflt.active, true, 'recent activity may still mark the project active');
-    assert.equal(projects['dxs-session-memory'].displayState, 'done');
+    assert.equal(projects['dxs-session-memory'].displayState, 'completed');
+    assert.equal(projects['dxs-session-memory'].filterState, 'completed');
     assert.equal(projects['dxs-session-memory'].runningCount, 0);
 
     const hist = Object.fromEntries(state.historyTree.projects.map((p) => [p.name, p]));
     assert.equal(hist.aflt.displayState, 'idle');
-    assert.equal(hist['dxs-session-memory'].displayState, 'done');
+    assert.equal(hist['dxs-session-memory'].displayState, 'completed');
 
     assert.equal(state.stats.runningSessions, 0);
+    assert.equal(state.stats.workingSessions, 0);
     assert.equal(state.stats.open, 0);
     assert.ok(state.stats.idle >= 2);
   });
@@ -2122,16 +2537,19 @@ describe('aflt dashboard', () => {
     }
     assert.equal(byId['copilot-working'].displayState, 'running');
     assert.equal(byId['copilot-working'].activityState, 'working');
-    assert.equal(dash.sessionFilterState(byId['copilot-working']), 'running');
+    assert.equal(dash.sessionFilterState(byId['copilot-working']), 'working');
     assert.equal(byId['headless-live'].displayState, 'running');
     assert.equal(byId['headless-live'].activityState, 'working');
-    assert.equal(dash.sessionFilterState(byId['headless-live']), 'running');
+    assert.equal(dash.sessionFilterState(byId['headless-live']), 'working');
 
     assert.equal(state.stats.runningSessions, 2);
+    assert.equal(state.stats.workingSessions, 2);
     assert.equal(state.stats.open, 2);
     const project = state.projects.find((p) => p.name === 'mini-fleet');
-    assert.equal(project.displayState, 'running');
+    assert.equal(project.displayState, 'working');
+    assert.equal(project.filterState, 'working');
     assert.equal(project.runningCount, 2);
+    assert.equal(project.workingCount, 2);
 
     // collectState with mocked hc ls — same pane-alive vs working distinction.
     const collected = dash.collectState({
@@ -2228,13 +2646,19 @@ describe('aflt dashboard', () => {
     assert.equal(state.messages.deferred, true);
     assert.deepEqual(state.messages.items, []);
     const byName = Object.fromEntries(state.historyTree.projects.map((p) => [p.name, p]));
-    // Done/idle projects start collapsed; only running/waiting auto-expand.
+    // Idle/completed projects start collapsed; only working/waiting auto-expand.
     assert.equal(byName.alpha.collapsed, true);
-    assert.equal(byName.alpha.displayState, 'done');
+    assert.equal(byName.alpha.displayState, 'completed');
+    assert.equal(byName.alpha.filterState, 'completed');
     assert.equal(byName.dormant.collapsed, true);
     assert.ok(byName.alpha.children.some((c) => c.id === 'hist-sess'));
-    assert.ok(byName.alpha.children[0].segments.length >= 1);
-    assert.ok(Array.isArray(byName.alpha.children[0].messageMarkers));
+    const histNode = byName.alpha.children.find((c) => c.id === 'hist-sess');
+    assert.ok(histNode.markers.length >= 1);
+    assert.equal(histNode.markers[0].state, 'completed');
+    assert.match(histNode.markers[0].prompt || '', /Fix the tests/);
+    assert.match(histNode.markers[0].reply || '', /All green/);
+    assert.deepEqual(histNode.segments, []);
+    assert.ok(Array.isArray(histNode.messageMarkers));
 
     const handle = dash.createDashboardServer({
       memoryRepo: mem,
