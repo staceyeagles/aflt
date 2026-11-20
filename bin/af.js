@@ -21,6 +21,7 @@ const messages = require('../lib/messages');
 const docs = require('../lib/docs');
 const mcp = require('../lib/mcp');
 const projectLib = require('../lib/project');
+const projectMeta = require('../lib/project-meta');
 const timeline = require('../lib/timeline');
 const memory = require('../lib/memory');
 const dashboard = require('../lib/dashboard');
@@ -103,6 +104,12 @@ Usage:
                             best-effort git commits per session cwd (skipped when
                             missing/not-git; projects need no repo). --since ISO or
                             YYYY-MM-DD. Exit 0 when empty.
+  aflt projects [<id>] [--json]
+                            Read-only project↔repo mappings from the memory repo
+                            (<project>/.agentfleet.json) plus local checkout paths in
+                            config.json repositories. Shows validation problems
+                            (unmapped/unavailable checkouts, shared remotes, duplicate ids).
+                            No registry/Herdr/memory writes. See docs/PROJECT-REPO-METADATA.md.
   aflt dashboard --serve [--port 8787] [--host 127.0.0.1] [--json] [--capture-completions]
                             Live local activity dashboard (read-only by default). Bind
                             127.0.0.1:8787. History tree + Gantt by default; Graph toggle
@@ -489,6 +496,9 @@ async function main() {
       break;
     case 'timeline':
       cmdTimeline(rest);
+      break;
+    case 'projects':
+      cmdProjects(rest);
       break;
     case 'dashboard':
       await cmdDashboard(rest);
@@ -1155,6 +1165,36 @@ function cmdLs(argv) {
       `${pad(s.title, 24)} ${pad(displayId(s.id, ID_COL), ID_COL)} ${pad(shortId(s.chatId), 10)} ${pad(s.engine || 'cursor', 8)} ${pad(folder, 24)} ${pad(s.branch || '', 12)} ${pad(s.status, 8)} ${pad(herdr.displayRuntime(e.runtime), 8)} ${s.lastUsed || ''}\n`
     );
   }
+}
+
+/**
+ * Read-only project↔repo mappings + validation. Never writes registry/memory/Herdr.
+ */
+function cmdProjects(argv) {
+  const { args: rawArgs, flags } = parseArgs(argv);
+  const args = rawArgs.slice();
+  const asJson = docsRecoverBoolFlag(flags, 'json', args);
+  const projectArg =
+    args[0] && String(args[0]).trim() !== ''
+      ? String(args[0]).trim()
+      : flags.project != null && flags.project !== true
+        ? String(flags.project).trim()
+        : null;
+
+  const report = projectMeta.buildProjectsReport({
+    project: projectArg,
+    env: process.env,
+  });
+
+  if (!report.ok) {
+    fail(report.error || 'projects failed', { json: asJson });
+  }
+
+  if (asJson) {
+    emitJson(report);
+    return;
+  }
+  process.stdout.write(projectMeta.formatProjectsText(report));
 }
 
 /**

@@ -94,6 +94,7 @@ aflt ls --status active
 aflt ls --project my-app --json # filter by stored or derived project name
 aflt timeline                   # read-only session tree for cwd's project
 aflt timeline --all --json      # every project, grouped
+aflt projects --json            # project↔repo mappings + validation problems
 aflt dashboard --serve          # live local activity UI (default http://127.0.0.1:8787/)
 aflt dashboard --snapshot /tmp/aflt.svg  # read-only SVG/HTML snapshot (≠ memory dashboard)
 aflt memory sync                # opt-in: write cwd project timeline + root DASHBOARD.md
@@ -190,7 +191,14 @@ aflt ls [--status S] [--tag T] [--project NAME] [--all] [--archived] [--json]
 aflt timeline [<project>] [--all] [--json] [--since <date>]
 # Read-only project session tree (no registry/Herdr writes). Default project =
 # AFLT_PROJECT, else cwd project. Chronological roots + indented children; best-effort
-# git commits in each session window. --since ISO or YYYY-MM-DD. Exit 0 when empty.
+# git commits in each session window (location-filtered when project↔repo metadata
+# exists; inferred vs confirmed attribution; deduped per project). --since ISO or
+# YYYY-MM-DD. Exit 0 when empty.
+
+aflt projects [<id>] [--json]
+# Read-only project↔repo mappings + checkout validation (memory
+# <project>/.agentfleet.json + config.json repositories). No writes.
+# Schema: docs/PROJECT-REPO-METADATA.md
 
 aflt dashboard --serve [--port 8787] [--host 127.0.0.1] [--json] [--capture-completions]
 # Live local activity dashboard (read-only by default). Default bind 127.0.0.1:8787.
@@ -564,7 +572,7 @@ Home: **`$AGENTFLEET_HOME`** (default `~/.agentfleet`). Override the registry fi
 | Path | Role |
 |------|------|
 | `sessions.json` | Atomic registry (temp + rename; cross-process `.lock` for RMW). Mode `0600`. |
-| `config.json` | Fleet defaults (`defaultEngine`, optional `memoryRepo`, `project`) |
+| `config.json` | Fleet defaults (`defaultEngine`, optional `memoryRepo`, `project`, `repositories` checkout map) |
 | `runs/<id>/` | Captured headless stdout |
 | `results/` | Worker/master handoffs (`$AGENTFLEET_RESULT`) |
 | `plans/` | Master plans (`$AGENTFLEET_PLAN`) |
@@ -577,31 +585,31 @@ Each session stores identity (`id`, `title`, `chatId`, `cwd`, `branch`, `model`,
 
 **Project name (`session.project`):** optional string for grouping. **Projects never require git** — one-off agents in `/tmp` or `$HOME` can share a name. Legacy alias map (`lib/project.js` `PROJECT_ALIASES` / `canonicalProjectName`): `af` → `aflt` for grouping, live dashboard hubs, and memory sync/dashboard folders (registry `project` is not rewritten; existing `af/` memory folders are left alone).
 
-**New sessions** store the resolved name (`--project` on `new`/`add`/`run`/`master`/`spawn`/import). Precedence: `--project` → parent/master project → `AFLT_PROJECT` → `.agentfleet.json` `"project"` → `$AGENTFLEET_HOME/config.json` `"project"` → git-root basename → cwd basename, except `$HOME` / `os.tmpdir()` (+ realpath) / `/tmp` / `/private/tmp` → `"adhoc"`. Workers inherit the master's project (unless `--project` overrides); docs sessions inherit when triggered from a master (and set `parent` when that path runs).
+**New sessions** store the resolved name (`--project` on `new`/`add`/`run`/`master`/`spawn`/import). Precedence: `--project` → parent/master project → `AFLT_PROJECT` → source `.agentfleet.json` `"project"` / `"projectId"` → `$AGENTFLEET_HOME/config.json` `"project"` → **unambiguous** project↔repo mapping inference (memory `<project>/.agentfleet.json` + local `config.repositories`; skip when ambiguous or no memory repo) → git-root basename → cwd basename, except `$HOME` / `os.tmpdir()` (+ realpath) / `/tmp` / `/private/tmp` → `"adhoc"`. Workers inherit the master's project (unless `--project` overrides); docs sessions inherit when triggered from a master (and set `parent` when that path runs). Assigned identity stays separate from cwd; unavailable checkouts are reported (`aflt projects`), not invented.
 
-**Existing rows** without `project`: derive at read time with cwd-based rules only (`.agentfleet.json` → git basename → cwd basename/`adhoc`) — never env/global config, and never rewrite the registry to backfill. Helper: `lib/project.js` (git-root lookups cached per command; missing cwd must not throw).
+**Existing rows** without `project`: derive at read time with cwd-based rules only (source `.agentfleet.json` → unambiguous mapping inference → git basename → cwd basename/`adhoc`) — never env/global config, and **never rewrite** the registry to backfill. Helper: `lib/project.js` + `lib/project-meta.js` (git-root lookups cached per command; missing cwd must not throw). Schema: [docs/PROJECT-REPO-METADATA.md](docs/PROJECT-REPO-METADATA.md).
 
-### Project: `.agentfleet.json`
+### Project: source `.agentfleet.json`
 
-Resolved by walking cwd → ancestors until the git root (or filesystem root).
+Resolved by walking cwd → ancestors until the git root (or filesystem root). Optional launch default only — references the project id, does not store checkout paths.
 
 ```json
 {
-  "project": "my-app",
-  "messaging": true,
-  "docs": true,
-  "docsPaths": ["README.md", "docs/"],
-  "docsInstructions": ["docs/DOCS_STYLE.md"],
-  "docsEngine": "cursor",
-  "docsForce": false,
-  "agentDocs": true,
-  "docCheckpointHours": 4
+ "project": "my-app",
+ "messaging": true,
+ "docs": true,
+ "docsPaths": ["README.md", "docs/"],
+ "docsInstructions": ["docs/DOCS_STYLE.md"],
+ "docsEngine": "cursor",
+ "docsForce": false,
+ "agentDocs": true,
+ "docCheckpointHours": 4
 }
 ```
 
 | Key | Meaning |
 |-----|---------|
-| `project` | optional display/group name for sessions in this repo (stored on new rows when `--project` is omitted) |
+| `project` / `projectId` | optional create-time default project id (stored on new rows when `--project` is omitted); `projectId` synonym |
 | `messaging` | `true` to opt in for sessions in this project (session `messaging: false` wins) |
 | `docs` | `true` to enable the documentarian |
 | `docsPaths` | default `README.md` + `docs/` (+ `CHANGELOG.md` only if it already exists) |
@@ -611,13 +619,37 @@ Resolved by walking cwd → ancestors until the git root (or filesystem root).
 | `agentDocs` | `true` to deliver docs-process / AGENT-DOCS paths on launch and track checkpoints |
 | `docCheckpointHours` | overdue threshold hours for status/dashboard only (default 4; not a progress metric) |
 
+### Memory project metadata: `<memoryRepo>/<project>/.agentfleet.json`
+
+Portable mappings (many-to-many projects↔repos). Template: `templates/project-agentfleet.example.json`.
+
+```json
+{
+  "id": "my-app",
+  "name": "My App",
+  "repositories": [
+    { "remote": "github.com/example/my-app", "locations": ["."] },
+    { "remote": "github.com/example/monorepo", "locations": ["packages/my-app"] }
+  ],
+  "relationships": [{ "type": "related", "project": "my-app-docs" }]
+}
+```
+
 ### Fleet: `~/.agentfleet/config.json`
 
 ```json
-{ "defaultEngine": "cursor", "project": "ops", "memoryRepo": "/path/to/aflt-memory", "memoryActiveDays": 14 }
+{
+  "defaultEngine": "cursor",
+  "project": "ops",
+  "memoryRepo": "/path/to/aflt-memory",
+  "memoryActiveDays": 14,
+  "repositories": {
+    "github.com/example/my-app": { "path": "~/github/example/my-app" }
+  }
+}
 ```
 
-Optional `"project"` is a create-time default when `--project` / `AFLT_PROJECT` / `.agentfleet.json` are unset (useful for non-repo agent groups). Optional `"memoryRepo"` comes from `aflt memory init` (override with `AFLT_MEMORY_REPO`). Optional `"memoryActiveDays"` sets the Active/Dormant threshold for root `DASHBOARD.md` (positive integer; overridden by `--active-days`; default 14).
+Optional `"project"` is a create-time default when `--project` / `AFLT_PROJECT` / source `.agentfleet.json` are unset (useful for non-repo agent groups). Optional `"memoryRepo"` comes from `aflt memory init` (override with `AFLT_MEMORY_REPO`). Optional `"memoryActiveDays"` sets the Active/Dormant threshold for root `DASHBOARD.md` (positive integer; overridden by `--active-days`; default 14). Optional `"repositories"` maps normalized remotes → machine-local checkout paths (not portable; inspect with `aflt projects`).
 
 ---
 
@@ -682,5 +714,6 @@ Injected on launch (do not overwrite casually inside a session):
 - [README.md](README.md) — product overview and command summary
 - [docs/CAPABILITIES.md](docs/CAPABILITIES.md) — engine × mode matrix and `aflt wait` outcomes
 - [docs/SETUP.md](docs/SETUP.md) — environment setup, Herdr, work-computer install, troubleshooting
+- [docs/PROJECT-REPO-METADATA.md](docs/PROJECT-REPO-METADATA.md) — project↔repo schema (issue #1)
 - `aflt help` — authoritative flag list
 - `templates/orchestrator.md` / `templates/documentarian.md` — prompts injected for master and docs workers

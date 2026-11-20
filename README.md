@@ -31,7 +31,7 @@ CLI coding agents are powerful but ephemeral: chat IDs live in engine-local stor
 | **Modes** | Interactive TUI (Herdr by default when `hc` is on PATH) vs headless `aflt run` / spawn |
 | **Herdr** | `hc` terminals + desktop app spaces/tabs + bundled `af-sessions` panel; shell-only reboot recovery via in-tab relaunch |
 | **Orchestration** | `aflt master`, `aflt spawn [--detach]`, `children`, `wait`, `result [--require-fresh]`, `tail`, `send`, `stop`, `rm --children` |
-| **Projects** | Optional `session.project` + `aflt ls --project` / `aflt timeline` (read-only session tree + commits) |
+| **Projects** | Optional `session.project` + `aflt ls --project` / `aflt timeline` / `aflt projects` (repo mappings + validation) |
 | **Live dashboard** | `aflt dashboard --serve` / `--snapshot` — local history-first activity UI (tree + Gantt; optional star graph; not `aflt memory dashboard`) |
 | **Memory** | Opt-in `aflt memory` repo: sync per-project timelines + root `DASHBOARD.md` into a local git working tree; optional `--commit`/`--push` for generated `_aflt/` + root `DASHBOARD.md` |
 | **Messaging** | Opt-in `aflt msg` / `inbox` / `thread` + stdio MCP (`aflt mcp`) for Copilot & Cursor |
@@ -140,7 +140,7 @@ Home directory: **`$AGENTFLEET_HOME`** (default `~/.agentfleet`). Override regis
 
 Each session stores identity (`id`, `title`, `chatId`, `cwd`, `branch`, `model`, `engine`), optional `project`, lifecycle `status` (`active`\|`paused`\|`done`), `tags` / `notes` / `prompt`, optional `herdr` evidence from `aflt sync`, and orchestration fields (`parent`, `role`, `task`, `result`, `workerStatus`, run pid metadata, `messaging`, …).
 
-**Project name:** projects need **no git**. New sessions store: `--project` → parent → `AFLT_PROJECT` → `.agentfleet.json` `"project"` → `config.json` `"project"` → git basename → cwd basename (`adhoc` for `$HOME`/`tmpdir`/`/tmp`). Existing rows without `project`: derive at read with cwd rules only (never env/global; never rewrite the registry). Workers inherit the master's project. Legacy alias: stored project `af` groups/displays/syncs as `aflt` (registry value unchanged).
+**Project name:** projects need **no git**. New sessions store: `--project` → parent → `AFLT_PROJECT` → `.agentfleet.json` `"project"` / `"projectId"` → `config.json` `"project"` → **unambiguous** project↔repo mapping inference (memory `<project>/.agentfleet.json` + local `config.repositories` checkouts) → git basename → cwd basename (`adhoc` for `$HOME`/`tmpdir`/`/tmp`). Existing rows without `project`: derive at read with cwd rules only (never env/global; **never rewrite** the registry). Workers inherit the master's project. Legacy alias: stored project `af` groups/displays/syncs as `aflt` (registry value unchanged). Schema: [docs/PROJECT-REPO-METADATA.md](docs/PROJECT-REPO-METADATA.md). Inspect with `aflt projects [--json]`.
 
 **STATUS vs HERDR on `aflt ls`:** STATUS is saved lifecycle (a process exit does **not** mark the task done — use `aflt done`). HERDR is live runtime from `hc ls --all --json`: `running` \| `shell` \| `exited` \| `missing` \| `unknown` \| `-`. `aflt ls --json` includes effective `project` + `parent`. Archived sessions are hidden by default; `--archived` or `--all` includes them (`archived` / `archivedAt` in JSON). `aflt ls` never writes the registry; `aflt sync` persists `herdr` evidence without changing `status` / `lastUsed`. `aflt timeline` is read-only (no registry/Herdr writes).
 
@@ -400,7 +400,7 @@ aflt import copilot <uuid|prefix>…   # register; --title (single id), --tag, -
 
 ## Configuration
 
-### Project: `.agentfleet.json`
+### Project: `.agentfleet.json` (source checkout)
 
 ```json
 {
@@ -414,15 +414,32 @@ aflt import copilot <uuid|prefix>…   # register; --title (single id), --tag, -
 }
 ```
 
-Resolved by walking cwd → ancestors until the git root (or filesystem root). Optional `"project"` names the group for `aflt ls --project` / `aflt timeline` when `--project` / `AFLT_PROJECT` are omitted on create.
+Resolved by walking cwd → ancestors until the git root (or filesystem root). Optional `"project"` / `"projectId"` is a create-time launch default referencing the **project id** (not a checkout path).
+
+### Memory project metadata: `<memoryRepo>/<project>/.agentfleet.json`
+
+Portable many-to-many project↔repo mappings (stable `id`, repository remotes, repo-relative `locations`, optional `relationships`). Machine checkout paths stay in local config. Full schema + examples: [docs/PROJECT-REPO-METADATA.md](docs/PROJECT-REPO-METADATA.md) and `templates/project-agentfleet.example.json`.
+
+```bash
+aflt projects              # mappings + validation problems
+aflt projects my-app --json
+```
 
 ### Fleet: `~/.agentfleet/config.json`
 
 ```json
-{ "defaultEngine": "cursor", "project": "ops", "memoryRepo": "/path/to/aflt-memory", "memoryActiveDays": 14 }
+{
+  "defaultEngine": "cursor",
+  "project": "ops",
+  "memoryRepo": "/path/to/aflt-memory",
+  "memoryActiveDays": 14,
+  "repositories": {
+    "github.com/example/my-app": { "path": "~/github/example/my-app" }
+  }
+}
 ```
 
-Optional `"project"` is a create-time default for non-repo agent groups (after `AFLT_PROJECT`, before basename/`adhoc`). Optional `"memoryRepo"` is set by `aflt memory init` (override with `AFLT_MEMORY_REPO`). Optional `"memoryActiveDays"` sets the Active/Dormant threshold for root `DASHBOARD.md` (overridden by `--active-days`; default 14).
+Optional `"project"` is a create-time default for non-repo agent groups (after `AFLT_PROJECT`, before mapping inference / basename/`adhoc`). Optional `"memoryRepo"` is set by `aflt memory init` (override with `AFLT_MEMORY_REPO`). Optional `"memoryActiveDays"` sets the Active/Dormant threshold for root `DASHBOARD.md` (overridden by `--active-days`; default 14). Optional `"repositories"` maps normalized remote identities → local checkout paths (per machine; never commit these into the memory repo).
 
 ### Environment
 
