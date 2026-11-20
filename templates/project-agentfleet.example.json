@@ -1,0 +1,19 @@
+{
+  "id": "example-project",
+  "name": "Example Project",
+  "repositories": [
+    {
+      "id": "example-main",
+      "remote": "github.com/example/example-project",
+      "locations": ["."]
+    },
+    {
+      "id": "example-in-monorepo",
+      "remote": "github.com/example/monorepo",
+      "locations": ["packages/example-project"]
+    }
+  ],
+  "relationships": [
+    { "type": "related", "project": "example-sibling" }
+  ]
+}
