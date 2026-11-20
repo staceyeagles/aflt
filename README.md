@@ -246,7 +246,31 @@ never overwritten; capture errors appear in the dashboard. The Doc Bot reads
 these notes on its next pass; capture does not launch it, commit, push, or
 change session lifecycle. Other engines, or turns without a native Task Complete
 event, do not get an invented completion message. Without this flag the
-dashboard remains read-only.
+dashboard does not write memory notes (it may still append local
+`runs/<id>/turns.jsonl` for History Gantt — see below).
+
+### Interactive turn capture (History Gantt)
+
+Interactive Copilot completions (and Cursor transcripts when uniquely mapped)
+are captured into `$AGENTFLEET_HOME/runs/<id>/turns.jsonl` so the dashboard
+History Gantt shows completed markers with redacted prompt + completion text
+on hover. Live dashboard refresh syncs new Copilot `session.task_complete`
+events (pairing the preceding `user.message` when present). This is separate
+from `--capture-completions` memory notes.
+
+```bash
+# Preview what would be imported (default = dry-run)
+aflt turns backfill --json
+aflt turns backfill my-session --engine copilot
+
+# Write turns.jsonl (idempotent; safe to re-run)
+aflt turns backfill --apply
+aflt turns backfill my-session --engine copilot --apply --json
+```
+
+Secrets are redacted before disk write. `emitTurnCaptured` is a stable no-op
+hook (deferred to issue #2 / Doc Bot messaging) unless a handler is registered
+in-process.
 
 ## Engines (Cursor + Copilot)
 

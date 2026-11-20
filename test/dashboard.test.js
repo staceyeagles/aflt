@@ -30,6 +30,7 @@ function clearDashboardModules() {
     '../lib/herdr',
     '../lib/orchestrate',
     '../lib/task-completions',
+    '../lib/turns',
     '../lib/run',
     '../lib/run-history',
     '../lib/agent-docs',
