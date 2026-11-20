@@ -1,0 +1,4 @@
+{"type":"tool.execution_complete","id":"tec-p1","timestamp":"2026-11-19T23:00:05.000Z","data":{"toolCallId":"call-p1","success":true,"result":{"content":"ok"}}}
+{"type":"assistant.turn_start","id":"ts-prog-1","timestamp":"2026-11-19T23:00:06.000Z","data":{"turnId":"1"}}
+{"type":"assistant.message","id":"a-prog-1","timestamp":"2026-11-19T23:00:07.000Z","data":{"messageId":"m-prog-1","content":"Finished the long task.","toolRequests":[]}}
+{"type":"assistant.turn_end","id":"te-prog-1","timestamp":"2026-11-19T23:00:08.000Z","data":{"turnId":"1"}}

@@ -256,12 +256,17 @@ dashboard does not write memory notes (it may still append local
 
 ### Interactive turn capture (History Gantt)
 
-Interactive Copilot completions (and Cursor transcripts when uniquely mapped)
-are captured into `$AGENTFLEET_HOME/runs/<id>/turns.jsonl` so the dashboard
-History Gantt shows completed markers with redacted prompt + completion text
-on hover. Live dashboard refresh syncs new Copilot `session.task_complete`
-events (pairing the preceding `user.message` when present). This is separate
-from `--capture-completions` memory notes.
+Interactive Copilot turns (and Cursor transcripts when uniquely mapped) are
+captured into `$AGENTFLEET_HOME/runs/<id>/turns.jsonl` so the dashboard History
+Gantt shows completed markers with redacted prompt + reply text on hover. Live
+dashboard refresh pairs each Copilot `user.message` with the final
+`assistant.message` of the agent loop that follows (completed when the next
+`user.message` arrives, or on a trailing `assistant.turn_end` whose last
+assistant message has no pending `toolRequests`). Successful
+`session.task_complete` events merge into the same turn when present (assistant
+text wins; the summary is kept as `taskCompleteSummary`). Incremental sync
+persists offsets / in-progress loop state so partial loops are not recorded
+early. This is separate from `--capture-completions` memory notes.
 
 ```bash
 # Preview what would be imported (default = dry-run)

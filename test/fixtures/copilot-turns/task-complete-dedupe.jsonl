@@ -1,0 +1,5 @@
+{"type":"user.message","id":"u-dedupe-1","timestamp":"2026-11-19T22:30:00.000Z","data":{"content":"Ship the feature"}}
+{"type":"assistant.turn_start","id":"ts-dedupe-0","timestamp":"2026-11-19T22:30:01.000Z","data":{"turnId":"0"}}
+{"type":"assistant.message","id":"a-dedupe-1","timestamp":"2026-11-19T22:30:02.000Z","data":{"messageId":"m-dedupe-1","content":"Shipped the feature with tests.","toolRequests":[]}}
+{"type":"assistant.turn_end","id":"te-dedupe-0","timestamp":"2026-11-19T22:30:03.000Z","data":{"turnId":"0"}}
+{"type":"session.task_complete","id":"tc-dedupe-1","timestamp":"2026-11-19T22:30:04.000Z","data":{"success":true,"summary":"Feature shipped (task_complete summary)"}}

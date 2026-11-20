@@ -216,7 +216,8 @@ aflt dashboard --snapshot <file.svg|html>
 # Standalone SVG or self-contained HTML snapshot of the activity UI (no server).
 
 aflt turns backfill [<id|title>...] [--engine copilot|cursor|all] [--apply] [--json]
-# Import interactive Copilot (events.jsonl) / Cursor (unique transcript) turns into
+# Import interactive Copilot (events.jsonl user↔assistant loops and optional
+# session.task_complete) / Cursor (unique transcript) turns into
 # runs/<id>/turns.jsonl. Dry-run by default; --apply writes. Idempotent (dedupe).
 # Does not write memory status-notes. emitTurnCaptured sends redacted turns to
 # doc-bot via sendDirectMessage when both sides opted into messaging (else no-op).
@@ -282,9 +283,12 @@ content and position stay stable across live updates. Empty graph clicks and
 Escape immediately dismiss popups, including focused or pending hints.
 
 Native Copilot `session.task_complete` summaries appear in session/project
-details. `aflt dashboard --serve --capture-completions` opts
-into writing each successful event to a dated project `status-notes/` file in
-the configured memory repo. Existing events are backfilled, then new events are
+details (and optionally as memory status notes — see below). History Gantt turns
+are separate: live refresh and `aflt turns backfill` record ordinary Copilot
+user↔assistant loops from `events.jsonl` even when `session.task_complete` is
+absent. `aflt dashboard --serve --capture-completions` opts into writing each
+successful Task Complete event to a dated project `status-notes/` file in the
+configured memory repo. Existing events are backfilled, then new events are
 captured on refresh. `_aflt/task-completions/` holds generated receipts: never
 hand-edit them. They prevent duplicates, including after a note is archived.
 Capture redacts sensitive values, never overwrites human notes, never changes
@@ -540,7 +544,7 @@ aflt docs --status --json
 - On launch/resume (`new` / `resume` / `run` / Herdr backends) for **Cursor and Copilot**: when enabled, sets `AFLT_PROJECT`, `AFLT_MEMORY_REPO`, `AFLT_DOCS_PROCESS`, `AFLT_AGENT_DOCS`, `AFLT_AGENTS_MD` and may prepend a short preamble. Existing `AGENTS.md` instructions are preserved (pointed at, not replaced). Works with no memory repo; missing required memory is reported (`AFLT_MEMORY_MISSING=1` + WARNING).
 - Checkpoints live under `$AGENTFLEET_HOME/doc-checkpoints/`. Progress is **requested → completed** only; overdue uses age for status/dashboard labels and never interrupts busy agents. Dashboard JSON includes `checkpoints` + per-project `checkpoint`.
 - Archive convention: live status notes ignore `status-notes/archive/`; **aflt never auto-moves or deletes documents**.
-- Doc Bot notifications use opted-in direct messaging (`agentDocs.notifyDocBot` → `messages.sendDirectMessage`) when both the requester and `doc-bot` have messaging enabled. Do not reimplement Copilot completion capture (`aflt dashboard --capture-completions` / `lib/task-completions.js`). Interactive Gantt history uses `lib/turns.js` → `runs/<id>/turns.jsonl` (always local; separate from memory notes); `turns.emitTurnCaptured` sends each captured turn to doc-bot via direct messaging when both sides are opted in (otherwise no-op; never wakes agents).
+- Doc Bot notifications use opted-in direct messaging (`agentDocs.notifyDocBot` → `messages.sendDirectMessage`) when both the requester and `doc-bot` have messaging enabled. Do not reimplement Copilot completion capture (`aflt dashboard --capture-completions` / `lib/task-completions.js`). Interactive Gantt history uses `lib/turns.js` → `runs/<id>/turns.jsonl` (always local; separate from memory notes): Copilot pairs `user.message` with the final `assistant.message` of each completed agent loop (and merges `session.task_complete` when present); Cursor uses a unique transcript when mapped. `turns.emitTurnCaptured` sends each captured turn to doc-bot via direct messaging when both sides are opted in (otherwise no-op; never wakes agents).
 
 ### Doctor and Herdr helpers
 

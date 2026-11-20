@@ -1,0 +1,8 @@
+{"type":"user.message","id":"u-plain-1","timestamp":"2026-11-19T21:00:00.000Z","data":{"content":"What is 2+2?"}}
+{"type":"assistant.turn_start","id":"ts-plain-1","timestamp":"2026-11-19T21:00:01.000Z","data":{"turnId":"0"}}
+{"type":"assistant.message","id":"a-plain-1","timestamp":"2026-11-19T21:00:02.000Z","data":{"messageId":"m-plain-1","content":"2+2 is 4.","toolRequests":[]}}
+{"type":"assistant.turn_end","id":"te-plain-1","timestamp":"2026-11-19T21:00:03.000Z","data":{"turnId":"0"}}
+{"type":"user.message","id":"u-plain-2","timestamp":"2026-11-19T21:01:00.000Z","data":{"content":"Thanks"}}
+{"type":"assistant.turn_start","id":"ts-plain-2","timestamp":"2026-11-19T21:01:01.000Z","data":{"turnId":"1"}}
+{"type":"assistant.message","id":"a-plain-2","timestamp":"2026-11-19T21:01:02.000Z","data":{"messageId":"m-plain-2","content":"You are welcome.","toolRequests":[]}}
+{"type":"assistant.turn_end","id":"te-plain-2","timestamp":"2026-11-19T21:01:03.000Z","data":{"turnId":"1"}}
