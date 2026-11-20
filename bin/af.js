@@ -31,6 +31,7 @@ const resolveSession = require('../lib/resolve-session');
 const archiveLib = require('../lib/archive');
 const purgeLib = require('../lib/purge');
 const turns = require('../lib/turns');
+const notify = require('../lib/notify');
 const {
   parseArgs,
   resolveCwd,
@@ -382,7 +383,11 @@ Usage:
                             + af layout into ~/.config/herdr-app (or $HERDR_APP_HOME)
   aflt herdr-app status       Report linked/copied/missing for the panel + layout
   aflt doctor [--json]
-                            Read-only environment checks (hc, engines, home)
+                            Read-only environment checks (hc, engines, home,
+                            notify status — never prints the notify key)
+  aflt notify test [--json]
+                            Send a sample notify webhook event (requires
+                            config.json notify.url or AFLT_NOTIFY_URL)
   aflt help
                             Exit: 0 ok, 1 error, 2 wait timeout, 3 waiting,
                             75 critical registry write failed after a run
@@ -397,6 +402,12 @@ Environment:
                             config.json project / basename). Projects need no git.
   AFLT_MEMORY_REPO        Override project-memory repo path (else config.json
                             memoryRepo from aflt memory init)
+  AFLT_NOTIFY_URL         Opt-in webhook URL for run/turn notify (else
+                            config.json notify.url). Off unless set.
+  AFLT_NOTIFY_KEY         Optional secret for the notify webhook header
+                            (else config.json notify.key)
+  AFLT_NOTIFY_HEADER      Notify auth header name (default Authorization;
+                            value is Bearer <key> for Authorization)
   AGENTFLEET_CURSOR_BIN   Override cursor-agent binary
   AGENTFLEET_COPILOT_BIN  Override copilot binary
   AGENTFLEET_VIA          Default --via backend (resume --all; also overrides
@@ -595,6 +606,9 @@ async function main() {
       break;
     case 'doctor':
       cmdDoctor(rest);
+      break;
+    case 'notify':
+      await cmdNotify(rest);
       break;
     default:
       fail(`unknown command: ${cmd}\n\n${USAGE}`);
@@ -3488,6 +3502,20 @@ async function executeHeadlessRun(session, opts = {}) {
   if (registryWriteError) {
     code = registry.REGISTRY_WRITE_EXIT;
   }
+
+  // Opt-in webhook: fire-and-forget; never breaks the run.
+  try {
+    const fresh = registry.find(session.id) || session;
+    notify.notifyRunFinished(fresh, {
+      exitStatus: code,
+      timedOut: result.timedOut,
+      stopped,
+      summary: runlib.outputExcerpt((result && result.stdout) || '', notify.SUMMARY_CAP),
+    });
+  } catch (_) {
+    /* ignore */
+  }
+
   return {
     code,
     timedOut: result.timedOut,
@@ -6842,6 +6870,12 @@ function cmdDoctor(argv) {
   } catch (err) {
     add('mcp_wiring', false, err.message);
   }
+  try {
+    const st = notify.doctorStatus(process.env);
+    add(st.name, st.ok, st.detail);
+  } catch (err) {
+    add('notify', true, `status unavailable: ${err.message}`);
+  }
   // copilot/hc optional for plain-only workflows — warn on old herdr-core but do not fail exit
   const ok = checks
     .filter(
@@ -6855,6 +6889,7 @@ function cmdDoctor(argv) {
           'mcp_copilot',
           'mcp_cursor',
           'mcp_wiring',
+          'notify',
         ].includes(c.name)
     )
     .every((c) => c.ok);
@@ -6869,6 +6904,36 @@ function cmdDoctor(argv) {
     );
   }
   process.exitCode = ok ? 0 : 1;
+}
+
+async function cmdNotify(argv) {
+  const { args, flags } = parseArgs(argv || []);
+  const sub = args[0];
+  const asJson = Boolean(flags.json);
+  if (!sub || sub === 'help' || sub === '-h' || sub === '--help') {
+    fail('usage: aflt notify test [--json]');
+  }
+  if (sub !== 'test') {
+    fail(`unknown notify subcommand: ${sub}\nusage: aflt notify test [--json]`);
+  }
+  const result = await notify.sendTestEvent({ env: process.env });
+  if (asJson) {
+    emitJson({
+      ok: Boolean(result.ok),
+      event: result.payload && result.payload.event,
+      status: result.status != null ? result.status : null,
+      error: result.error || null,
+      config: result.config || null,
+      payload: result.payload || null,
+    });
+  } else if (result.ok) {
+    process.stdout.write(
+      `notify test ok (HTTP ${result.status != null ? result.status : '?'})\n`
+    );
+  } else {
+    process.stderr.write(String(result.error || 'notify test failed') + '\n');
+  }
+  process.exitCode = result.ok ? 0 : 1;
 }
 
 function emitJson(value) {

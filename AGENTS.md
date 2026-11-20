@@ -49,8 +49,9 @@ aflt setup --apply --herdr
 aflt setup --apply --memory ~/aflt-memory
 aflt setup --json
 
-aflt doctor               # read-only: node, home, hc, engines, MCP hints
+aflt doctor               # read-only: node, home, hc, engines, MCP hints, notify status
 aflt doctor --json
+aflt notify test          # sample webhook POST (requires notify.url / AFLT_NOTIFY_URL)
 ```
 
 Also install the engine(s) you will use (`aflt setup` reports missing engines but never installs them):
@@ -545,7 +546,8 @@ aflt docs --status --json
 ```bash
 aflt setup [--apply] [--json] [--herdr] [--memory <path>] [--force]
 # Machine setup preview (default) or apply; never edits shell rc / sessions
-aflt doctor [--json]                 # read-only environment checks
+aflt doctor [--json]                 # read-only environment checks (notify status; never prints key)
+aflt notify test [--json]            # sample notify webhook POST (requires url config/env)
 aflt which-backend                   # auto-detected resume --all backend
 aflt herdr-templates [--force] [--dry-run]
 # Install only Cursor/Copilot/OpenCode Herdr templates into ~/.config/herdr-core/templates
@@ -593,7 +595,7 @@ Home: **`$AGENTFLEET_HOME`** (default `~/.agentfleet`). Override the registry fi
 | Path | Role |
 |------|------|
 | `sessions.json` | Atomic registry (temp + rename; cross-process `.lock` for RMW). Mode `0600`. |
-| `config.json` | Fleet defaults (`defaultEngine`, optional `memoryRepo`, `project`, `repositories` checkout map) |
+| `config.json` | Fleet defaults (`defaultEngine`, optional `memoryRepo`, `project`, `notify`, `repositories` checkout map) |
 | `runs/<id>/` | Captured headless stdout + interactive `turns.jsonl` / `turns-index.json` |
 | `results/` | Worker/master handoffs (`$AGENTFLEET_RESULT`) |
 | `plans/` | Master plans (`$AGENTFLEET_PLAN`) |
@@ -664,6 +666,11 @@ Portable mappings (many-to-many projects↔repos). Template: `templates/project-
   "project": "ops",
   "memoryRepo": "/path/to/aflt-memory",
   "memoryActiveDays": 14,
+  "notify": {
+    "url": "https://hooks.example.com/aflt",
+    "key": "optional-secret",
+    "header": "Authorization"
+  },
   "repositories": {
     "github.com/example/my-app": { "path": "~/github/example/my-app" }
   }
@@ -671,6 +678,8 @@ Portable mappings (many-to-many projects↔repos). Template: `templates/project-
 ```
 
 Optional `"project"` is a create-time default when `--project` / `AFLT_PROJECT` / source `.agentfleet.json` are unset (useful for non-repo agent groups). Optional `"memoryRepo"` comes from `aflt memory init` (override with `AFLT_MEMORY_REPO`). Optional `"memoryActiveDays"` sets the Active/Dormant threshold for root `DASHBOARD.md` (positive integer; overridden by `--active-days`; default 14). Optional `"repositories"` maps normalized remotes → machine-local checkout paths (not portable; inspect with `aflt projects`).
+
+Optional `"notify"` (or `AFLT_NOTIFY_URL` / `AFLT_NOTIFY_KEY` / `AFLT_NOTIFY_HEADER`) enables fire-and-forget webhook POSTs on headless run completion/failure (`run.completed` / `run.failed`) and interactive turn capture (`turn.captured` via `emitTurnCaptured`). Off unless a URL is set. Default auth header is `Authorization: Bearer <key>`; a custom `header` / `AFLT_NOTIFY_HEADER` sends the raw key. Bodies include event, session id, title, project, engine, redacted cwd, exit status, timestamp, and a short redacted summary (reuses `memory.redactSensitive`; never include secrets). Short timeout; failures log to stderr and never break the run. `aflt notify test` sends a sample event; `aflt doctor` reports notify status without printing the key.
 
 ---
 
@@ -700,6 +709,9 @@ Set by the caller or the environment:
 | `AFLT_MEMORY_REPO` | Override project-memory repo path (else `config.json` `memoryRepo` from `aflt memory init`). Also injected on launch when `agentDocs` is enabled. |
 | `AFLT_DOCS_PROCESS` / `AFLT_AGENT_DOCS` / `AFLT_AGENTS_MD` / `AFLT_MEMORY_PROJECT` | Set on launch/resume when `agentDocs` is enabled (paths to process doc, project AGENT-DOCS.md, AGENTS.md, memory project folder). |
 | `AFLT_MEMORY_MISSING` | `1` when `agentDocs` is enabled but no memory repo is configured |
+| `AFLT_NOTIFY_URL` | Opt-in webhook URL for run/turn notify (else `config.json` `notify.url`). Off unless set. |
+| `AFLT_NOTIFY_KEY` | Optional notify webhook secret (else `notify.key`); sent as auth header |
+| `AFLT_NOTIFY_HEADER` | Notify auth header name (default `Authorization` with `Bearer <key>`) |
 | `AGENTFLEET_CURSOR_BIN` | Override `cursor-agent` |
 | `AGENTFLEET_COPILOT_BIN` | Override `copilot` |
 | `AGENTFLEET_COPILOT_HOME` | Copilot home for import (else `COPILOT_HOME` / `~/.copilot`) |
