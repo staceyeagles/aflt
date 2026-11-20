@@ -216,7 +216,7 @@ aflt dashboard --snapshot <file.svg|html>
 aflt turns backfill [<id|title>...] [--engine copilot|cursor|all] [--apply] [--json]
 # Import interactive Copilot (events.jsonl) / Cursor (unique transcript) turns into
 # runs/<id>/turns.jsonl. Dry-run by default; --apply writes. Idempotent (dedupe).
-# Does not write memory status-notes. emitTurnCaptured is deferred (issue #2).
+# Does not write memory status-notes. emitTurnCaptured is the hook for direct messaging (#2).
 
 aflt memory | aflt memory where [--json]
 # Resolved memory repo path + source (env|config), or hint to run init (exit 1).
@@ -580,7 +580,7 @@ Home: **`$AGENTFLEET_HOME`** (default `~/.agentfleet`). Override the registry fi
 |------|------|
 | `sessions.json` | Atomic registry (temp + rename; cross-process `.lock` for RMW). Mode `0600`. |
 | `config.json` | Fleet defaults (`defaultEngine`, optional `memoryRepo`, `project`, `repositories` checkout map) |
-| `runs/<id>/` | Captured headless stdout | Interactive Gantt history uses `lib/turns.js` → `runs/<id>/turns.jsonl` (always local; separate from memory notes); `turns.emitTurnCaptured` is the hook for sending captured turns via direct messaging.
+| `runs/<id>/` | Captured headless stdout + interactive `turns.jsonl` / `turns-index.json` |
 | `results/` | Worker/master handoffs (`$AGENTFLEET_RESULT`) |
 | `plans/` | Master plans (`$AGENTFLEET_PLAN`) |
 | `messages/<masterId>.jsonl` | Team message log |
