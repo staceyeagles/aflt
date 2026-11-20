@@ -246,7 +246,7 @@ aflt sync [--dry-run] [--json]
 
 `aflt timeline` is read-only. Default project: `<project>` arg → `AFLT_PROJECT` → cwd's derived project. Text shows local times (JSON keeps ISO UTC). Commits come from each session's own cwd (`commitsReason`: `not-git` / `missing-cwd`); an open-ended row that is not a live run is bounded at `lastUsed` (`open-ended` when it never ran).
 
-`aflt dashboard` is a separate top-level command from `aflt memory dashboard`. It serves a local activity UI (`--serve`, default `127.0.0.1:8787`) or writes an SVG/HTML snapshot (`--snapshot`). Default view is a collapsible project/session tree with an **activity-only** Gantt timeline (most recent activity first; dormant projects collapsed; state filter: Working / Waiting / Idle / Completed / Failed — same labels and CSS `--state-*` colors as the Graph legend, detail badges, and stats). The timeline shows markers only for finished turns (blue = completed, red = failed) at each turn’s completion time; no working/idle span bars. Hover a marker for that turn’s prompt + reply (truncated, redacted like `/api/history`); project rows merge their session markers. The star graph is optional. History rows share Graph badges (waiting `?` / working spinner) and click → detail / Esc / SSE / double-click → Herdr focus (same loopback-only `/api/herdr/focus` token flow; remote LAN clients see a Mini-only note) — **no History row hover popups** (Graph node tooltips stay). Selecting a row opens a history panel (latest completion / status note / open doc checkpoints, then prompt↔reply pairs from run logs, newest first). Issue #2 cross-session message markers are reserved in the payload (`messages` / per-row `messageMarkers`) but not rendered. Background refreshes never mutate the registry or Herdr; memory writes require `--capture-completions`. All served text is redacted; write/action endpoints remain loopback-only. It never resumes or launches agents; errors appear in the sidebar. Snapshots cannot focus Herdr. The graph keeps node positions across SSE ticks and cools the force layout until it settles (reheat on node add/remove or resize). Stats Working / Waiting / Idle / Completed / Failed follow the same live filter state as History/Graph (OSC working or live `runPid`, not bare `herdr.runtime` or registry `active`). Project hubs, History project rows, detail badges, and state filters share one roll-up: `waiting > working > failed > idle > completed` from member sessions only. Sessionless memory projects are History-only (bottom **No sessions** group) and never inflate Active project counts or Graph hubs. **Hide dormant** (Graph + History) uses the same 24h threshold as Active projects and re-lays out the Graph on toggle and SSE. **Show archived** reveals soft-archived sessions; Archive/Delete POSTs are loopback + action-token only (same as `/api/herdr/focus`).
+`aflt dashboard` is a separate top-level command from `aflt memory dashboard`. It serves a local activity UI (`--serve`, default `127.0.0.1:8787`) or writes an SVG/HTML snapshot (`--snapshot`). Default view is a collapsible project/session tree with an **activity-only** Gantt timeline (most recent activity first; dormant projects collapsed; state filter: Working / Waiting / Idle / Completed / Failed — same labels and CSS `--state-*` colors as the Graph legend, detail badges, and stats). The timeline shows markers only for finished turns (blue = completed, red = failed) at each turn’s completion time; no working/idle span bars. Hover a marker for that turn’s prompt + reply (truncated, redacted like `/api/history`); project rows merge their session markers. The star graph is optional. History rows share Graph badges (waiting `?` / working spinner) and click → detail / Esc / SSE / double-click → Herdr focus (same loopback-only `/api/herdr/focus` token flow; remote LAN clients see a Mini-only note) — **no History row hover popups** (Graph node tooltips stay). Selecting a row opens a history panel (latest completion / status note / open doc checkpoints, then prompt↔reply pairs from run logs, newest first). Issue #2 cross-session messages appear in the history panel and as simple row markers (`messages` / per-row `messageMarkers`; queued→waiting, read→idle, completed→completed). Background refreshes never mutate the registry or Herdr; memory writes require `--capture-completions`. All served text is redacted; write/action endpoints remain loopback-only. It never resumes or launches agents; errors appear in the sidebar. Snapshots cannot focus Herdr. The graph keeps node positions across SSE ticks and cools the force layout until it settles (reheat on node add/remove or resize). Stats Working / Waiting / Idle / Completed / Failed follow the same live filter state as History/Graph (OSC working or live `runPid`, not bare `herdr.runtime` or registry `active`). Project hubs, History project rows, detail badges, and state filters share one roll-up: `waiting > working > failed > idle > completed` from member sessions only. Sessionless memory projects are History-only (bottom **No sessions** group) and never inflate Active project counts or Graph hubs. **Hide dormant** (Graph + History) uses the same 24h threshold as Active projects and re-lays out the Graph on toggle and SSE. **Show archived** reveals soft-archived sessions; Archive/Delete POSTs are loopback + action-token only (same as `/api/herdr/focus`).
 
 Session activity is separate from lifecycle: green spinning ring = Working,
 blue = Completed, orange dashed ring / `?` = Waiting, gray = Idle, red = Failed.
@@ -427,18 +427,19 @@ aflt cursor | aflt copilot  # aliases
 
 ### Messaging (opt-in)
 
-Off by default. Enable with `aflt msg enable <session>`, `--messaging` on `new`/`run`/`master`/`spawn`, or project `.agentfleet.json` `{"messaging": true}` (ancestor walk to the git root). Session `messaging: false` overrides the project. Messaging-enabled masters pass `messaging: true` to workers unless `--no-messaging`. Team = master; workers use `parent`. No role/parent → no team.
+Off by default. Enable with `aflt msg enable <session>`, `--messaging` on `new`/`run`/`master`/`spawn`, or project `.agentfleet.json` `{"messaging": true}` (ancestor walk to the git root). Session `messaging: false` overrides the project. Messaging-enabled masters pass `messaging: true` to workers unless `--no-messaging`. **Both sender and recipient must be opted in** (explicit `messaging: false` always wins). Team aliases (`master` / `all-siblings`) stay team-scoped; direct targets use **exact id or unique exact title** (ambiguous rejected) and may be cross-session DMs. Messages are durable context only — never wake agents, inject prompts, change lifecycle/role/parent/project, or grant permissions. Status: `queued` → `read` → `completed`. Library: `messages.sendDirectMessage(from, to, body, meta)` (e.g. future turn-capture → Doc Bot).
 
 ```bash
 aflt msg <to> <text...> [--type T] [--reply <msgId>] [--from S] [--json] [--dry-run]
+# <to> = exact id | unique exact title | master | all-siblings
 # With --reply and no <to>, defaults to= the reply sender.
 # Types: question | answer | note (default) | blocked
-# Special destinations include a master id and all-siblings (from a worker).
 
 aflt msg enable|disable <session> [--json] [--dry-run]
 
-aflt inbox [<session>] [--unread] [--mark-read] [--json]
-# Default session: AGENTFLEET_SESSION / AGENTFLEET_ID; or pass a master id.
+aflt inbox [<session>] [--unread] [--status queued|read|completed]
+           [--mark-read|--mark-complete] [--json]
+# Default session: AGENTFLEET_SESSION / AGENTFLEET_ID
 
 aflt thread <msgId|master> [--json]
 ```
@@ -447,12 +448,16 @@ Limits: `AGENTFLEET_MSG_MAX_THREAD` (default 6), `AGENTFLEET_MSG_RATE` (default 
 
 From a non-af shell you must pass `--from <session>`. Inside an af-launched session, identity comes from `AGENTFLEET_SESSION` / `AGENTFLEET_ID`.
 
+**Doc Bot inbox:** enable messaging on `doc-bot` (or legacy `memory-doc`); poll `aflt inbox` / MCP `read_inbox` when idle; mark handled with `--mark-complete`. Checkpoints call `notifyDocBot` → `sendDirectMessage` when both sides are opted in (never interrupts a busy agent).
+
 ### MCP server
 
 ```bash
 aflt mcp
 # Stdio MCP server. Tools (post_message, read_inbox, list_team) are advertised
 # only when messaging is enabled for the inherited identity. Server name: af.
+# post_message: exact id/title or master/all-siblings. read_inbox: status
+# queued|read|completed; optional mark_complete.
 
 aflt mcp install --engine copilot|cursor [--write] [--project] [--cwd DIR]
                  [--dry-run] [--json]
@@ -504,7 +509,7 @@ aflt docs --status --json
 - On launch/resume (`new` / `resume` / `run` / Herdr backends) for **Cursor and Copilot**: when enabled, sets `AFLT_PROJECT`, `AFLT_MEMORY_REPO`, `AFLT_DOCS_PROCESS`, `AFLT_AGENT_DOCS`, `AFLT_AGENTS_MD` and may prepend a short preamble. Existing `AGENTS.md` instructions are preserved (pointed at, not replaced). Works with no memory repo; missing required memory is reported (`AFLT_MEMORY_MISSING=1` + WARNING).
 - Checkpoints live under `$AGENTFLEET_HOME/doc-checkpoints/`. Progress is **requested → completed** only; overdue uses age for status/dashboard labels and never interrupts busy agents. Dashboard JSON includes `checkpoints` + per-project `checkpoint`.
 - Archive convention: live status notes ignore `status-notes/archive/`; **aflt never auto-moves or deletes documents**.
-- Doc Bot notifications via messaging are **not** implemented here — `agentDocs.notifyDocBot` is an explicit hook deferred to **issue #2**. Do not reimplement Copilot completion capture (`aflt dashboard --capture-completions` / `lib/task-completions.js`).
+- Doc Bot notifications use opted-in direct messaging (`agentDocs.notifyDocBot` → `messages.sendDirectMessage`) when both the requester and `doc-bot` have messaging enabled. Do not reimplement Copilot completion capture (`aflt dashboard --capture-completions` / `lib/task-completions.js`).
 
 ### Doctor and Herdr helpers
 
@@ -564,6 +569,7 @@ Home: **`$AGENTFLEET_HOME`** (default `~/.agentfleet`). Override the registry fi
 | `results/` | Worker/master handoffs (`$AGENTFLEET_RESULT`) |
 | `plans/` | Master plans (`$AGENTFLEET_PLAN`) |
 | `messages/<masterId>.jsonl` | Team message log |
+| `messages/dm__<idA>__<idB>.jsonl` | Cross-session direct-message log (sorted ids) |
 | `docs/<hash>.json` | Documentarian since-tracking (`lastCommit`) |
 | `doc-checkpoints/<project>.json` | Opt-in agentDocs checkpoint request/complete state |
 

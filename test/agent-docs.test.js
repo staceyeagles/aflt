@@ -195,11 +195,50 @@ describe('agentDocs (issue #3 phase 1)', () => {
     assert.ok(done.lastCompleted);
   });
 
-  it('notifyDocBot is deferred to issue #2 and never sends', () => {
-    const hook = agentDocs.notifyDocBot({ type: 'checkpoint-requested', project: 'x' });
-    assert.equal(hook.deferred, true);
-    assert.equal(hook.issue, 2);
-    assert.match(hook.reason, /issue #2/i);
+  it('notifyDocBot sends via direct messaging when both sides opt in', () => {
+    delete require.cache[require.resolve('../lib/registry')];
+    delete require.cache[require.resolve('../lib/messages')];
+    delete require.cache[require.resolve('../lib/agent-docs')];
+    process.env.AGENTFLEET_HOME = home;
+    const registry = require('../lib/registry');
+    const messages = require('../lib/messages');
+    const agentDocs2 = require('../lib/agent-docs');
+
+    const missing = agentDocs2.notifyDocBot({ type: 'checkpoint-requested', project: 'x' });
+    assert.equal(missing.sent, false);
+    assert.equal(missing.issue, 2);
+    assert.match(missing.reason, /no doc-bot/i);
+
+    const doc = registry.add({
+      title: 'doc-bot',
+      chatId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0d01',
+      cwd: home,
+      engine: 'cursor',
+      status: 'active',
+      project: 'aflt-memory',
+      messaging: true,
+    });
+    const worker = registry.add({
+      title: 'chk-worker',
+      chatId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0d02',
+      cwd: home,
+      engine: 'cursor',
+      status: 'active',
+      messaging: true,
+    });
+
+    const sent = agentDocs2.notifyDocBot({
+      type: 'checkpoint-requested',
+      project: 'demo',
+      checkpoint: { sessionId: worker.id, reason: 'wrap-up' },
+    });
+    assert.equal(sent.sent, true, sent.reason);
+    assert.ok(sent.message && sent.message.id);
+
+    const inbox = messages.inboxForSession(doc, { unreadOnly: true });
+    const hit = inbox.find((m) => m.id === sent.message.id);
+    assert.ok(hit);
+    assert.equal(hit.meta && hit.meta.source, 'notifyDocBot');
   });
 
   it('listLiveStatusNotes ignores archive/ and never moves files', () => {
@@ -264,7 +303,8 @@ describe('agentDocs (issue #3 phase 1)', () => {
     const reqJson = JSON.parse(req.stdout);
     assert.equal(reqJson.ok, true);
     assert.equal(reqJson.checkpoint.progress, 'requested');
-    assert.equal(reqJson.docBotNotify.deferred, true);
+    assert.equal(reqJson.docBotNotify.issue, 2);
+    assert.equal(reqJson.docBotNotify.sent, false);
 
     const done = af(
       [

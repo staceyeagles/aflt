@@ -1426,7 +1426,7 @@ describe('aflt dashboard', () => {
             json: async () => ({
               leftOff: { completion: null, statusNote: null, checkpoint: null },
               history: [],
-              messages: { deferred: true, issue: 2, items: [] },
+              messages: { deferred: false, issue: 2, items: [] },
             }),
           };
         }
@@ -2643,8 +2643,9 @@ describe('aflt dashboard', () => {
     });
     assert.equal(state.defaultView, 'history');
     assert.ok(state.historyTree);
-    assert.equal(state.messages.deferred, true);
-    assert.deepEqual(state.messages.items, []);
+    assert.equal(state.messages.deferred, false);
+    assert.equal(state.messages.issue, 2);
+    assert.ok(Array.isArray(state.messages.items));
     const byName = Object.fromEntries(state.historyTree.projects.map((p) => [p.name, p]));
     // Idle/completed projects start collapsed; only working/waiting auto-expand.
     assert.equal(byName.alpha.collapsed, true);
@@ -2677,6 +2678,8 @@ describe('aflt dashboard', () => {
       assert.ok(body.history.some((e) => e.type === 'prompt-reply' && e.prompt === 'Fix the tests'));
       assert.match(body.history.find((e) => e.type === 'prompt-reply').reply, /All green/);
       assert.equal(body.messages.issue, 2);
+      assert.equal(body.messages.deferred, false);
+      assert.ok(Array.isArray(body.messages.items));
 
       const proj = await httpGet(port, '/api/history?project=alpha');
       assert.equal(proj.status, 200);

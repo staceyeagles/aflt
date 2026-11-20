@@ -49,14 +49,16 @@ aflt docs --status             # shows open / overdue checkpoints
 - **Overdue** means a requested checkpoint has no matching completion past the
   configured threshold — for status/dashboard only. Do not treat age as progress.
 - Never interrupt a busy agent to demand a docs update. Reminders belong in
-  status / dashboard (Doc Bot notifications via messaging are issue #2).
+  status / dashboard (Doc Bot inbox notes via opted-in messaging — issue #2).
 
 ## Doc Bot
 
 `aflt memory doc` runs the portable documentarian (`DOC-AGENT.md` in the memory
 repo). Agents should leave a clear status note when a checkpoint completes so
-Doc Bot can summarize later. Cross-session Doc Bot notifications are deferred
-to issue #2.
+Doc Bot can summarize later. When messaging is enabled on both the requester
+and `doc-bot`, checkpoints may drop a note in the Doc Bot inbox (context only;
+never wakes a busy agent). Doc Bot should poll `aflt inbox` when idle and mark
+handled items complete.
 
 ## Don'ts
 

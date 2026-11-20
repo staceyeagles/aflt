@@ -571,12 +571,46 @@ body {
   letter-spacing: 0.05em;
   color: var(--cp-text-muted);
 }
-/* Issue #2: reserved marker lane between rows (hidden until messages land). */
+/* Issue #2: message indicator on History rows (shared state colors). */
 .message-markers[hidden] { display: none !important; }
 .message-markers {
-  height: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 0.75rem;
+  padding: 0 0 0.15rem 1.75rem;
   overflow: visible;
 }
+.msg-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0.85rem;
+  height: 0.85rem;
+  padding: 0 0.2rem;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  line-height: 1;
+  color: #fff;
+  background: var(--state-waiting);
+}
+.msg-dot.waiting { background: var(--state-waiting); color: #1a1a1a; }
+.msg-dot.idle { background: var(--state-idle); }
+.msg-dot.completed { background: var(--state-completed); }
+.msg-dot.failed { background: var(--state-failed); }
+.msg-status {
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 0.25rem;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.msg-status.waiting { color: var(--state-waiting); border: 1px solid var(--state-waiting); }
+.msg-status.idle { color: var(--state-idle); border: 1px solid var(--state-idle); }
+.msg-status.completed { color: var(--state-completed); border: 1px solid var(--state-completed); }
+.history-feed-item.history-message .kind-tag { background: var(--cp-accent-soft); }
 
 .graph-view {
   position: absolute;
