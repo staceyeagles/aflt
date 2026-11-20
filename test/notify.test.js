@@ -280,7 +280,7 @@ describe('lib/notify', () => {
       status: 'active',
       project: 'demo',
     });
-    turns.emitTurnCaptured(
+    const envelope = turns.emitTurnCaptured(
       {
         sessionId: session.id,
         turnId: 't1',
@@ -290,11 +290,8 @@ describe('lib/notify', () => {
       },
       { project: 'demo' }
     );
-    // Wait briefly for fire-and-forget
-    const deadline = Date.now() + 3000;
-    while (capture.hits.length < 1 && Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 25));
-    }
+    const notify = require('../lib/notify');
+    await notify.settleNotify(envelope.notify);
     assert.equal(capture.hits.length, 1, 'expected webhook hit');
     const body = capture.hits[0].body;
     assert.equal(body.event, 'turn.captured');
@@ -328,6 +325,31 @@ describe('lib/notify', () => {
     assert.equal(r.queued, true);
     const result = await r.promise;
     assert.equal(result.ok, false);
+  });
+
+  it('settleNotify and flushPendingNotifies never throw', async () => {
+    const notify = require('../lib/notify');
+    await notify.settleNotify({ skipped: true });
+    await notify.settleNotify(null);
+    const queued = notify.notifyRunFinished(
+      { id: 's', title: 't', engine: 'cursor', cwd: home },
+      {
+        config: {
+          enabled: true,
+          url: capture.url,
+          key: null,
+          headerName: 'Authorization',
+          timeoutMs: 2000,
+        },
+        exitStatus: 0,
+        summary: 'settle-me',
+        unref: false,
+      }
+    );
+    await notify.settleNotify(queued);
+    assert.equal(capture.hits.length, 1);
+    const flushed = await notify.flushPendingNotifies();
+    assert.ok(flushed.flushed === 0 || flushed.flushed >= 0);
   });
 
   it('doctorStatus never includes the key', () => {
@@ -368,6 +390,134 @@ describe('lib/notify', () => {
     assert.equal(capture.hits.length, 1);
     assert.equal(capture.hits[0].headers.authorization, 'Bearer cli-key');
     assert.equal(capture.hits[0].body.sessionId, 'notify-test');
+  });
+
+  it('aflt run delivers run.completed to webhook before the process exits', async () => {
+    const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'af-notify-run-stub-'));
+    const stubCursor = path.join(stubDir, 'cursor-agent');
+    fs.writeFileSync(
+      stubCursor,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${1:-}" == "create-chat" ]]; then
+  echo "deadbeef-1111-4111-8111-ffffffffffff"
+  exit 0
+fi
+echo "stub-run-ok"
+exit 0
+`,
+      { mode: 0o755 }
+    );
+
+    let webhookReceivedBeforeExit = false;
+    let childExited = false;
+    const hitsAtExit = { count: 0, event: null };
+
+    // Replace the default capture handler so we know the POST landed while
+    // the child was still alive (regression for unref'd fire-and-forget exit).
+    capture.server.removeAllListeners('request');
+    capture.server.on('request', (req, res) => {
+      const chunks = [];
+      req.on('data', (c) => chunks.push(c));
+      req.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        let body = null;
+        try {
+          body = raw ? JSON.parse(raw) : null;
+        } catch (_) {
+          body = raw;
+        }
+        capture.hits.push({
+          method: req.method,
+          url: req.url,
+          headers: { ...req.headers },
+          body,
+          raw,
+        });
+        if (!childExited && body && body.event === 'run.completed') {
+          webhookReceivedBeforeExit = true;
+        }
+        res.writeHead(204);
+        res.end();
+      });
+    });
+
+    const child = spawn(
+      process.execPath,
+      [
+        afJs,
+        'run',
+        'notify-run-flush',
+        '--prompt',
+        'Reply pong',
+        '--cwd',
+        home,
+        '--mode',
+        'ask',
+        '--json',
+      ],
+      {
+        env: {
+          ...process.env,
+          AGENTFLEET_HOME: home,
+          HOME: home,
+          AGENTFLEET_CURSOR_BIN: stubCursor,
+          PATH: `${stubDir}${path.delimiter}${process.env.PATH || ''}`,
+          AFLT_NOTIFY_URL: capture.url,
+          AFLT_NOTIFY_KEY: 'run-key',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }
+    );
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (c) => {
+      stdout += c.toString('utf8');
+    });
+    child.stderr.on('data', (c) => {
+      stderr += c.toString('utf8');
+    });
+
+    const closeResult = await new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        try {
+          child.kill('SIGKILL');
+        } catch (_) {
+          /* ignore */
+        }
+        resolve({ status: null, timedOut: true });
+      }, 15000);
+      child.on('close', (code) => {
+        childExited = true;
+        hitsAtExit.count = capture.hits.length;
+        hitsAtExit.event =
+          capture.hits[0] && capture.hits[0].body ? capture.hits[0].body.event : null;
+        clearTimeout(timer);
+        resolve({ status: code, timedOut: false });
+      });
+    });
+
+    try {
+      assert.equal(closeResult.timedOut, false, `aflt run hung: ${stderr}`);
+      assert.equal(closeResult.status, 0, stderr + stdout);
+      assert.equal(
+        hitsAtExit.count,
+        1,
+        `expected webhook before exit; hits@exit=${hitsAtExit.count} event=${hitsAtExit.event} stderr=${stderr}`
+      );
+      assert.equal(hitsAtExit.event, 'run.completed');
+      assert.equal(
+        webhookReceivedBeforeExit,
+        true,
+        'run.completed must arrive while the aflt process is still alive'
+      );
+      assert.equal(capture.hits[0].body.exitStatus, 0);
+      assert.equal(capture.hits[0].headers.authorization, 'Bearer run-key');
+      assert.match(capture.hits[0].body.summary || '', /stub-run-ok/);
+    } finally {
+      fs.rmSync(stubDir, { recursive: true, force: true });
+    }
   });
 
   it('aflt doctor reports notify without printing the key', () => {

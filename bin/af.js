@@ -3503,15 +3503,18 @@ async function executeHeadlessRun(session, opts = {}) {
     code = registry.REGISTRY_WRITE_EXIT;
   }
 
-  // Opt-in webhook: fire-and-forget; never breaks the run.
+  // Opt-in webhook: await briefly (notify timeout) so the POST can finish
+  // before the CLI exits. Never breaks the run or changes its exit code.
   try {
     const fresh = registry.find(session.id) || session;
-    notify.notifyRunFinished(fresh, {
+    const queued = notify.notifyRunFinished(fresh, {
       exitStatus: code,
       timedOut: result.timedOut,
       stopped,
       summary: runlib.outputExcerpt((result && result.stdout) || '', notify.SUMMARY_CAP),
+      unref: false,
     });
+    await notify.settleNotify(queued);
   } catch (_) {
     /* ignore */
   }
@@ -7061,7 +7064,16 @@ process.stdout.on('error', (err) => {
   throw err;
 });
 
-main().catch((err) => {
-  process.stderr.write(String(err && err.stack ? err.stack : err) + '\n');
-  process.exit(1);
-});
+main()
+  .catch((err) => {
+    process.stderr.write(String(err && err.stack ? err.stack : err) + '\n');
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    // Drain turn.captured (and any leftover) webhooks before the process exits.
+    try {
+      await notify.flushPendingNotifies();
+    } catch (_) {
+      /* never fail the CLI for notify flush */
+    }
+  });
