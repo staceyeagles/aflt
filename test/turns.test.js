@@ -84,6 +84,8 @@ describe('interactive turn capture', () => {
     }
   }
 
+  const fixtureDir = path.join(__dirname, 'fixtures', 'copilot-turns');
+
   function writeCopilotEvents(chatId, lines) {
     const copilotHome = path.join(home, 'copilot');
     const file = path.join(copilotHome, 'session-state', chatId, 'events.jsonl');
@@ -91,6 +93,22 @@ describe('interactive turn capture', () => {
     fs.writeFileSync(file, lines.join('\n') + '\n');
     process.env.AGENTFLEET_COPILOT_HOME = copilotHome;
     return { copilotHome, file };
+  }
+
+  function writeCopilotFixture(chatId, fixtureName) {
+    const copilotHome = path.join(home, 'copilot');
+    const file = path.join(copilotHome, 'session-state', chatId, 'events.jsonl');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.copyFileSync(path.join(fixtureDir, fixtureName), file);
+    process.env.AGENTFLEET_COPILOT_HOME = copilotHome;
+    return { copilotHome, file };
+  }
+
+  function appendCopilotFixture(chatId, fixtureName) {
+    const file = path.join(home, 'copilot', 'session-state', chatId, 'events.jsonl');
+    const extra = fs.readFileSync(path.join(fixtureDir, fixtureName), 'utf8');
+    fs.appendFileSync(file, extra.endsWith('\n') ? extra : extra + '\n');
+    return file;
   }
 
   function event(id, summary, ts = '2026-11-19T22:00:00.000Z') {
@@ -157,6 +175,86 @@ describe('interactive turn capture', () => {
     assert.equal(again.written, 0);
     assert.equal(again.skipped, 2);
     assert.equal(turns.readTurns(session.id).length, 2);
+  });
+
+  it('captures plain Copilot assistant turns without task_complete', () => {
+    const turns = loadTurns(home);
+    const chatId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0001';
+    writeCopilotFixture(chatId, 'plain-turns.jsonl');
+    const session = { id: 'plain-1', title: 'Plain', engine: 'copilot', chatId };
+
+    const out = turns.syncCopilotSession(session, { env: process.env, apply: true, fullScan: true });
+    assert.equal(out.written, 2);
+    const rows = turns.readTurns(session.id);
+    assert.equal(rows[0].prompt, 'What is 2+2?');
+    assert.equal(rows[0].reply, '2+2 is 4.');
+    assert.equal(rows[0].engineEventId, 'a-plain-1');
+    assert.equal(rows[0].replySource, 'assistant-message');
+    assert.equal(rows[1].prompt, 'Thanks');
+    assert.equal(rows[1].reply, 'You are welcome.');
+    assert.equal(rows[1].engineEventId, 'a-plain-2');
+  });
+
+  it('captures tool-loop turns using final assistant.message only', () => {
+    const turns = loadTurns(home);
+    const chatId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0002';
+    writeCopilotFixture(chatId, 'tool-loop.jsonl');
+    const session = { id: 'tool-1', title: 'Tools', engine: 'copilot', chatId };
+
+    const out = turns.syncCopilotSession(session, { env: process.env, apply: true, fullScan: true });
+    assert.equal(out.written, 1);
+    const rows = turns.readTurns(session.id);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].prompt, 'List the cwd and summarize');
+    assert.equal(rows[0].reply, 'cwd is /tmp/demo. Done.');
+    assert.equal(rows[0].engineEventId, 'a-tool-1');
+  });
+
+  it('does not record in-progress trailing loops; resumes incrementally', () => {
+    const turns = loadTurns(home);
+    const chatId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0003';
+    writeCopilotFixture(chatId, 'in-progress.jsonl');
+    const session = { id: 'prog-1', title: 'Progress', engine: 'copilot', chatId };
+
+    const first = turns.syncCopilotSession(session, { env: process.env, apply: true, fullScan: false });
+    assert.equal(first.written, 0);
+    assert.equal(turns.readTurns(session.id).length, 0);
+    const index = turns.loadTurnsIndex(session.id);
+    assert.ok(index.copilotPending);
+    assert.equal(index.lastUserPrompt, 'Start a long task');
+    assert.ok(index.copilotOffset > 0);
+
+    appendCopilotFixture(chatId, 'in-progress-complete-tail.jsonl');
+    const second = turns.syncCopilotSession(session, { env: process.env, apply: true, fullScan: false });
+    assert.equal(second.written, 1);
+    const rows = turns.readTurns(session.id);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].reply, 'Finished the long task.');
+    assert.equal(rows[0].engineEventId, 'a-prog-1');
+    const index2 = turns.loadTurnsIndex(session.id);
+    assert.equal(index2.copilotPending, null);
+    assert.equal(index2.lastUserPrompt, null);
+  });
+
+  it('dedupes task_complete with assistant turn; prefers assistant text', () => {
+    const turns = loadTurns(home);
+    const chatId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0004';
+    writeCopilotFixture(chatId, 'task-complete-dedupe.jsonl');
+    const session = { id: 'dedupe-1', title: 'Dedupe', engine: 'copilot', chatId };
+
+    const out = turns.syncCopilotSession(session, { env: process.env, apply: true, fullScan: true });
+    assert.equal(out.written, 1);
+    const rows = turns.readTurns(session.id);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].reply, 'Shipped the feature with tests.');
+    assert.equal(rows[0].engineEventId, 'a-dedupe-1');
+    assert.equal(rows[0].replySource, 'assistant-message+task-complete');
+    assert.equal(rows[0].taskCompleteSummary, 'Feature shipped (task_complete summary)');
+
+    const again = turns.syncCopilotSession(session, { env: process.env, apply: true, fullScan: true });
+    assert.equal(again.written, 0);
+    assert.equal(again.skipped, 1);
+    assert.equal(turns.readTurns(session.id).length, 1);
   });
 
   it('emitTurnCaptured no-ops without messaging; invokes configured handler', () => {

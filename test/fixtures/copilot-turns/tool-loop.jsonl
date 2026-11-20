@@ -1,0 +1,9 @@
+{"type":"user.message","id":"u-tool-1","timestamp":"2026-11-19T22:00:00.000Z","data":{"content":"List the cwd and summarize"}}
+{"type":"assistant.turn_start","id":"ts-tool-0","timestamp":"2026-11-19T22:00:01.000Z","data":{"turnId":"0"}}
+{"type":"assistant.message","id":"a-tool-0","timestamp":"2026-11-19T22:00:02.000Z","data":{"messageId":"m-tool-0","content":"Checking the working directory.","toolRequests":[{"toolCallId":"call-1","name":"bash","arguments":{"command":"pwd"}}]}}
+{"type":"tool.execution_start","id":"tes-1","timestamp":"2026-11-19T22:00:03.000Z","data":{"toolCallId":"call-1","toolName":"bash"}}
+{"type":"tool.execution_complete","id":"tec-1","timestamp":"2026-11-19T22:00:04.000Z","data":{"toolCallId":"call-1","success":true,"result":{"content":"/tmp/demo"}}}
+{"type":"assistant.turn_end","id":"te-tool-0","timestamp":"2026-11-19T22:00:05.000Z","data":{"turnId":"0"}}
+{"type":"assistant.turn_start","id":"ts-tool-1","timestamp":"2026-11-19T22:00:06.000Z","data":{"turnId":"1"}}
+{"type":"assistant.message","id":"a-tool-1","timestamp":"2026-11-19T22:00:07.000Z","data":{"messageId":"m-tool-1","content":"cwd is /tmp/demo. Done.","toolRequests":[]}}
+{"type":"assistant.turn_end","id":"te-tool-1","timestamp":"2026-11-19T22:00:08.000Z","data":{"turnId":"1"}}

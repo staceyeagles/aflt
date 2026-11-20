@@ -1,0 +1,5 @@
+{"type":"user.message","id":"u-prog-1","timestamp":"2026-11-19T23:00:00.000Z","data":{"content":"Start a long task"}}
+{"type":"assistant.turn_start","id":"ts-prog-0","timestamp":"2026-11-19T23:00:01.000Z","data":{"turnId":"0"}}
+{"type":"assistant.message","id":"a-prog-0","timestamp":"2026-11-19T23:00:02.000Z","data":{"messageId":"m-prog-0","content":"Working on it…","toolRequests":[{"toolCallId":"call-p1","name":"bash","arguments":{"command":"sleep 1"}}]}}
+{"type":"tool.execution_start","id":"tes-p1","timestamp":"2026-11-19T23:00:03.000Z","data":{"toolCallId":"call-p1","toolName":"bash"}}
+{"type":"assistant.turn_end","id":"te-prog-0","timestamp":"2026-11-19T23:00:04.000Z","data":{"turnId":"0"}}
