@@ -27,6 +27,7 @@ const dashboard = require('../lib/dashboard');
 const agentDocs = require('../lib/agent-docs');
 const setup = require('../lib/setup');
 const resolveSession = require('../lib/resolve-session');
+const archiveLib = require('../lib/archive');
 const {
   parseArgs,
   resolveCwd,
@@ -88,11 +89,13 @@ Usage:
                             [--allow-missing] [-i|--pick]
                             Copilot: list (newest first) or register by UUID/prefix.
                             --title only with a single id. -i requires a TTY.
-  aflt ls [--status S] [--tag T] [--project NAME] [--all] [--json]
+  aflt ls [--status S] [--tag T] [--project NAME] [--all] [--archived] [--json]
                             STATUS is lifecycle; HERDR is live runtime
                             (running|shell|exited|missing|unknown|-).
                             --project filters by stored or derived project name.
                             --json includes effective project + parent on every row.
+                            Archived sessions are hidden by default; --archived or
+                            --all includes them (--json adds archived / archivedAt).
   aflt timeline [<project>] [--all] [--json] [--since <date>]
                             Read-only project session tree (no registry/Herdr writes).
                             Default project = AFLT_PROJECT, else cwd's project. --all groups
@@ -294,17 +297,28 @@ Usage:
                             Path must exist; refreshes branch. Live Herdr tab is
                             not moved — resume (and optionally adopt) after.
   aflt done <title|id>
+  aflt archive <title|id> [--with-children] [--force] [--dry-run] [--json]
+                            Set archived + archivedAt on the session (status
+                            unchanged). Reversible via unarchive. Run logs and
+                            history are untouched. --with-children also archives
+                            descendants. Refuses running/waiting (live runPid or
+                            Herdr working/blocked) unless --force.
+  aflt unarchive <title|id> [--with-children] [--dry-run] [--json]
+                            Clear archived / archivedAt. --with-children also
+                            unarchives archived descendants.
   aflt rm <title|id> [<title|id>...] [--keep-files] [--force] [--dry-run]
                             Remove session(s) and af-owned files under
-                            $AGENTFLEET_HOME (results/, runs/<id>/, plans/).
-                            Exact id/title preferred. On a TTY, no exact match with
-                            fuzzy candidates prompts to confirm/pick (same as stop);
-                            cancel aborts before any removal. Multiple ids: resolve
-                            all first. Prefer --dry-run first (--dry-run still prompts
-                            on a TTY for resolution only). Non-TTY / agents: exact-only
-                            + did-you-mean. --keep-files: registry only (keeps
-                            handoffs/logs). Refuses if running unless --force (does
-                            not stop the process — aflt stop first).
+                            $AGENTFLEET_HOME (results/, plans/). Never deletes
+                            runs/<id>/ logs. Clears parent links on remaining
+                            children. Exact id/title preferred. On a TTY, no exact
+                            match with fuzzy candidates prompts to confirm/pick
+                            (same as stop); cancel aborts before any removal.
+                            Multiple ids: resolve all first. Prefer --dry-run first
+                            (--dry-run still prompts on a TTY for resolution only).
+                            Non-TTY / agents: exact-only + did-you-mean.
+                            --keep-files: registry only (keeps handoffs/logs).
+                            Refuses if running/waiting unless --force (does not
+                            stop the process — aflt stop first).
   aflt rm --children <master> [--with-master] [--keep-files] [--force] [--dry-run]
                             Remove all workers of a master; --with-master also
                             removes the master. Master resolution matches rm/stop
@@ -505,6 +519,12 @@ async function main() {
       break;
     case 'done':
       cmdDone(rest);
+      break;
+    case 'archive':
+      await cmdArchive(rest);
+      break;
+    case 'unarchive':
+      await cmdUnarchive(rest);
       break;
     case 'rm':
     case 'remove':
@@ -1032,6 +1052,10 @@ function cmdLs(argv) {
   if (flags.status) opts.status = flags.status;
   if (flags.tag) opts.tag = flags.tag;
   if (!flags.all && !flags.status) opts.includeDone = false;
+  // Archived hidden by default; --archived or --all includes them.
+  // --archived also includes done so archived-done rows are visible without --all.
+  if (flags.archived) opts.includeDone = true;
+  if (flags.all || flags.archived) opts.includeArchived = true;
 
   let sessions = registry.list(opts);
   const projectFilter = projectLib.normalizeProjectFilter(flags.project);
@@ -1075,6 +1099,8 @@ function cmdLs(argv) {
         project: projectLib.resolveProjectName(e.session, { cache: projectCache }),
         parent: e.session.parent || null,
         status: e.session.status,
+        archived: Boolean(e.session.archived),
+        archivedAt: e.session.archivedAt || null,
         lastUsed: e.session.lastUsed || null,
         role: e.session.role || null,
         workerStatus: derived || null,
@@ -2453,21 +2479,138 @@ function cmdDone(argv) {
 }
 
 function sessionLooksRunning(session) {
+  // Prefer the archive/delete busy check: live runPid or Herdr working/blocked.
+  // Idle live panes no longer block rm/archive.
   const fetchResult = herdr.fetchHerdrTerminals();
-  if (resolveLiveHerdrForSession(session, fetchResult)) return { running: true, via: 'herdr' };
-  const derived = orchestrate.deriveWorkerStatus(session, null, {
+  let enrichment = null;
+  if (fetchResult && fetchResult.ok) {
+    const enriched = herdr.enrichSessions([session], fetchResult)[0];
+    enrichment = enriched || null;
+  }
+  const busy = archiveLib.sessionBusyForMutation(session, {
+    enrichment,
     isAlive: orchestrate.defaultIsAlive,
     hostname: os.hostname(),
   });
-  if (
-    derived === 'running' &&
-    session.runPid != null &&
-    (!session.runHost || session.runHost === os.hostname()) &&
-    orchestrate.defaultIsAlive(session.runPid)
-  ) {
-    return { running: true, via: 'headless' };
+  if (busy.busy) {
+    return { running: true, via: busy.via || busy.reason || 'busy', reason: busy.reason };
   }
-  return { running: false, via: null };
+  return { running: false, via: null, reason: null };
+}
+
+async function cmdArchive(argv) {
+  const { args, flags } = parseArgs(argv);
+  const withChildren = recoverBoolFlag(flags, 'with-children', args);
+  const force =
+    recoverBoolFlag(flags, 'force', args) || recoverBoolFlag(flags, 'f', args);
+  const dryRun = recoverBoolFlag(flags, 'dry-run', args);
+  const asJson = recoverBoolFlag(flags, 'json', args);
+  if (!args[0]) {
+    fail('usage: aflt archive <title|id> [--with-children] [--force] [--dry-run] [--json]');
+  }
+  const session = await requireSessionExact(args[0], {
+    command: 'archive',
+    verb: 'Archive',
+    json: asJson,
+  });
+  const enrichmentById = {};
+  const fetchResult = herdr.fetchHerdrTerminals();
+  if (fetchResult && fetchResult.ok) {
+    const targets = withChildren
+      ? archiveLib.collectWithDescendants(session)
+      : [session];
+    const enriched = herdr.enrichSessions(targets, fetchResult);
+    for (const e of enriched) {
+      if (e && e.session && e.session.id) enrichmentById[e.session.id] = e;
+    }
+  }
+  const result = archiveLib.archiveSessions(session, {
+    withChildren,
+    force,
+    dryRun,
+    enrichmentById,
+  });
+  if (!result.ok) {
+    fail(
+      `aflt archive: ${result.error}. Stop it first with \`aflt stop\`, or pass --force.`
+    );
+  }
+  if (asJson) {
+    emitJson({
+      ok: true,
+      dryRun: Boolean(dryRun),
+      archived: result.sessions.map((s) => ({
+        id: s.id,
+        title: s.title,
+        archived: Boolean(s.archived),
+        archivedAt: s.archivedAt || null,
+      })),
+      skipped: result.skipped || [],
+    });
+    return;
+  }
+  if (dryRun) {
+    for (const s of result.sessions) {
+      process.stdout.write(`[dry-run] would archive ${s.title} (${s.id})\n`);
+    }
+    for (const sk of result.skipped || []) {
+      process.stdout.write(`[dry-run] skip ${sk.title || sk.id} (${sk.reason})\n`);
+    }
+    return;
+  }
+  if (result.sessions.length === 0) {
+    process.stdout.write('(nothing to archive)\n');
+    return;
+  }
+  for (const s of result.sessions) {
+    process.stdout.write(`archived ${s.title} (${s.id})\n`);
+  }
+}
+
+async function cmdUnarchive(argv) {
+  const { args, flags } = parseArgs(argv);
+  const withChildren = recoverBoolFlag(flags, 'with-children', args);
+  const dryRun = recoverBoolFlag(flags, 'dry-run', args);
+  const asJson = recoverBoolFlag(flags, 'json', args);
+  if (!args[0]) {
+    fail('usage: aflt unarchive <title|id> [--with-children] [--dry-run] [--json]');
+  }
+  const session = await requireSessionExact(args[0], {
+    command: 'unarchive',
+    verb: 'Unarchive',
+    json: asJson,
+  });
+  const result = archiveLib.unarchiveSessions(session, { withChildren, dryRun });
+  if (!result.ok) {
+    fail(`aflt unarchive: ${result.error || 'failed'}`);
+  }
+  if (asJson) {
+    emitJson({
+      ok: true,
+      dryRun: Boolean(dryRun),
+      unarchived: result.sessions.map((s) => ({
+        id: s.id,
+        title: s.title,
+        archived: Boolean(s.archived),
+        archivedAt: s.archivedAt || null,
+      })),
+      skipped: result.skipped || [],
+    });
+    return;
+  }
+  if (dryRun) {
+    for (const s of result.sessions) {
+      process.stdout.write(`[dry-run] would unarchive ${s.title} (${s.id})\n`);
+    }
+    return;
+  }
+  if (result.sessions.length === 0) {
+    process.stdout.write('(nothing to unarchive)\n');
+    return;
+  }
+  for (const s of result.sessions) {
+    process.stdout.write(`unarchived ${s.title} (${s.id})\n`);
+  }
 }
 
 async function collectRmTargets(argvFlags, args, resolveOpts = {}) {
@@ -2528,8 +2671,9 @@ async function cmdRm(argv) {
   for (const s of targets) {
     const run = sessionLooksRunning(s);
     if (run.running && !force) {
+      const kind = run.reason || 'running';
       fail(
-        `aflt rm: "${s.title}" appears to be running (${run.via}). ` +
+        `aflt rm: "${s.title}" appears to be ${kind} (${run.via}). ` +
           `Stop it first with \`aflt stop ${s.title}\`, or pass --force to remove the record/files without stopping.`
       );
     }
@@ -4915,7 +5059,7 @@ async function cmdMcp(argv) {
 
 function listChildrenOf(masterId) {
   return registry
-    .list({ includeDone: true })
+    .list({ includeDone: true, includeArchived: true })
     .filter((s) => s.parent === masterId)
     .sort((a, b) => String(a.title).localeCompare(String(b.title)));
 }

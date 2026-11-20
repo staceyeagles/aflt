@@ -97,46 +97,69 @@ function renderProjectMemory(project, memoryState) {
   return html + '</ul>';
 }
 
+/** Canonical labels — shared by Graph, History, filters, detail, stats. */
+const STATE_LABELS = {
+  working: 'Working',
+  waiting: 'Waiting',
+  idle: 'Idle',
+  completed: 'Completed',
+  failed: 'Failed',
+};
+
+function stateLabel(state) {
+  if (state === 'running') return STATE_LABELS.working;
+  if (state === 'done') return STATE_LABELS.completed;
+  return STATE_LABELS[state] || STATE_LABELS.completed;
+}
+
 function activityLabel(item) {
-  const activity = item.activityState || (item.awaitingInput ? 'waiting' : item.displayState);
-  return { working: 'Working', completed: 'Completed', waiting: 'Awaiting input' }[activity] ||
-    item.displayState || 'unknown';
+  if (!item) return stateLabel('completed');
+  if (item.kind === 'project' || item.sessionCount != null) {
+    return stateLabel(item.filterState || item.displayState || 'idle');
+  }
+  return stateLabel(rowFilterState(item));
 }
 
 /**
  * Per-session live filter/badge state (must match lib/dashboard.sessionFilterState).
- * "running" = actually working (working overlay / displayState running from OSC
- * working or live runPid) — not merely herdr.runtime pane-alive.
+ * "working" = actually working (OSC working / live runPid) — not bare herdr.runtime.
  */
 function rowFilterState(item) {
-  if (!item) return 'done';
+  if (!item) return 'completed';
   if (item.awaitingInput || item.activityState === 'waiting') return 'waiting';
   if (item.activityState === 'completed') {
     if (item.displayState === 'failed') return 'failed';
     if (item.displayState === 'running' || item.displayState === 'idle') return 'idle';
-    return 'done';
+    return 'completed';
   }
-  if (item.activityState === 'working' || item.displayState === 'running') return 'running';
+  if (item.activityState === 'working' || item.displayState === 'running') return 'working';
   if (item.displayState === 'failed') return 'failed';
   if (item.displayState === 'idle') return 'idle';
-  return 'done';
+  // Map legacy filter keys if present on the payload.
+  if (item.filterState === 'running') return 'working';
+  if (item.filterState === 'done') return 'completed';
+  if (item.filterState && STATE_LABELS[item.filterState]) return item.filterState;
+  return 'completed';
 }
 
-/** Project roll-up priority: waiting > running > failed > idle > done (empty → idle). */
-const FILTER_PRIORITY = ['waiting', 'running', 'failed', 'idle', 'done'];
+/** Project roll-up priority: waiting > working > failed > idle > completed. */
+const FILTER_PRIORITY = ['waiting', 'working', 'failed', 'idle', 'completed'];
 
 const HIDE_DORMANT_STORAGE_KEY = 'aflt.dashboard.hideDormant';
+const SHOW_ARCHIVED_STORAGE_KEY = 'aflt.dashboard.showArchived';
 const DEFAULT_DORMANT_AFTER_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Dormant = idle/done roll-up and last activity older than dormantAfterMs
- * (must match lib/dashboard.isDormantProject). running/waiting/failed never dormant.
+ * Dormant = idle/completed roll-up and last activity older than dormantAfterMs
+ * (must match lib/dashboard.isDormantProject). working/waiting/failed never dormant.
  * Missing lastActivity is not dormant (nothing older-than to compare).
  */
 function isDormantProject(p, nowMs, dormantAfterMs) {
   if (!p) return false;
   const live = p.filterState || p.displayState || 'idle';
-  if (live === 'running' || live === 'waiting' || live === 'failed') return false;
+  if (live === 'working' || live === 'running' || live === 'waiting' || live === 'failed') {
+    return false;
+  }
   const last = p.lastActivity != null ? Date.parse(String(p.lastActivity)) : NaN;
   const windowMs = dormantAfterMs != null ? Number(dormantAfterMs) : DEFAULT_DORMANT_AFTER_MS;
   const threshold = Number.isFinite(windowMs) && windowMs >= 0 ? windowMs : DEFAULT_DORMANT_AFTER_MS;
@@ -263,8 +286,9 @@ function mergeSimPreserve(prevSim, nextBuilt, opts) {
 if (typeof module !== 'undefined' && module.exports && typeof document === 'undefined') {
   module.exports = {
     mergeSimPreserve, renderProjectMemory, renderGraphHint, renderMarkdown, resolveDocumentLink,
-    renderTaskCompletion, activityLabel, rowFilterState, isHerdrFocusLocal, isDormantProject,
-    HIDE_DORMANT_STORAGE_KEY, DEFAULT_DORMANT_AFTER_MS,
+    renderTaskCompletion, activityLabel, rowFilterState, stateLabel, isHerdrFocusLocal, isDormantProject,
+    STATE_LABELS, FILTER_PRIORITY,
+    HIDE_DORMANT_STORAGE_KEY, SHOW_ARCHIVED_STORAGE_KEY, DEFAULT_DORMANT_AFTER_MS,
   };
 } else {
   (function () {
@@ -301,6 +325,13 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     const sortSelect = document.getElementById('history-sort');
     const hideDormantEl = document.getElementById('hide-dormant');
     const dormantHiddenCountEl = document.getElementById('dormant-hidden-count');
+    const showArchivedEl = document.getElementById('show-archived');
+    const confirmDialog = document.getElementById('confirm-dialog');
+    const confirmTitle = document.getElementById('confirm-title');
+    const confirmBody = document.getElementById('confirm-body');
+    const confirmOk = document.getElementById('confirm-ok');
+    const confirmCancel = document.getElementById('confirm-cancel');
+    const confirmClose = document.getElementById('confirm-close');
     const leftoffPanel = document.getElementById('leftoff-panel');
     const leftoffEl = document.getElementById('leftoff');
     const historyPanel = document.getElementById('history-panel');
@@ -311,16 +342,21 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     const herdrRemoteNote = document.getElementById('herdr-remote-note');
 
     let hideDormant = true;
+    let showArchived = false;
     try {
       if (typeof localStorage !== 'undefined' && localStorage) {
         const stored = localStorage.getItem(HIDE_DORMANT_STORAGE_KEY);
         if (stored === '0' || stored === 'false') hideDormant = false;
         else if (stored === '1' || stored === 'true') hideDormant = true;
+        const archivedStored = localStorage.getItem(SHOW_ARCHIVED_STORAGE_KEY);
+        if (archivedStored === '1' || archivedStored === 'true') showArchived = true;
+        else if (archivedStored === '0' || archivedStored === 'false') showArchived = false;
       }
     } catch (_) {
       /* ignore quota / private mode */
     }
     if (hideDormantEl) hideDormantEl.checked = hideDormant;
+    if (showArchivedEl) showArchivedEl.checked = showArchived;
 
     // Prefer updating a trailing text node so the legend element stays intact.
     // Fall back to textContent when the host DOM is a minimal test double.
@@ -385,54 +421,330 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       herdrRemoteNote.hidden = !remote;
       if (remote) {
         herdrRemoteNote.textContent =
-          'Opening Herdr only works on the Mini — open this dashboard at 127.0.0.1 locally.';
+          'Opening Herdr and archive/delete only work on the Mini — open this dashboard at 127.0.0.1 locally.';
       }
+    }
+
+    function actionToken() {
+      if (!state || !state.actions) return null;
+      return state.actions.actionToken || state.actions.herdrFocusToken || null;
+    }
+
+    function actionsAllowed() {
+      return !snapshotData && Boolean(actionToken()) && isHerdrFocusLocal();
+    }
+
+    function setActionMessage(text, isError) {
+      if (!actionStatus) return;
+      actionStatus.hidden = false;
+      actionStatus.setAttribute('class', isError ? 'action-status error' : 'action-status');
+      actionStatus.textContent = text;
+    }
+
+    function confirmAction(opts) {
+      opts = opts || {};
+      return new Promise(function (resolve) {
+        if (!confirmDialog || typeof confirmDialog.showModal !== 'function') {
+          const ok =
+            typeof window !== 'undefined' && typeof window.confirm === 'function'
+              ? window.confirm(String(opts.body || opts.title || 'Confirm?'))
+              : false;
+          resolve(ok);
+          return;
+        }
+        if (confirmTitle) confirmTitle.textContent = opts.title || 'Confirm';
+        if (confirmBody) confirmBody.textContent = opts.body || '';
+        if (confirmOk) confirmOk.textContent = opts.okLabel || 'OK';
+        let settled = false;
+        function finish(ok) {
+          if (settled) return;
+          settled = true;
+          confirmOk && confirmOk.removeEventListener('click', onOk);
+          confirmCancel && confirmCancel.removeEventListener('click', onCancel);
+          confirmClose && confirmClose.removeEventListener('click', onCancel);
+          confirmDialog.removeEventListener('cancel', onCancel);
+          try {
+            if (confirmDialog.open) confirmDialog.close();
+          } catch (_) {
+            /* ignore */
+          }
+          resolve(ok);
+        }
+        function onOk(ev) {
+          if (ev && ev.preventDefault) ev.preventDefault();
+          finish(true);
+        }
+        function onCancel(ev) {
+          if (ev && ev.preventDefault) ev.preventDefault();
+          finish(false);
+        }
+        confirmOk && confirmOk.addEventListener('click', onOk);
+        confirmCancel && confirmCancel.addEventListener('click', onCancel);
+        confirmClose && confirmClose.addEventListener('click', onCancel);
+        confirmDialog.addEventListener('cancel', onCancel);
+        confirmDialog.showModal();
+      });
+    }
+
+    async function postDashboardAction(pathname, body) {
+      if (!actionsAllowed()) {
+        setActionMessage(
+          'Archive/delete only work on the Mini — open this dashboard at 127.0.0.1 locally.',
+          true
+        );
+        updateHerdrRemoteNote();
+        throw new Error('actions require local dashboard');
+      }
+      const response = await fetch(pathname, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Aflt-Action-Token': actionToken(),
+        },
+        body: JSON.stringify(body || {}),
+      });
+      const result = await response.json().catch(function () { return {}; });
+      if (!response.ok) throw new Error(result.error || 'Request failed');
+      if (result.state) applyState(result.state, { forceRebuild: true });
+      return result;
     }
 
     async function openInHerdr(id) {
       if (openingHerdr) return;
       const session = (state.sessions || []).find(function (s) { return s.id === id; });
       if (!session) return;
-      actionStatus.hidden = false;
-      actionStatus.setAttribute('class', 'action-status');
-      if (snapshotData || !state.actions || !state.actions.herdrFocusToken) {
-        actionStatus.textContent = 'Open the live local dashboard to select this agent in Herdr.';
+      setActionMessage('Opening ' + session.title + ' in Herdr...', false);
+      if (snapshotData || !actionToken()) {
+        setActionMessage('Open the live local dashboard to select this agent in Herdr.', false);
         return;
       }
       if (!isHerdrFocusLocal()) {
-        actionStatus.setAttribute('class', 'action-status error');
-        actionStatus.textContent =
-          'Opening Herdr only works on the Mini — open this dashboard at 127.0.0.1 locally.';
+        setActionMessage(
+          'Opening Herdr only works on the Mini — open this dashboard at 127.0.0.1 locally.',
+          true
+        );
         updateHerdrRemoteNote();
         return;
       }
       openingHerdr = true;
-      actionStatus.textContent = 'Opening ' + session.title + ' in Herdr...';
       try {
         const response = await fetch('/api/herdr/focus/' + encodeURIComponent(id), {
           method: 'POST',
-          headers: { 'X-Aflt-Action-Token': state.actions.herdrFocusToken },
+          headers: { 'X-Aflt-Action-Token': actionToken() },
         });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error || 'Unable to open the agent in Herdr.');
-        actionStatus.textContent = 'Selected ' + session.title + ' in Herdr.';
+        setActionMessage('Selected ' + session.title + ' in Herdr.', false);
       } catch (err) {
-        actionStatus.setAttribute('class', 'action-status error');
-        actionStatus.textContent = String(err.message || err);
+        setActionMessage(String(err.message || err), true);
       } finally {
         openingHerdr = false;
       }
     }
 
+    async function archiveSession(id, withChildren) {
+      setActionMessage(withChildren ? 'Archiving with sub-agents…' : 'Archiving…', false);
+      try {
+        const result = await postDashboardAction('/api/session/archive', {
+          id: id,
+          withChildren: !!withChildren,
+        });
+        setActionMessage(
+          'Archived ' + ((result.archived && result.archived[0] && result.archived[0].title) || id) + '.',
+          false
+        );
+      } catch (err) {
+        setActionMessage(String(err.message || err), true);
+      }
+    }
+
+    async function unarchiveSession(id, withChildren) {
+      setActionMessage('Unarchiving…', false);
+      try {
+        await postDashboardAction('/api/session/unarchive', {
+          id: id,
+          withChildren: !!withChildren,
+        });
+        setActionMessage('Unarchived ' + id + '.', false);
+      } catch (err) {
+        setActionMessage(String(err.message || err), true);
+      }
+    }
+
+    async function deleteSession(id, title) {
+      const label = title || id;
+      const ok = await confirmAction({
+        title: 'Delete session?',
+        body:
+          'Remove "' +
+          label +
+          '" from the registry? Run logs under ~/.agentfleet/runs/ are kept. This cannot be undone from the dashboard.',
+        okLabel: 'Delete',
+      });
+      if (!ok) return;
+      setActionMessage('Deleting…', false);
+      try {
+        await postDashboardAction('/api/session/delete', { id: id });
+        if (selectedId === id) selectedId = null;
+        setActionMessage('Deleted ' + label + ' (logs kept).', false);
+      } catch (err) {
+        setActionMessage(String(err.message || err), true);
+      }
+    }
+
+    async function archiveIdleInProject(projectName) {
+      const ok = await confirmAction({
+        title: 'Archive idle/done sessions?',
+        body:
+          'Archive all idle and done sessions in project "' +
+          projectName +
+          '"? Running, waiting, and failed sessions stay visible. You can unarchive later.',
+        okLabel: 'Archive idle/done',
+      });
+      if (!ok) return;
+      setActionMessage('Archiving idle/done sessions…', false);
+      try {
+        const result = await postDashboardAction('/api/project/archive-idle', {
+          project: projectName,
+        });
+        const n = (result.archived || []).length;
+        setActionMessage(
+          n === 0 ? 'No idle/done sessions to archive.' : 'Archived ' + n + ' session' + (n === 1 ? '' : 's') + '.',
+          false
+        );
+      } catch (err) {
+        setActionMessage(String(err.message || err), true);
+      }
+    }
+
+    function sessionActionButtonsHtml(session) {
+      if (!session || snapshotData) return '';
+      const local = actionsAllowed();
+      const disabled = local ? '' : ' disabled title="Only on the Mini (127.0.0.1)"';
+      if (session.archived) {
+        return (
+          '<div class="session-actions">' +
+          '<button type="button" data-action="unarchive" data-id="' +
+          esc(session.id) +
+          '"' +
+          disabled +
+          '>Unarchive</button>' +
+          '<button type="button" class="danger" data-action="delete" data-id="' +
+          esc(session.id) +
+          '" data-title="' +
+          esc(session.title || session.id) +
+          '"' +
+          disabled +
+          '>Delete</button></div>'
+        );
+      }
+      const kids = (session.children || []).length;
+      return (
+        '<div class="session-actions">' +
+        '<button type="button" data-action="archive" data-id="' +
+        esc(session.id) +
+        '"' +
+        disabled +
+        '>Archive</button>' +
+        (kids
+          ? '<button type="button" data-action="archive-children" data-id="' +
+            esc(session.id) +
+            '"' +
+            disabled +
+            '>Archive with sub-agents</button>'
+          : '') +
+        '<button type="button" class="danger" data-action="delete" data-id="' +
+        esc(session.id) +
+        '" data-title="' +
+        esc(session.title || session.id) +
+        '"' +
+        disabled +
+        '>Delete</button></div>'
+      );
+    }
+
+    function projectActionButtonsHtml(project) {
+      if (!project || snapshotData || !(project.sessionCount > 0 || project.archivedCount > 0)) return '';
+      const local = actionsAllowed();
+      const disabled = local ? '' : ' disabled title="Only on the Mini (127.0.0.1)"';
+      return (
+        '<div class="project-actions">' +
+        '<button type="button" data-action="archive-idle" data-project="' +
+        esc(project.name) +
+        '"' +
+        disabled +
+        '>Archive all idle/done sub-agents</button></div>'
+      );
+    }
+
+    function rowActionsHtml(enriched, isProject) {
+      if (snapshotData) return '';
+      const local = actionsAllowed();
+      const disabled = local ? '' : ' disabled title="Only on the Mini (127.0.0.1)"';
+      if (isProject) {
+        if (!(enriched.sessionCount > 0 || enriched.archivedCount > 0)) return '';
+        return (
+          '<span class="row-actions">' +
+          '<button type="button" data-action="archive-idle" data-project="' +
+          esc(enriched.name) +
+          '"' +
+          disabled +
+          '>Archive idle/done</button></span>'
+        );
+      }
+      if (enriched.archived) {
+        return (
+          '<span class="row-actions">' +
+          '<button type="button" data-action="unarchive" data-id="' +
+          esc(enriched.id) +
+          '"' +
+          disabled +
+          '>Unarchive</button>' +
+          '<button type="button" class="danger" data-action="delete" data-id="' +
+          esc(enriched.id) +
+          '" data-title="' +
+          esc(enriched.title || enriched.id) +
+          '"' +
+          disabled +
+          '>Delete</button></span>'
+        );
+      }
+      const kids = (enriched.children || []).length;
+      return (
+        '<span class="row-actions">' +
+        '<button type="button" data-action="archive" data-id="' +
+        esc(enriched.id) +
+        '"' +
+        disabled +
+        '>Archive</button>' +
+        (kids
+          ? '<button type="button" data-action="archive-children" data-id="' +
+            esc(enriched.id) +
+            '"' +
+            disabled +
+            '>Archive+</button>'
+          : '') +
+        '<button type="button" class="danger" data-action="delete" data-id="' +
+        esc(enriched.id) +
+        '" data-title="' +
+        esc(enriched.title || enriched.id) +
+        '"' +
+        disabled +
+        '>Delete</button></span>'
+      );
+    }
+
     const COLORS = {
-      working: 'var(--cp-success)',
-      completed: 'var(--cp-link)',
-      waiting: 'var(--cp-warning)',
-      running: 'var(--cp-success)',
-      idle: 'var(--cp-warning)',
-      done: 'var(--cp-text-muted)',
-      failed: 'var(--cp-danger)',
+      working: 'var(--state-working)',
+      waiting: 'var(--state-waiting)',
+      idle: 'var(--state-idle)',
+      completed: 'var(--state-completed)',
+      failed: 'var(--state-failed)',
+      // Legacy aliases
+      running: 'var(--state-working)',
+      done: 'var(--state-completed)',
     };
+    const markerPayload = new Map();
 
     function ago(ms) {
       const s = Math.max(0, Math.round(ms / 1000));
@@ -497,20 +809,22 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         '<div class="stat"><div class="k">active projects</div><div class="v">' +
         (st.activeProjects || 0) +
         '</div></div>' +
-        '<div class="stat"><div class="k">running</div><div class="v running">' +
-        (st.runningSessions || 0) +
+        '<div class="stat"><div class="k">Working</div><div class="v working">' +
+        (st.workingSessions != null ? st.workingSessions : st.runningSessions || 0) +
         '</div></div>' +
         '<div class="engines">cursor ' +
         (eng.cursor || 0) +
         ' · copilot ' +
         (eng.copilot || 0) +
-        ' · open ' +
+        ' · Working ' +
         (st.open || 0) +
-        ' · idle ' +
+        ' · Waiting ' +
+        (st.waiting || 0) +
+        ' · Idle ' +
         (st.idle || 0) +
-        ' · done ' +
-        (st.done || 0) +
-        ' · failed ' +
+        ' · Completed ' +
+        (st.completed != null ? st.completed : st.done || 0) +
+        ' · Failed ' +
         (st.failed || 0) +
         '</div>';
     }
@@ -644,20 +958,24 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
           '</h2><span class="badge ' +
           esc(projectState) +
           '">' +
-          esc(projectState) +
+          esc(stateLabel(projectState)) +
           '</span><dl>' +
           row('sessions', item.sessionCount) +
-          row('running', item.runningCount) +
+          row('archived', item.archivedCount || 0) +
+          row('Working', item.workingCount != null ? item.workingCount : item.runningCount) +
           row('last activity', item.lastActivity || '—') +
-          '</dl>' + renderTaskCompletion(item.completion);
+          '</dl>' +
+          projectActionButtonsHtml(item) +
+          renderTaskCompletion(item.completion);
         return;
       }
       const kids = (item.children || []).length;
+      const liveState = rowFilterState(item);
       detailEl.innerHTML =
         '<div class="label">session</div><h2>' +
         esc(item.title) +
         '</h2><span class="badge ' +
-        esc(item.activityState || (item.awaitingInput ? 'waiting' : item.displayState)) +
+        esc(liveState) +
         '">' +
         esc(activityLabel(item)) +
         '</span><dl>' +
@@ -665,6 +983,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         row('project', item.project) +
         row('engine', item.engine) +
         row('status', item.status) +
+        row('archived', item.archived ? 'yes' : 'no') +
         row('worker', item.workerStatus || '—') +
         row('cwd', item.cwd || '—') +
         row('model', item.model || '—') +
@@ -678,7 +997,9 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
             : '—'
         ) +
         row('children', kids) +
-        '</dl>' + renderTaskCompletion(item.completion);
+        '</dl>' +
+        sessionActionButtonsHtml(item) +
+        renderTaskCompletion(item.completion);
     }
 
     function row(k, v) {
@@ -752,7 +1073,9 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       const visibleNames = {};
       projects.forEach(function (p) { visibleNames[p.name] = true; });
       const sessions = (s.sessions || []).filter(function (sess) {
-        return sess && visibleNames[sess.project];
+        if (!sess || !visibleNames[sess.project]) return false;
+        if (sess.archived && !showArchived) return false;
+        return true;
       });
       const n = Math.max(projects.length, 1);
       const hubR = Math.min(w, h) * 0.28;
@@ -1136,15 +1459,18 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         c.setAttribute('cx', n.x);
         c.setAttribute('cy', n.y);
         c.setAttribute('r', n.r);
-        c.setAttribute('style', '--cp-node-color: ' +
-          (COLORS[n.activityState || (n.awaitingInput ? 'waiting' : n.displayState)] || COLORS.done));
+        const live =
+          n.kind === 'project'
+            ? n.filterState || n.displayState || 'idle'
+            : rowFilterState(n);
+        c.setAttribute('style', '--cp-node-color: ' + (COLORS[live] || COLORS.idle));
         label.setAttribute('x', n.x);
         label.setAttribute('text-anchor', 'middle');
         label.textContent = n.label;
 
         if (n.kind === 'project') {
           c.setAttribute('class', 'hub');
-          c.setAttribute('stroke', COLORS[n.displayState] || COLORS.done);
+          c.setAttribute('stroke', COLORS[live] || COLORS.idle);
           label.setAttribute('y', n.y + n.r + 14);
           label.setAttribute('class', 'hub-label');
           label.setAttribute('visibility', 'visible');
@@ -1152,15 +1478,15 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
           c.setAttribute(
             'class',
             'leaf ' +
-              (n.activityState || n.displayState || 'done') +
-              (n.awaitingInput ? ' awaiting-input' : '') +
-              (n.activityState === 'working' && !reduced ? ' pulse' : '')
+              live +
+              (live === 'waiting' ? ' awaiting-input' : '') +
+              (live === 'working' && !reduced ? ' pulse' : '')
           );
           label.setAttribute('y', n.y + n.r + 14);
           label.setAttribute('class', 'session-label');
           label.setAttribute('visibility', 'visible');
           const waiting = entry.waiting;
-          waiting.group.setAttribute('visibility', n.awaitingInput ? 'visible' : 'hidden');
+          waiting.group.setAttribute('visibility', live === 'waiting' ? 'visible' : 'hidden');
           waiting.ring.setAttribute('cx', n.x);
           waiting.ring.setAttribute('cy', n.y);
           waiting.ring.setAttribute('r', n.r + 4);
@@ -1168,7 +1494,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
           waiting.badge.setAttribute('cy', n.y - n.r - 2);
           waiting.mark.setAttribute('x', n.x + n.r + 6);
           waiting.mark.setAttribute('y', n.y - n.r + 2);
-          entry.working.setAttribute('visibility', n.activityState === 'working' ? 'visible' : 'hidden');
+          entry.working.setAttribute('visibility', live === 'working' ? 'visible' : 'hidden');
           entry.working.setAttribute('cx', n.x);
           entry.working.setAttribute('cy', n.y);
           entry.working.setAttribute('r', n.r + 4);
@@ -1275,8 +1601,8 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       }
       if (node && node.kind === 'project') {
         const rollup = projectFilterRollup(node);
-        // Expand when any session is running or waiting; dormant projects start collapsed.
-        return !(rollup === 'waiting' || rollup === 'running');
+        // Expand when any session is working or waiting; dormant projects start collapsed.
+        return !(rollup === 'waiting' || rollup === 'working' || rollup === 'running');
       }
       return !!node.collapsed;
     }
@@ -1288,34 +1614,44 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       return list;
     }
 
-    function collectSegments(node) {
-      let segs = (node.segments || []).slice();
+    function collectMarkers(node) {
+      let list = (node.markers || []).slice();
       (node.children || []).forEach(function (c) {
-        segs = segs.concat(collectSegments(c));
+        list = list.concat(collectMarkers(c));
       });
-      return segs;
+      return list;
     }
 
-    function ganttHtml(segments, range) {
+    function ganttHtml(markers, range, rowId) {
       const start = range ? Date.parse(range.start) : NaN;
       const end = range ? Date.parse(range.end) : NaN;
       const span = end - start;
-      let html = '<div class="gantt-track" aria-hidden="true">';
+      let html = '<div class="gantt-track">';
       if (span > 0) {
-        (segments || []).forEach(function (seg) {
-          const a = Date.parse(seg.start);
+        (markers || []).forEach(function (m, idx) {
+          if (!m || (m.state !== 'completed' && m.state !== 'failed')) return;
+          const a = Date.parse(m.at);
           if (isNaN(a)) return;
-          const bRaw = seg.end ? Date.parse(seg.end) : end;
-          const b = isNaN(bRaw) ? end : bRaw;
-          let left = ((a - start) / span) * 100;
-          let width = ((b - a) / span) * 100;
-          if (left < 0) { width += left; left = 0; }
-          if (left > 100) return;
-          if (left + width > 100) width = 100 - left;
-          if (width < 0) return;
-          html += '<span class="gantt-seg ' + esc(seg.state || 'done') + '" style="left:' +
-            left.toFixed(2) + '%;width:' + width.toFixed(2) + '%" title="' +
-            esc((seg.state || 'done') + ' · ' + seg.start) + '"></span>';
+          const left = ((a - start) / span) * 100;
+          if (left < 0 || left > 100) return;
+          const mid = 'm-' + String(rowId || 'row') + '-' + idx + '-' + String(m.at);
+          markerPayload.set(mid, {
+            state: m.state,
+            at: m.at,
+            prompt: m.prompt || '',
+            reply: m.reply || '',
+            sessionId: m.sessionId || null,
+          });
+          html +=
+            '<button type="button" class="gantt-marker ' +
+            esc(m.state) +
+            '" style="left:' +
+            left.toFixed(2) +
+            '%" data-marker-id="' +
+            esc(mid) +
+            '" aria-label="' +
+            esc(stateLabel(m.state) + ' · ' + (m.at || '')) +
+            '"></button>';
         });
       }
       return html + '</div>';
@@ -1376,6 +1712,11 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         }
         if (n.kind === 'project') {
           const kids = filterTree(n.children || []);
+          if (!showArchived && !(n.sessionCount > 0) && !(n.fromMemoryOnly)) {
+            // Archived-only project: hide unless Show archived is on.
+            if (!(n.archivedCount > 0)) return null;
+            return null;
+          }
           if (stateFilter) {
             const sessionless = n.fromMemoryOnly || !(n.sessionCount > 0);
             if (sessionless) {
@@ -1384,10 +1725,13 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
               return Object.assign({}, n, { children: kids });
             }
             if (!kids.length) return null;
+          } else if (!showArchived && !kids.length && !(n.fromMemoryOnly)) {
+            return null;
           }
           return Object.assign({}, n, { children: kids });
         }
         const enriched = enrichHistoryNode(n);
+        if (enriched.archived && !showArchived) return null;
         const kids = filterTree(enriched.children || []);
         // Keep ancestors when a matching child is nested underneath.
         if (stateFilter && !nodeMatchesFilter(enriched) && !kids.length) return null;
@@ -1417,26 +1761,29 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         bits.push((kids.length || 0) + ' projects');
       } else if (isProject) {
         bits.push((enriched.sessionCount != null ? enriched.sessionCount : kids.length) + ' sessions');
-        if (enriched.runningCount) bits.push(enriched.runningCount + ' running');
+        const wc = enriched.workingCount != null ? enriched.workingCount : enriched.runningCount;
+        if (wc) bits.push(wc + ' Working');
       } else {
         bits.push(enriched.engine || '');
       }
       const when = agoLabel(enriched.lastActivity);
       if (when) bits.push(when);
-      const segments = isProject || isGroup ? collectSegments(enriched) : enriched.segments;
-      const waiting = !isProject && !isGroup && (enriched.awaitingInput || enriched.activityState === 'waiting');
-      const working = !isProject && !isGroup && enriched.activityState === 'working';
+      const markers = isGroup ? [] : isProject ? collectMarkers(enriched) : enriched.markers || [];
+      const waiting = !isProject && !isGroup && filterKey === 'waiting';
+      const working = !isProject && !isGroup && filterKey === 'working';
       const stateClass = (isGroup ? 'muted' : filterKey) +
         (waiting ? ' waiting awaiting-input' : '') +
         (working ? ' working' : '');
-      const ariaState = isGroup ? 'no sessions' : isProject ? filterKey : activityLabel(enriched);
+      const ariaState = isGroup ? 'no sessions' : activityLabel(enriched);
+      const archivedClass = !isProject && !isGroup && enriched.archived ? ' archived' : '';
       let html = '<div class="history-row ' +
         (isGroup ? 'group no-sessions' : isProject ? 'project' : 'session') +
-        ' ' + stateClass +
+        ' ' + stateClass + archivedClass +
         (selectedId === enriched.id ? ' selected' : '') +
         '" role="treeitem" tabindex="0" data-id="' + esc(enriched.id) +
         '" data-kind="' + esc(enriched.kind) +
         '" data-filter-state="' + esc(filterKey) +
+        '" data-archived="' + (enriched.archived ? '1' : '0') +
         '" aria-level="' + (depth + 1) +
         '" aria-selected="' + String(selectedId === enriched.id) + '"' +
         ' aria-label="' + esc((isProject || isGroup ? label : enriched.id) + ' — ' + ariaState) + '"' +
@@ -1452,8 +1799,10 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         (isGroup
           ? ''
           : '<span class="history-state ' + esc(filterKey) + '">' + esc(ariaState) + '</span>') +
-        '<span class="meta-bits">' + esc(bits.filter(Boolean).join(' · ')) + '</span></div>' +
-        ganttHtml(segments, range) +
+        '<span class="meta-bits">' + esc(bits.filter(Boolean).join(' · ')) + '</span>' +
+        rowActionsHtml(enriched, isProject) +
+        '</div>' +
+        ganttHtml(markers, range, enriched.id) +
         // Issue #2: reserved lane for future message markers (messaging not implemented here).
         '<div class="message-markers" hidden></div></div>';
       if (!collapsed) {
@@ -1476,6 +1825,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
 
     function renderHistoryTree() {
       if (!state || !historyTreeEl) return;
+      markerPayload.clear();
       const tree = state.historyTree;
       if (!sortTouched) {
         sortMode = (tree && tree.sort) || state.historySort || 'recent';
@@ -1581,59 +1931,66 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       }, 450);
     }
 
-    function positionHistoryTooltip(row) {
-      if (!historyTooltip || !historyViewEl || !row || historyTooltipHovered) return;
+    function positionMarkerTooltip(anchor) {
+      if (!historyTooltip || !historyViewEl || !anchor || historyTooltipHovered) return;
       const viewRect = historyViewEl.getBoundingClientRect
         ? historyViewEl.getBoundingClientRect()
         : { width: 800, height: 600, left: 0, top: 0 };
-      const rowRect = row.getBoundingClientRect
-        ? row.getBoundingClientRect()
-        : { left: 12, top: 12, width: 200, height: 28, right: 212, bottom: 40 };
+      const aRect = anchor.getBoundingClientRect
+        ? anchor.getBoundingClientRect()
+        : { left: 12, top: 12, width: 8, height: 8, right: 20, bottom: 20 };
       const tipRect = historyTooltip.getBoundingClientRect
         ? historyTooltip.getBoundingClientRect()
         : { width: 320, height: 160 };
-      let left = rowRect.left - viewRect.left + 12;
-      let top = rowRect.bottom - viewRect.top + 6;
+      let left = aRect.left - viewRect.left + 12;
+      let top = aRect.bottom - viewRect.top + 6;
       if (left + tipRect.width > viewRect.width - 12) {
         left = Math.max(12, viewRect.width - tipRect.width - 12);
       }
       if (top + tipRect.height > viewRect.height - 12) {
-        top = Math.max(12, rowRect.top - viewRect.top - tipRect.height - 6);
+        top = Math.max(12, aRect.top - viewRect.top - tipRect.height - 6);
       }
       historyTooltip.style.left = left + 'px';
       historyTooltip.style.top = top + 'px';
     }
 
-    function lookupHistorySelection(id) {
-      const session = state && (state.sessions || []).find(function (s) { return s.id === id; });
-      const project = state && (state.projects || []).find(function (p) {
-        return p.id === id || (session && p.name === session.project);
-      });
-      return { session: session, project: project };
+    function renderMarkerTooltipHtml(payload) {
+      if (!payload) return '';
+      return (
+        '<p><strong>' +
+        esc(stateLabel(payload.state)) +
+        '</strong> · ' +
+        esc(payload.at || '') +
+        '</p>' +
+        '<div class="label">Prompt</div><p>' +
+        esc(payload.prompt || '(no prompt)') +
+        '</p>' +
+        '<div class="label">Reply</div><p>' +
+        esc(payload.reply || '(no reply)') +
+        '</p>'
+      );
+    }
+
+    function showMarkerTooltip(markerId, anchor) {
+      if (!historyTooltip) return;
+      const payload = markerPayload.get(markerId);
+      if (!payload) {
+        dismissHistoryTooltip();
+        return;
+      }
+      cancelHistoryTooltipHide();
+      historyTooltipId = markerId;
+      historyHoverId = markerId;
+      historyTooltip.hidden = false;
+      const html = renderMarkerTooltipHtml(payload);
+      if (historyTooltip.innerHTML !== html) historyTooltip.innerHTML = html;
+      if (anchor) positionMarkerTooltip(anchor);
     }
 
     function renderHistoryTooltip() {
-      if (!historyTooltip) return;
-      const id = historyHoverId || historyFocusId || historyTooltipId;
-      const found = lookupHistorySelection(id);
-      const nextId = found.session || found.project ? id : null;
-      if (historyTooltipHovered && nextId && historyTooltipId === nextId) return;
-      historyTooltipId = nextId;
-      if (!historyTooltipId) {
-        historyTooltipHovered = false;
-        cancelHistoryTooltipHide();
-      }
-      historyTooltip.hidden = !historyTooltipId;
-      const html = renderGraphHint(found.project, found.session);
-      if (historyTooltip.innerHTML !== html) historyTooltip.innerHTML = html;
-      if (historyHintEl) {
-        historyHintEl.textContent = historyTooltipId
-          ? 'click for details · double-click a session for Herdr · Esc to dismiss hint'
-          : 'click for details · double-click a session for Herdr · filter by state above';
-      }
-      if (historyTooltipId && historyTreeEl && typeof historyTreeEl.querySelector === 'function') {
-        const row = historyTreeEl.querySelector('.history-row[data-id="' + historyTooltipId + '"]');
-        if (row) positionHistoryTooltip(row);
+      // History row hover popups are disabled; only timeline marker popups use this element.
+      if (!historyTooltipId || !markerPayload.has(historyTooltipId)) {
+        if (historyTooltip) historyTooltip.hidden = true;
       }
     }
 
@@ -1642,6 +1999,20 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         const target = ev.target;
         const closest = target && typeof target.closest === 'function' ? target.closest.bind(target) : null;
         if (!closest) return;
+        const actionBtn = closest('[data-action]');
+        if (actionBtn && actionBtn.getAttribute && actionBtn.getAttribute('data-action')) {
+          if (typeof ev.preventDefault === 'function') ev.preventDefault();
+          if (typeof ev.stopPropagation === 'function') ev.stopPropagation();
+          handleDashboardAction(actionBtn);
+          return;
+        }
+        const markerBtn = closest('.gantt-marker');
+        if (markerBtn) {
+          if (typeof ev.stopPropagation === 'function') ev.stopPropagation();
+          const mid = markerBtn.getAttribute('data-marker-id');
+          if (mid) showMarkerTooltip(mid, markerBtn);
+          return;
+        }
         const twist = closest('button[data-twist]');
         if (twist) {
           if (typeof ev.stopPropagation === 'function') ev.stopPropagation();
@@ -1674,43 +2045,42 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         const target = ev.target;
         const closest = target && typeof target.closest === 'function' ? target.closest.bind(target) : null;
         if (!closest) return;
-        const row = closest('.history-row');
-        if (!row) return;
-        cancelHistoryTooltipHide();
-        historyFocusId = null;
-        historyHoverId = row.getAttribute('data-id');
-        renderHistoryTooltip();
+        const marker = closest('.gantt-marker');
+        if (!marker) return;
+        const mid = marker.getAttribute('data-marker-id');
+        if (!mid) return;
+        showMarkerTooltip(mid, marker);
       });
       historyTreeEl.addEventListener('mouseout', function (ev) {
         const target = ev.target;
         const closest = target && typeof target.closest === 'function' ? target.closest.bind(target) : null;
         if (!closest) return;
-        const row = closest('.history-row');
-        if (!row) return;
+        const marker = closest('.gantt-marker');
+        if (!marker) return;
         const related = ev.relatedTarget;
-        if (related && typeof row.contains === 'function' && row.contains(related)) return;
-        if (historyHoverId === row.getAttribute('data-id')) historyHoverId = null;
+        if (related && typeof marker.contains === 'function' && marker.contains(related)) return;
+        if (related && historyTooltip && typeof historyTooltip.contains === 'function' && historyTooltip.contains(related)) {
+          return;
+        }
+        if (historyHoverId === marker.getAttribute('data-marker-id')) historyHoverId = null;
         scheduleHistoryTooltipHide();
       });
       historyTreeEl.addEventListener('focusin', function (ev) {
         const target = ev.target;
         const closest = target && typeof target.closest === 'function' ? target.closest.bind(target) : null;
         if (!closest) return;
-        const row = closest('.history-row');
-        if (!row || ev.target !== row) return;
-        cancelHistoryTooltipHide();
-        if (historyHoverId !== row.getAttribute('data-id')) {
-          historyFocusId = row.getAttribute('data-id');
-        }
-        renderHistoryTooltip();
+        const marker = closest('.gantt-marker');
+        if (!marker) return;
+        const mid = marker.getAttribute('data-marker-id');
+        if (mid) showMarkerTooltip(mid, marker);
       });
       historyTreeEl.addEventListener('focusout', function (ev) {
         const target = ev.target;
         const closest = target && typeof target.closest === 'function' ? target.closest.bind(target) : null;
         if (!closest) return;
-        const row = closest('.history-row');
-        if (!row || ev.target !== row) return;
-        if (historyFocusId === row.getAttribute('data-id')) historyFocusId = null;
+        const marker = closest('.gantt-marker');
+        if (!marker) return;
+        if (historyHoverId === marker.getAttribute('data-marker-id')) historyHoverId = null;
         scheduleHistoryTooltipHide();
       });
       historyTreeEl.addEventListener('keydown', function (ev) {
@@ -1917,9 +2287,10 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       const token = ++historyReq;
       historyLoaded = { key: item.id, sig: sig, loading: true, data: prev };
       renderHistoryPanel();
-      const url = '/api/history?' + (isProject
+      let url = '/api/history?' + (isProject
         ? 'project=' + encodeURIComponent(item.name)
         : 'session=' + encodeURIComponent(item.id));
+      if (showArchived || item.archived) url += '&includeArchived=1';
       fetch(url)
         .then(function (r) {
           return r.json().then(function (body) {
@@ -2039,6 +2410,56 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         updateSim({ forceRebuild: true });
         drawGraph();
         if (currentView === 'graph') startLoop();
+      });
+    }
+    if (showArchivedEl) {
+      showArchivedEl.addEventListener('change', function () {
+        showArchived = !!showArchivedEl.checked;
+        try {
+          if (typeof localStorage !== 'undefined' && localStorage) {
+            localStorage.setItem(SHOW_ARCHIVED_STORAGE_KEY, showArchived ? '1' : '0');
+          }
+        } catch (_) {
+          /* ignore */
+        }
+        renderHistoryTree();
+        renderDetail();
+        simStale = true;
+        updateSim({ forceRebuild: true });
+        drawGraph();
+        if (currentView === 'graph') startLoop();
+      });
+    }
+
+    async function handleDashboardAction(el) {
+      if (!el || !el.getAttribute) return false;
+      const action = el.getAttribute('data-action');
+      if (!action) return false;
+      const id = el.getAttribute('data-id');
+      const project = el.getAttribute('data-project');
+      const title = el.getAttribute('data-title');
+      if (action === 'archive' && id) await archiveSession(id, false);
+      else if (action === 'archive-children' && id) await archiveSession(id, true);
+      else if (action === 'unarchive' && id) await unarchiveSession(id, false);
+      else if (action === 'delete' && id) await deleteSession(id, title);
+      else if (action === 'archive-idle' && project) await archiveIdleInProject(project);
+      else return false;
+      return true;
+    }
+
+    if (detailEl) {
+      detailEl.addEventListener('click', function (ev) {
+        const t = ev.target;
+        const btn =
+          t && t.getAttribute && t.getAttribute('data-action')
+            ? t
+            : t && t.closest
+              ? t.closest('[data-action]')
+              : null;
+        if (!btn) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        handleDashboardAction(btn);
       });
     }
     setShown(graphViewEl, false);

@@ -103,7 +103,7 @@ aflt memory sync --all --commit --push  # nightly: sync + commit generated + pus
 aflt children --json            # workers of this master, or a summary of masters
 ```
 
-`STATUS` is saved lifecycle (`active` | `paused` | `done`). A process exit does **not** mark the task done — use `aflt done`. `HERDR` is live runtime from `hc ls`: `running` | `shell` | `exited` | `missing` | `unknown` | `-`. `aflt ls --json` also includes derived `workerStatus` (same rules as `aflt children --json`) plus effective `project` and `parent`. `aflt ls` never writes the registry. `aflt timeline` is strictly read-only (no registry/Herdr writes). `aflt dashboard` is read-only by default (local UI / snapshot; not `aflt memory dashboard`); `--capture-completions` explicitly writes completion notes and receipts. Default UI is a collapsible history tree with Gantt activity bars and state filter (star graph remains a selectable view). History matches graph interactions: badges/waiting/working markers, hover popups, SSE updates, double-click → Herdr focus (loopback-only; remote clients get a Mini-only note). Click a row for “where we left off” + prompt/reply history from `runs/<id>/` (plus status notes / completions). Interactive launches record a prompt receipt into `runs/` without scraping Herdr. Live graph positions persist across SSE updates and settle; **Running** / **open** mean the agent is actually **working** (Herdr OSC 7501 `status=working`, or a live headless `runPid`) — not merely `herdr.runtime=running` (pane/process alive; Herdr’s Agents panel shows those as idle). Registry-`active` alone does not count; a completed/idle turn on a still-live pane is **idle** (registry `status` unchanged). Project badges/rings/filters roll up from session live states only (`waiting > running > failed > idle > done`; no sessions → idle), never from a project-level open/active flag. Memory-only folders with **no sessions** (`fromMemoryOnly`) are grouped at the bottom of History under **No sessions (N)** (collapsed by default; expand/collapse is kept across SSE); they stay clickable for notes/docs, are omitted from the Graph, and do not count toward Active projects. A **Hide dormant** toggle (default on, persisted in `localStorage`) hides projects whose roll-up is idle/done and whose last activity is older than the same 24h Active window — running/waiting/failed are never hidden; a count like “12 dormant hidden” is shown. Legacy project `af` aliases to `aflt` for dashboard hubs and memory sync/dashboard folders.
+`STATUS` is saved lifecycle (`active` | `paused` | `done`). A process exit does **not** mark the task done — use `aflt done`. `HERDR` is live runtime from `hc ls`: `running` | `shell` | `exited` | `missing` | `unknown` | `-`. `aflt ls --json` also includes derived `workerStatus` (same rules as `aflt children --json`) plus effective `project` and `parent`. `aflt ls` never writes the registry. `aflt timeline` is strictly read-only (no registry/Herdr writes). `aflt dashboard` is read-only by default (local UI / snapshot; not `aflt memory dashboard`); `--capture-completions` explicitly writes completion notes and receipts. Default UI is a collapsible history tree with an activity-only Gantt (completed/failed turn markers) and a shared state filter (star graph remains a selectable view). History and Graph share one vocabulary and colors: **Working** (green), **Waiting** (orange), **Idle** (gray), **Completed** (blue), **Failed** (red). History matches graph interactions for badges/waiting/working markers, click → detail, SSE updates, double-click → Herdr focus (loopback-only; remote clients get a Mini-only note); History row hover popups are off — only Gantt marker hover shows prompt/reply. Click a row for “where we left off” + prompt/reply history from `runs/<id>/` (plus status notes / completions). Interactive launches record a prompt receipt into `runs/` without scraping Herdr. Live graph positions persist across SSE updates and settle; **Working** / **open** mean the agent is actually working (Herdr OSC 7501 `status=working`, or a live headless `runPid`) — not merely `herdr.runtime=running` (pane/process alive; Herdr’s Agents panel shows those as idle). Registry-`active` alone does not count; a completed/idle turn on a still-live pane is **Idle** (registry `status` unchanged). Project badges/rings/filters roll up from session live states only (`waiting > working > failed > idle > completed`; no sessions → idle), never from a project-level open/active flag. Memory-only folders with **no sessions** (`fromMemoryOnly`) are grouped at the bottom of History under **No sessions (N)** (collapsed by default; expand/collapse is kept across SSE); they stay clickable for notes/docs, are omitted from the Graph, and do not count toward Active projects. A **Hide dormant** toggle (default on, persisted in `localStorage`) hides projects whose roll-up is idle/completed and whose last activity is older than the same 24h Active window — working/waiting/failed are never hidden; a count like “12 dormant hidden” is shown. **Show archived** (off by default, `localStorage`) reveals `archived` sessions (dimmed); row/detail actions Archive / Unarchive / Delete and project “Archive all idle/completed sub-agents” use loopback-only POSTs with the same `x-aflt-action-token` as Herdr focus (remote clients get the Mini-only note). Legacy project `af` aliases to `aflt` for dashboard hubs and memory sync/dashboard folders.
 
 ### 3. Orchestrate workers from a master
 
@@ -137,7 +137,7 @@ If you *are* the master (launched via `aflt master`), your env already has `AGEN
 - **Parse `--json`**, not table text. Confirm flags with `aflt help` or `--dry-run`.
 - **`--force` is an explicit tool/write grant**, not “skip the prompt.” Cursor: `--force` auto-approves tools/shell. Copilot: `--force` maps to `--allow-all-tools`. Interactive Cursor `new`/`resume` does **not** change Cursor `--force` behavior. Omit `--force` for text-only / read-only prompts.
 - **`--trust` is not `--force`.** `aflt run` / `aflt resume` pass Cursor `--trust` by default (skips the workspace-trust dialog). Use `--no-trust` to keep the dialog.
-- **Do not commit, push, stash, reset, switch branches, or delete files** unless the user explicitly authorized that exact action. `aflt rm` removes registry rows and af-owned files under `$AGENTFLEET_HOME` only — never the project, `~/.cursor`, or `~/.copilot`. Prefer `aflt rm --dry-run` first. If a session is running, `aflt stop` first; `--force` on `rm` does **not** stop the process. **`aflt rm` and `aflt stop` prefer an exact id or title.** On a human TTY, a fuzzy-only query may prompt to confirm/pick; **agents and scripts never get prompts** (non-TTY / `--json` stay exact-only with a did-you-mean hint) — always pass exact ids/titles. Pass multiple `rm` targets as separate args.
+- **Do not commit, push, stash, reset, switch branches, or delete files** unless the user explicitly authorized that exact action. `aflt rm` removes registry rows and af-owned files under `$AGENTFLEET_HOME` (results/, plans/) only — never `runs/<id>/` logs, the project, `~/.cursor`, or `~/.copilot`. Prefer `aflt rm --dry-run` first. `aflt archive` / `aflt unarchive` soft-hide sessions without deleting logs. If a session is running/waiting (live `runPid` or Herdr working/blocked), `aflt stop` first; `--force` on `rm`/`archive` does **not** stop the process. **`aflt rm` and `aflt stop` prefer an exact id or title.** On a human TTY, a fuzzy-only query may prompt to confirm/pick; **agents and scripts never get prompts** (non-TTY / `--json` stay exact-only with a did-you-mean hint) — always pass exact ids/titles. Pass multiple `rm` targets as separate args.
 - **Never print secrets** (tokens, `CURSOR_API_KEY`, MCP auth, `.env`).
 - **Keep tests hermetic** if you work in this repo: use a temp `AGENTFLEET_HOME`. Never point tests at the real `~/.agentfleet` or the live Herdr.
 - **Resume with the same cwd/workspace** the chat was created in. `aflt cwd` updates the registry folder/branch but does **not** move a live Herdr tab — `aflt resume` (and optionally `aflt adopt`) after.
@@ -183,8 +183,9 @@ aflt import --engine copilot [<id|prefix>...] [--title T] [--tag T]...
             [--allow-missing] [-i|--pick]
 # --title only with a single id. -i requires a TTY.
 
-aflt ls [--status S] [--tag T] [--project NAME] [--all] [--json]
+aflt ls [--status S] [--tag T] [--project NAME] [--all] [--archived] [--json]
 # --json includes effective project + parent on every row
+# Archived hidden by default; --archived or --all includes them
 
 aflt timeline [<project>] [--all] [--json] [--since <date>]
 # Read-only project session tree (no registry/Herdr writes). Default project =
@@ -193,7 +194,8 @@ aflt timeline [<project>] [--all] [--json] [--since <date>]
 
 aflt dashboard --serve [--port 8787] [--host 127.0.0.1] [--json] [--capture-completions]
 # Live local activity dashboard (read-only by default). Default bind 127.0.0.1:8787.
-# History-first UI (tree + Gantt); Graph toggle keeps the star view. Click a row for
+# History-first UI (tree + activity-only Gantt markers); Graph toggle keeps the star
+# view. Shared states: Working/Waiting/Idle/Completed/Failed. Click a row for
 # prompt/reply history (GET /api/history). Blocks until SIGINT/SIGTERM.
 # Not the same as aflt memory dashboard.
 # --capture-completions opts into redacted Task Complete status notes in memory.
@@ -244,20 +246,20 @@ aflt sync [--dry-run] [--json]
 
 `aflt timeline` is read-only. Default project: `<project>` arg → `AFLT_PROJECT` → cwd's derived project. Text shows local times (JSON keeps ISO UTC). Commits come from each session's own cwd (`commitsReason`: `not-git` / `missing-cwd`); an open-ended row that is not a live run is bounded at `lastUsed` (`open-ended` when it never ran).
 
-`aflt dashboard` is a separate top-level command from `aflt memory dashboard`. It serves a local activity UI (`--serve`, default `127.0.0.1:8787`) or writes an SVG/HTML snapshot (`--snapshot`). Default view is a collapsible project/session tree with Gantt bars (most recent activity first; dormant projects collapsed; state filter matching display-state: running / waiting / idle / done / failed); the star graph is optional. History rows have feature parity with graph interactions: state badges + waiting `?` / working spinner, hover/focus popups (same fields as graph), click selects, Esc dismisses, live SSE refresh, and double-click on a session focuses its uniquely live Herdr terminal via the same loopback-only `/api/herdr/focus` token flow as Graph (remote LAN clients see an inline note that opening Herdr only works on the Mini). Selecting a row opens a history panel (latest completion / status note / open doc checkpoints, then prompt↔reply pairs from run logs, newest first). Issue #2 cross-session message markers are reserved in the payload (`messages` / per-row `messageMarkers`) but not rendered. Background refreshes never mutate the registry or Herdr; memory writes require `--capture-completions`. All served text is redacted; write/action endpoints remain loopback-only. It never resumes or launches agents; errors appear in the sidebar. Snapshots cannot focus Herdr. The graph keeps node positions across SSE ticks and cools the force layout until it settles (reheat on node add/remove or resize). Stats `open` / Running / `idle` / `done` / `failed` follow the same live filter state as History/Graph (OSC working or live `runPid`, not bare `herdr.runtime` or registry `active`). Project hubs, History project rows, detail badges, and state filters share one roll-up: `waiting > running > failed > idle > done` from member sessions only. Sessionless memory projects are History-only (bottom **No sessions** group) and never inflate Active project counts or Graph hubs. **Hide dormant** (Graph + History) uses the same 24h threshold as Active projects and re-lays out the Graph on toggle and SSE.
+`aflt dashboard` is a separate top-level command from `aflt memory dashboard`. It serves a local activity UI (`--serve`, default `127.0.0.1:8787`) or writes an SVG/HTML snapshot (`--snapshot`). Default view is a collapsible project/session tree with an **activity-only** Gantt timeline (most recent activity first; dormant projects collapsed; state filter: Working / Waiting / Idle / Completed / Failed — same labels and CSS `--state-*` colors as the Graph legend, detail badges, and stats). The timeline shows markers only for finished turns (blue = completed, red = failed) at each turn’s completion time; no working/idle span bars. Hover a marker for that turn’s prompt + reply (truncated, redacted like `/api/history`); project rows merge their session markers. The star graph is optional. History rows share Graph badges (waiting `?` / working spinner) and click → detail / Esc / SSE / double-click → Herdr focus (same loopback-only `/api/herdr/focus` token flow; remote LAN clients see a Mini-only note) — **no History row hover popups** (Graph node tooltips stay). Selecting a row opens a history panel (latest completion / status note / open doc checkpoints, then prompt↔reply pairs from run logs, newest first). Issue #2 cross-session message markers are reserved in the payload (`messages` / per-row `messageMarkers`) but not rendered. Background refreshes never mutate the registry or Herdr; memory writes require `--capture-completions`. All served text is redacted; write/action endpoints remain loopback-only. It never resumes or launches agents; errors appear in the sidebar. Snapshots cannot focus Herdr. The graph keeps node positions across SSE ticks and cools the force layout until it settles (reheat on node add/remove or resize). Stats Working / Waiting / Idle / Completed / Failed follow the same live filter state as History/Graph (OSC working or live `runPid`, not bare `herdr.runtime` or registry `active`). Project hubs, History project rows, detail badges, and state filters share one roll-up: `waiting > working > failed > idle > completed` from member sessions only. Sessionless memory projects are History-only (bottom **No sessions** group) and never inflate Active project counts or Graph hubs. **Hide dormant** (Graph + History) uses the same 24h threshold as Active projects and re-lays out the Graph on toggle and SSE. **Show archived** reveals soft-archived sessions; Archive/Delete POSTs are loopback + action-token only (same as `/api/herdr/focus`).
 
-Session activity is separate from lifecycle: green spinning ring = working,
-blue = completed, amber dashed ring / `?` = awaiting input. Herdr `done`
-indicates a completed turn, not an input request. Completion survives a following
+Session activity is separate from lifecycle: green spinning ring = Working,
+blue = Completed, orange dashed ring / `?` = Waiting, gray = Idle, red = Failed.
+Herdr `done` indicates a completed turn, not an input request. Completion survives a following
 idle signal but clears on new work or a new send; send grace suppresses stale
-completion. `herdr.runtime` pane-alive with OSC idle/null (typical Cursor) is **idle** for Running counts — same as Herdr’s Agents panel. Headless workers use live pid. Spinners respect
+completion. `herdr.runtime` pane-alive with OSC idle/null (typical Cursor) is **Idle** for Working counts — same as Herdr’s Agents panel. Headless workers use live pid. Spinners respect
 reduced motion. Registry lifecycle is unchanged.
 
 Long session-node labels use the first nine and last six ID characters
-(e.g. `pla-funne...29c501`); the full ID remains in popups and actions. Session popups contain
+(e.g. `pla-funne...29c501`); the full ID remains in Graph popups and actions. Graph session popups contain
 only activity state, session ID, engine, saved lifecycle status, and Herdr
 runtime status. Project popups show only the Doc Bot summary. A 450 ms rollout
-grace period lets the pointer enter a popup to select/copy text; hovered popup
+grace period lets the pointer enter a Graph popup to select/copy text; hovered popup
 content and position stay stable across live updates. Empty graph clicks and
 Escape immediately dismiss popups, including focused or pending hints.
 
@@ -390,12 +392,17 @@ aflt set-cwd <title|id> [path] [--dry-run] [--json]   # alias
 ### Remove and metadata
 
 ```bash
+aflt archive <title|id> [--with-children] [--force] [--dry-run] [--json]
+aflt unarchive <title|id> [--with-children] [--dry-run] [--json]
+# Soft-hide / restore (archived + archivedAt). Status and runs/ logs unchanged.
+# --with-children includes descendants. Refuses running/waiting unless --force.
+
 aflt rm <title|id> [<title|id>...] [--keep-files] [--force] [--dry-run]
 # Exact id/title preferred; TTY may confirm/pick fuzzy matches (agents: use exact ids).
 # Multiple ids: resolve all first; cancel/fail before removing any. Removes the session
-# and af-owned files under $AGENTFLEET_HOME (results/, runs/<id>/, plans/).
-# --keep-files: registry row only (keeps handoffs/logs).
-# Refuses if running unless --force (does not stop the process).
+# and af-owned files under $AGENTFLEET_HOME (results/, plans/). Never deletes runs/<id>/.
+# Clears parent on remaining children. --keep-files: registry row only (keeps handoffs/logs).
+# Refuses if running/waiting unless --force (does not stop the process).
 
 aflt rm --children <master> [--with-master] [--keep-files] [--force] [--dry-run]
 # Master resolution matches rm/stop (TTY picker when no exact match). --with-master

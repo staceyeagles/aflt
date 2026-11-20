@@ -319,7 +319,7 @@ it('buildFallbackHandoff / ensureResultHandoff / handoffDisplay', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-it('sessionOwnedPaths only includes paths under results/plans/runs', () => {
+it('sessionOwnedPaths includes results/plans but never runs/', () => {
   const home = '/tmp/fleet-home';
   const owned = orchestrate.sessionOwnedPaths(
     {
@@ -330,7 +330,7 @@ it('sessionOwnedPaths only includes paths under results/plans/runs', () => {
     { home }
   );
   assert.deepEqual(owned.files, ['/tmp/fleet-home/results/w1.md']);
-  assert.ok(owned.dirs[0].endsWith(path.join('runs', 'w1')));
+  assert.deepEqual(owned.dirs, []);
   assert.equal(owned.skipped.length, 1);
   assert.ok(owned.skipped[0].reason.includes('plan outside'));
 });

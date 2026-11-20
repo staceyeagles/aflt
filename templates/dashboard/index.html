@@ -39,6 +39,10 @@
           Hide dormant
         </label>
         <span class="dormant-hidden-count" id="dormant-hidden-count" hidden></span>
+        <label class="show-archived-control" for="show-archived">
+          <input type="checkbox" id="show-archived"/>
+          Show archived
+        </label>
       </div>
     </header>
     <main class="stage" id="stage" aria-label="session history">
@@ -46,21 +50,27 @@
         <div class="history-toolbar">
           <div class="activity-legend state-filter" id="history-filter" role="group" aria-label="Filter by state">
             <button type="button" class="filter-chip active" data-state="" aria-pressed="true">all</button>
-            <button type="button" class="filter-chip running" data-state="running" aria-pressed="false">running</button>
-            <button type="button" class="filter-chip waiting" data-state="waiting" aria-pressed="false">waiting</button>
-            <button type="button" class="filter-chip idle" data-state="idle" aria-pressed="false">idle</button>
-            <button type="button" class="filter-chip done" data-state="done" aria-pressed="false">done</button>
-            <button type="button" class="filter-chip failed" data-state="failed" aria-pressed="false">failed</button>
+            <button type="button" class="filter-chip working" data-state="working" aria-pressed="false">Working</button>
+            <button type="button" class="filter-chip waiting" data-state="waiting" aria-pressed="false">Waiting</button>
+            <button type="button" class="filter-chip idle" data-state="idle" aria-pressed="false">Idle</button>
+            <button type="button" class="filter-chip completed" data-state="completed" aria-pressed="false">Completed</button>
+            <button type="button" class="filter-chip failed" data-state="failed" aria-pressed="false">Failed</button>
           </div>
-          <div class="gantt-axis" id="gantt-axis" aria-hidden="true"></div>
+          <div class="gantt-axis-wrap">
+            <div class="gantt-axis" id="gantt-axis" aria-hidden="true"></div>
+            <div class="gantt-legend" aria-label="Timeline markers">
+              <span class="completed">completed</span>
+              <span class="failed">failed</span>
+            </div>
+          </div>
         </div>
         <p class="herdr-remote-note" id="herdr-remote-note" hidden>
-          Opening Herdr only works on the Mini — open this dashboard at 127.0.0.1 locally.
+          Opening Herdr and archive/delete only work on the Mini — open this dashboard at 127.0.0.1 locally.
         </p>
         <div id="history-tree" class="history-tree" role="tree"></div>
         <div id="history-tooltip" class="graph-tooltip" role="tooltip" hidden></div>
         <div class="hint history-hint" id="history-hint">
-          click for details · double-click a session for Herdr · Esc to dismiss hint
+          click for details · hover a timeline marker for prompt/reply · double-click a session for Herdr
         </div>
       </div>
       <div id="graph-view" class="graph-view" hidden>
@@ -68,9 +78,11 @@
         <div id="graph-tooltip" class="graph-tooltip" role="tooltip" hidden></div>
         <div class="hint" id="hint">
           <div class="activity-legend" aria-label="Session activity">
-            <span class="working">working</span>
-            <span class="completed">completed</span>
-            <span class="waiting">awaiting input</span>
+            <span class="working">Working</span>
+            <span class="waiting">Waiting</span>
+            <span class="idle">Idle</span>
+            <span class="completed">Completed</span>
+            <span class="failed">Failed</span>
           </div>
           hover a node · click for details · double-click an agent for Herdr
         </div>
@@ -111,6 +123,17 @@
       </section>
     </aside>
   </div>
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title">
+    <header class="document-header">
+      <h2 id="confirm-title">Confirm</h2>
+      <button id="confirm-close" type="button" aria-label="Close">Close</button>
+    </header>
+    <p id="confirm-body" class="confirm-body"></p>
+    <div class="confirm-actions">
+      <button type="button" id="confirm-cancel">Cancel</button>
+      <button type="button" id="confirm-ok" class="danger">Delete</button>
+    </div>
+  </dialog>
   <dialog id="document-dialog" aria-labelledby="document-title">
     <header class="document-header">
       <h2 id="document-title"></h2>
