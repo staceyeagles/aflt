@@ -29,6 +29,7 @@ const agentDocs = require('../lib/agent-docs');
 const setup = require('../lib/setup');
 const resolveSession = require('../lib/resolve-session');
 const archiveLib = require('../lib/archive');
+const turns = require('../lib/turns');
 const {
   parseArgs,
   resolveCwd,
@@ -122,6 +123,12 @@ Usage:
                             Write a standalone SVG or self-contained HTML snapshot
                             of the current activity graph (no server). Parent dirs
                             created as needed. Only .svg / .html(.htm) supported.
+  aflt turns backfill [<id|title>...] [--engine copilot|cursor|all] [--apply] [--json]
+                            Import interactive turns into runs/<id>/turns.jsonl from
+                            engine stores (Copilot events.jsonl; Cursor transcripts when
+                            uniquely mapped). Dry-run by default (counts only); pass
+                            --apply to write. Safe to re-run (dedupe). Does not write
+                            memory status-notes (that stays --capture-completions).
   aflt memory                 Show resolved project-memory repo path (or hint to init)
   aflt memory where [--json]  Same as aflt memory (path + source: env|config)
   aflt memory init <path> [--force] [--json]
@@ -502,6 +509,9 @@ async function main() {
       break;
     case 'dashboard':
       await cmdDashboard(rest);
+      break;
+    case 'turns':
+      cmdTurns(rest);
       break;
     case 'memory':
       await cmdMemory(rest);
@@ -1324,6 +1334,103 @@ async function cmdDashboard(argv) {
     await dashboard.serveDashboard({ host, port, json: asJson, captureCompletions });
   } catch (err) {
     fail(err.message || String(err), { json: asJson });
+  }
+}
+
+/**
+ * Interactive turn capture helpers. Default is dry-run; --apply writes turns.jsonl.
+ */
+function cmdTurns(argv) {
+  const { args: rawArgs, flags } = parseArgs(argv);
+  const args = rawArgs.slice();
+  let sub = null;
+  if (args[0] && !String(args[0]).startsWith('-')) {
+    sub = String(args.shift());
+  }
+  const asJson = recoverBoolFlag(flags, 'json', args);
+  const apply = recoverBoolFlag(flags, 'apply', args);
+  const dryRunFlag = recoverBoolFlag(flags, 'dry-run', args);
+  if (dryRunFlag && apply) {
+    fail('--apply cannot be combined with --dry-run', { json: asJson });
+  }
+
+  if (!sub || sub === 'help') {
+    fail(
+      'usage: aflt turns backfill [<id|title>...] [--engine copilot|cursor|all] [--apply] [--json]\n' +
+        '  Dry-run by default (report counts). Pass --apply to write runs/<id>/turns.jsonl.',
+      { json: asJson }
+    );
+  }
+  if (sub !== 'backfill') {
+    fail(`unknown turns subcommand: ${sub}\nusage: aflt turns backfill …`, { json: asJson });
+  }
+
+  let engineFilter = 'all';
+  if (flags.engine != null && flags.engine !== true) {
+    engineFilter = String(flags.engine).toLowerCase();
+    if (!['copilot', 'cursor', 'all'].includes(engineFilter)) {
+      fail('--engine must be copilot, cursor, or all', { json: asJson });
+    }
+  }
+
+  const queries = args.filter((a) => a && !String(a).startsWith('-'));
+  let sessions;
+  try {
+    sessions = registry.list({ includeDone: true, includeArchived: true });
+  } catch (err) {
+    fail(err.message || String(err), { json: asJson });
+  }
+
+  let targets = sessions;
+  if (queries.length) {
+    targets = [];
+    for (const q of queries) {
+      const exact = registry.findExact(q);
+      if (!exact) {
+        const fuzzy = resolveSession.collectFuzzyCandidates(q, sessions);
+        fail(
+          fuzzy.length
+            ? `no session matches "${q}" (did you mean ${fuzzy.map((s) => `${s.title} (${s.id})`).join(', ')}? turns backfill requires an exact id or title)`
+            : `no session matches "${q}"`,
+          { json: asJson }
+        );
+      }
+      targets.push(exact);
+    }
+  }
+
+  const result = turns.backfillTurns(targets, {
+    apply,
+    engine: engineFilter,
+    env: process.env,
+  });
+
+  if (asJson) {
+    emitJson(result);
+    return;
+  }
+
+  const mode = apply ? 'apply' : 'dry-run';
+  process.stdout.write(
+    `turns backfill (${mode}, engine=${result.engine}): ` +
+      `${result.totals.sessions} session(s), scanned ${result.totals.scanned}, ` +
+      (apply
+        ? `wrote ${result.totals.written}, skipped ${result.totals.skipped}\n`
+        : `would write ${result.totals.wouldWrite}, skipped ${result.totals.skipped}\n`)
+  );
+  for (const row of result.sessions) {
+    const detail = apply
+      ? `written=${row.written} skipped=${row.skipped}`
+      : `wouldWrite=${row.wouldWrite} skipped=${row.skipped}`;
+    const skip = row.skippedReason ? ` (${row.skippedReason})` : '';
+    process.stdout.write(
+      `  ${row.id}  ${row.title}  ${row.engine}  scanned=${row.scanned}  ${detail}${skip}\n`
+    );
+  }
+  if (result.errors && result.errors.length) {
+    for (const err of result.errors) {
+      process.stderr.write(`turns: ${err}\n`);
+    }
   }
 }
 
