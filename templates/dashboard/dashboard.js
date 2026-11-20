@@ -147,7 +147,21 @@ const FILTER_PRIORITY = ['waiting', 'working', 'failed', 'idle', 'completed'];
 
 const HIDE_DORMANT_STORAGE_KEY = 'aflt.dashboard.hideDormant';
 const SHOW_ARCHIVED_STORAGE_KEY = 'aflt.dashboard.showArchived';
+const GRAPH_SPREAD_STORAGE_KEY = 'aflt.dashboard.graphSpread';
+const TIMELINE_PRESET_STORAGE_KEY = 'aflt.dashboard.timelinePreset';
+const TIMELINE_VIEW_STORAGE_KEY = 'aflt.dashboard.timelineView';
 const DEFAULT_DORMANT_AFTER_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_GRAPH_SPREAD = 0.3;
+const GRAPH_ZOOM_MIN = 0.25;
+const GRAPH_ZOOM_MAX = 4;
+const DEFAULT_TIMELINE_PRESET = '7d';
+const TIMELINE_MIN_SPAN_MS = 60 * 60 * 1000;
+const TIMELINE_PRESET_MS = {
+  '24h': 24 * 60 * 60 * 1000,
+  '7d': 7 * 24 * 60 * 60 * 1000,
+  '30d': 30 * 24 * 60 * 60 * 1000,
+  all: null,
+};
 
 /**
  * Dormant = idle/completed roll-up and last activity older than dormantAfterMs
@@ -283,12 +297,348 @@ function mergeSimPreserve(prevSim, nextBuilt, opts) {
   };
 }
 
+/** Clamp graph spread slider (0 = tight clusters, 1 = loose). */
+function clampGraphSpread(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return DEFAULT_GRAPH_SPREAD;
+  if (n < 0) return 0;
+  if (n > 1) return 1;
+  return n;
+}
+
+/**
+ * Force-layout elasticity from a 0..1 spread control.
+ * Lower values pull clusters tighter (shorter links, weaker repulsion).
+ */
+function graphForceParams(spread) {
+  const s = clampGraphSpread(spread);
+  return {
+    spread: s,
+    linkIdealParent: 48 + s * 72,
+    linkIdealOther: 36 + s * 54,
+    repulsion: 6 + s * 28,
+    collideMult: 1.5 + s * 1.0,
+    collideForce: 0.035 + s * 0.02,
+    hubRadiusFactor: 0.14 + s * 0.2,
+    sessionOrbit: 42 + s * 40,
+    centerPull: 0.003 + (1 - s) * 0.004,
+  };
+}
+
+function clampGraphZoom(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 1;
+  if (n < GRAPH_ZOOM_MIN) return GRAPH_ZOOM_MIN;
+  if (n > GRAPH_ZOOM_MAX) return GRAPH_ZOOM_MAX;
+  return n;
+}
+
+/**
+ * Fit world-space nodes into a viewport via translate + scale.
+ * Returns { scale, tx, ty } for: x' = x * scale + tx.
+ */
+function fitGraphView(nodes, viewportW, viewportH, opts) {
+  opts = opts || {};
+  const pad = opts.padding != null ? Number(opts.padding) : 48;
+  const minScale = opts.minScale != null ? Number(opts.minScale) : GRAPH_ZOOM_MIN;
+  const maxScale = opts.maxScale != null ? Number(opts.maxScale) : GRAPH_ZOOM_MAX;
+  if (!nodes || !nodes.length || !(viewportW > 0) || !(viewportH > 0)) {
+    return { scale: 1, tx: 0, ty: 0 };
+  }
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i];
+    if (!n) continue;
+    const r = n.r != null ? Number(n.r) : 8;
+    const x = Number(n.x);
+    const y = Number(n.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    minX = Math.min(minX, x - r);
+    minY = Math.min(minY, y - r);
+    maxX = Math.max(maxX, x + r);
+    maxY = Math.max(maxY, y + r);
+  }
+  if (!Number.isFinite(minX) || !Number.isFinite(minY)) {
+    return { scale: 1, tx: 0, ty: 0 };
+  }
+  const bw = Math.max(maxX - minX, 1);
+  const bh = Math.max(maxY - minY, 1);
+  const availW = Math.max(viewportW - 2 * (Number.isFinite(pad) ? pad : 48), 1);
+  const availH = Math.max(viewportH - 2 * (Number.isFinite(pad) ? pad : 48), 1);
+  let scale = Math.min(availW / bw, availH / bh);
+  const lo = Number.isFinite(minScale) ? minScale : GRAPH_ZOOM_MIN;
+  const hi = Number.isFinite(maxScale) ? maxScale : GRAPH_ZOOM_MAX;
+  scale = Math.max(lo, Math.min(hi, scale));
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  return {
+    scale: scale,
+    tx: viewportW / 2 - cx * scale,
+    ty: viewportH / 2 - cy * scale,
+  };
+}
+
+/** Zoom around a pivot in the same coordinate space as tx/ty (viewBox units). */
+function zoomGraphView(view, factor, pivotX, pivotY) {
+  const oldScale = view && view.scale != null ? Number(view.scale) : 1;
+  const tx = view && view.tx != null ? Number(view.tx) : 0;
+  const ty = view && view.ty != null ? Number(view.ty) : 0;
+  const f = Number(factor);
+  const next = clampGraphZoom(oldScale * (Number.isFinite(f) && f > 0 ? f : 1));
+  const ratio = next / (oldScale || 1);
+  const px = Number.isFinite(pivotX) ? pivotX : 0;
+  const py = Number.isFinite(pivotY) ? pivotY : 0;
+  return {
+    scale: next,
+    tx: px * (1 - ratio) + tx * ratio,
+    ty: py * (1 - ratio) + ty * ratio,
+  };
+}
+
+function panGraphView(view, dx, dy) {
+  return {
+    scale: view && view.scale != null ? Number(view.scale) : 1,
+    tx: (view && view.tx != null ? Number(view.tx) : 0) + (Number(dx) || 0),
+    ty: (view && view.ty != null ? Number(view.ty) : 0) + (Number(dy) || 0),
+  };
+}
+
+function graphViewTransform(view) {
+  const scale = view && view.scale != null ? Number(view.scale) : 1;
+  const tx = view && view.tx != null ? Number(view.tx) : 0;
+  const ty = view && view.ty != null ? Number(view.ty) : 0;
+  return 'translate(' + tx + ' ' + ty + ') scale(' + scale + ')';
+}
+
+function clampTimelineWindow(start, end, fullStart, fullEnd) {
+  let s = Number(start);
+  let e = Number(end);
+  const fs = Number(fullStart);
+  const fe = Number(fullEnd);
+  if (!Number.isFinite(s) || !Number.isFinite(e)) {
+    return {
+      start: Number.isFinite(fs) ? fs : 0,
+      end: Number.isFinite(fe) ? Math.max(fe, (Number.isFinite(fs) ? fs : 0) + 1) : 1,
+    };
+  }
+  if (e < s) {
+    const tmp = s;
+    s = e;
+    e = tmp;
+  }
+  const minSpan = TIMELINE_MIN_SPAN_MS;
+  if (e - s < minSpan) {
+    const mid = (s + e) / 2;
+    s = mid - minSpan / 2;
+    e = mid + minSpan / 2;
+  }
+  const fullLo = Number.isFinite(fs) ? fs : s;
+  const fullHi = Number.isFinite(fe) ? Math.max(fe, fullLo + minSpan) : e;
+  const maxSpan = Math.max(fullHi - fullLo, minSpan);
+  if (e - s > maxSpan) {
+    const mid = (s + e) / 2;
+    s = mid - maxSpan / 2;
+    e = mid + maxSpan / 2;
+  }
+  if (s < fullLo) {
+    e += fullLo - s;
+    s = fullLo;
+  }
+  if (e > fullHi) {
+    s -= e - fullHi;
+    e = fullHi;
+  }
+  if (s < fullLo) s = fullLo;
+  if (e > fullHi) e = fullHi;
+  if (e <= s) e = s + minSpan;
+  return { start: s, end: e };
+}
+
+/**
+ * Resolve the visible timeline window from a preset and optional override.
+ * fullRange/override use epoch ms: { start, end }.
+ */
+function resolveTimelineWindow(fullRange, preset, override, nowMs) {
+  const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const fallbackSpan = TIMELINE_PRESET_MS['7d'];
+  const fullStart = fullRange && Number.isFinite(fullRange.start)
+    ? fullRange.start
+    : now - fallbackSpan;
+  const fullEnd = fullRange && Number.isFinite(fullRange.end)
+    ? Math.max(fullRange.end, fullStart + 1)
+    : now;
+  if (
+    override &&
+    Number.isFinite(override.start) &&
+    Number.isFinite(override.end) &&
+    override.end > override.start
+  ) {
+    return clampTimelineWindow(override.start, override.end, fullStart, fullEnd);
+  }
+  const key = preset && Object.prototype.hasOwnProperty.call(TIMELINE_PRESET_MS, preset)
+    ? preset
+    : DEFAULT_TIMELINE_PRESET;
+  const dur = TIMELINE_PRESET_MS[key];
+  if (dur == null) {
+    return { start: fullStart, end: fullEnd };
+  }
+  const end = fullEnd;
+  const start = Math.max(fullStart, end - dur);
+  return { start: start, end: end };
+}
+
+/** factor > 1 zooms in (shorter span). anchorMs keeps that instant fixed. */
+function zoomTimelineWindow(window, factor, anchorMs, fullStart, fullEnd) {
+  const start = window && Number(window.start);
+  const end = window && Number(window.end);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    return clampTimelineWindow(fullStart, fullEnd, fullStart, fullEnd);
+  }
+  const f = Number(factor);
+  const zoom = Number.isFinite(f) && f > 0 ? f : 1;
+  const span = end - start;
+  const nextSpan = span / zoom;
+  const anchor = Number.isFinite(anchorMs) ? anchorMs : (start + end) / 2;
+  const ratio = (anchor - start) / span;
+  const nextStart = anchor - nextSpan * ratio;
+  return clampTimelineWindow(nextStart, nextStart + nextSpan, fullStart, fullEnd);
+}
+
+function panTimelineWindow(window, deltaMs, fullStart, fullEnd) {
+  const start = window && Number(window.start);
+  const end = window && Number(window.end);
+  const delta = Number(deltaMs) || 0;
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    return clampTimelineWindow(fullStart, fullEnd, fullStart, fullEnd);
+  }
+  return clampTimelineWindow(start + delta, end + delta, fullStart, fullEnd);
+}
+
+/**
+ * Place finished-turn markers so overlaps remain selectable.
+ * Nearby markers stack on lanes; denser clusters become a count badge
+ * (expand via expandedGroupIds).
+ *
+ * @returns {Array<{kind:'marker'|'group', leftPct, lane, laneCount, ...}>}
+ */
+function layoutTimelineMarkers(markers, rangeStart, rangeEnd, trackWidthPx, opts) {
+  opts = opts || {};
+  const minSepPx = opts.minSepPx != null ? Number(opts.minSepPx) : 12;
+  const maxStack = opts.maxStack != null ? Number(opts.maxStack) : 3;
+  const expanded = opts.expandedGroupIds || null;
+  const span = Number(rangeEnd) - Number(rangeStart);
+  if (!(span > 0) || !(trackWidthPx > 0)) return [];
+  const minSepPct = Math.max(0.15, (minSepPx / trackWidthPx) * 100);
+
+  const items = [];
+  (markers || []).forEach(function (m, idx) {
+    if (!m || (m.state !== 'completed' && m.state !== 'failed')) return;
+    const t = Date.parse(m.at);
+    if (!Number.isFinite(t)) return;
+    const left = ((t - rangeStart) / span) * 100;
+    if (left < -2 || left > 102) return;
+    items.push({ marker: m, idx: idx, t: t, left: left });
+  });
+  items.sort(function (a, b) {
+    return a.t - b.t || a.idx - b.idx;
+  });
+
+  const clusters = [];
+  let current = null;
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (!current) {
+      current = { members: [it] };
+      continue;
+    }
+    const prev = current.members[current.members.length - 1];
+    if (it.left - prev.left <= minSepPct) {
+      current.members.push(it);
+    } else {
+      clusters.push(current);
+      current = { members: [it] };
+    }
+  }
+  if (current) clusters.push(current);
+
+  const out = [];
+  for (let ci = 0; ci < clusters.length; ci++) {
+    const members = clusters[ci].members;
+    let center = 0;
+    for (let i = 0; i < members.length; i++) center += members[i].left;
+    center /= members.length;
+    const groupId = 'g' + ci;
+    const expand = expanded && (
+      (typeof expanded.has === 'function' && expanded.has(groupId)) ||
+      (Array.isArray(expanded) && expanded.indexOf(groupId) !== -1)
+    );
+    if (members.length === 1) {
+      out.push({
+        kind: 'marker',
+        id: groupId + '-0',
+        groupId: groupId,
+        leftPct: members[0].left,
+        lane: 0,
+        laneCount: 1,
+        marker: members[0].marker,
+        sourceIndex: members[0].idx,
+      });
+      continue;
+    }
+    if (members.length <= maxStack || expand) {
+      const laneCount = members.length;
+      for (let li = 0; li < members.length; li++) {
+        out.push({
+          kind: 'marker',
+          id: groupId + '-' + li,
+          groupId: groupId,
+          leftPct: center,
+          lane: li,
+          laneCount: laneCount,
+          marker: members[li].marker,
+          sourceIndex: members[li].idx,
+        });
+      }
+      continue;
+    }
+    out.push({
+      kind: 'group',
+      id: groupId,
+      groupId: groupId,
+      leftPct: center,
+      lane: 0,
+      laneCount: 1,
+      count: members.length,
+      markers: members.map(function (m) { return m.marker; }),
+      sourceIndexes: members.map(function (m) { return m.idx; }),
+    });
+  }
+  return out;
+}
+
+function maxTimelineLaneCount(laid) {
+  let max = 1;
+  (laid || []).forEach(function (item) {
+    if (item && item.laneCount > max) max = item.laneCount;
+  });
+  return max;
+}
+
 if (typeof module !== 'undefined' && module.exports && typeof document === 'undefined') {
   module.exports = {
     mergeSimPreserve, renderProjectMemory, renderGraphHint, renderMarkdown, resolveDocumentLink,
     renderTaskCompletion, activityLabel, rowFilterState, stateLabel, isHerdrFocusLocal, isDormantProject,
     STATE_LABELS, FILTER_PRIORITY,
     HIDE_DORMANT_STORAGE_KEY, SHOW_ARCHIVED_STORAGE_KEY, DEFAULT_DORMANT_AFTER_MS,
+    GRAPH_SPREAD_STORAGE_KEY, TIMELINE_PRESET_STORAGE_KEY, TIMELINE_VIEW_STORAGE_KEY,
+    DEFAULT_GRAPH_SPREAD, DEFAULT_TIMELINE_PRESET, TIMELINE_PRESET_MS, TIMELINE_MIN_SPAN_MS,
+    GRAPH_ZOOM_MIN, GRAPH_ZOOM_MAX,
+    clampGraphSpread, graphForceParams, clampGraphZoom, fitGraphView, zoomGraphView, panGraphView,
+    graphViewTransform, clampTimelineWindow, resolveTimelineWindow, zoomTimelineWindow,
+    panTimelineWindow, layoutTimelineMarkers, maxTimelineLaneCount,
   };
 } else {
   (function () {
@@ -340,9 +690,20 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     const historyTooltip = document.getElementById('history-tooltip');
     const historyHintEl = document.getElementById('history-hint');
     const herdrRemoteNote = document.getElementById('herdr-remote-note');
+    const timelinePresetsEl = document.getElementById('timeline-presets');
+    const timelineZoomInBtn = document.getElementById('timeline-zoom-in');
+    const timelineZoomOutBtn = document.getElementById('timeline-zoom-out');
+    const graphZoomInBtn = document.getElementById('graph-zoom-in');
+    const graphZoomOutBtn = document.getElementById('graph-zoom-out');
+    const graphFitBtn = document.getElementById('graph-fit');
+    const graphSpreadEl = document.getElementById('graph-spread');
+    const ganttAxisWrapEl = ganttAxisEl && ganttAxisEl.parentElement;
 
     let hideDormant = true;
     let showArchived = false;
+    let graphSpread = DEFAULT_GRAPH_SPREAD;
+    let timelinePreset = DEFAULT_TIMELINE_PRESET;
+    let timelineOverride = null;
     try {
       if (typeof localStorage !== 'undefined' && localStorage) {
         const stored = localStorage.getItem(HIDE_DORMANT_STORAGE_KEY);
@@ -351,12 +712,32 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         const archivedStored = localStorage.getItem(SHOW_ARCHIVED_STORAGE_KEY);
         if (archivedStored === '1' || archivedStored === 'true') showArchived = true;
         else if (archivedStored === '0' || archivedStored === 'false') showArchived = false;
+        const spreadStored = localStorage.getItem(GRAPH_SPREAD_STORAGE_KEY);
+        if (spreadStored != null && spreadStored !== '') {
+          graphSpread = clampGraphSpread(Number(spreadStored));
+        }
+        const presetStored = localStorage.getItem(TIMELINE_PRESET_STORAGE_KEY);
+        if (presetStored && Object.prototype.hasOwnProperty.call(TIMELINE_PRESET_MS, presetStored)) {
+          timelinePreset = presetStored;
+        }
+        const viewStored = localStorage.getItem(TIMELINE_VIEW_STORAGE_KEY);
+        if (viewStored) {
+          try {
+            const parsed = JSON.parse(viewStored);
+            if (parsed && Number.isFinite(parsed.start) && Number.isFinite(parsed.end) && parsed.end > parsed.start) {
+              timelineOverride = { start: parsed.start, end: parsed.end };
+            }
+          } catch (_) {
+            /* ignore bad JSON */
+          }
+        }
       }
     } catch (_) {
       /* ignore quota / private mode */
     }
     if (hideDormantEl) hideDormantEl.checked = hideDormant;
     if (showArchivedEl) showArchivedEl.checked = showArchived;
+    if (graphSpreadEl) graphSpreadEl.value = String(Math.round(graphSpread * 100));
 
     // Prefer updating a trailing text node so the legend element stays intact.
     // Fall back to textContent when the host DOM is a minimal test double.
@@ -408,12 +789,158 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     let historyTooltipHideTimer = null;
     let sim = null;
     let graphLayers = null;
+    let graphWorld = null;
+    let graphView = { scale: 1, tx: 0, ty: 0 };
+    let graphViewInitialized = false;
+    let graphNeedsFit = true;
+    let graphPanning = null;
+    let graphPanMoved = false;
     const graphNodes = new Map();
+    const expandedTimelineGroups = new Set();
+    let timelineWindow = null;
+    let timelinePanning = null;
+    let timelineTrackWidth = 280;
     let lastUpdatedAt = Date.now();
     let raf = 0;
     let selectedDocument = null;
     let documentSource = false;
     let openingHerdr = false;
+
+    function persistLocal(key, value) {
+      try {
+        if (typeof localStorage !== 'undefined' && localStorage) {
+          localStorage.setItem(key, value);
+        }
+      } catch (_) {
+        /* ignore */
+      }
+    }
+
+    function forceParams() {
+      return graphForceParams(graphSpread);
+    }
+
+    function applyGraphWorldTransform() {
+      if (!graphWorld) return;
+      graphWorld.setAttribute('transform', graphViewTransform(graphView));
+    }
+
+    function clientToViewBox(clientX, clientY) {
+      const rect = svg.getBoundingClientRect();
+      const w = sim && sim.w ? sim.w : Math.max(rect.width || 800, 320);
+      const h = sim && sim.h ? sim.h : Math.max(rect.height || 600, 320);
+      const x = ((clientX - rect.left) / Math.max(rect.width, 1)) * w;
+      const y = ((clientY - rect.top) / Math.max(rect.height, 1)) * h;
+      return { x: x, y: y, w: w, h: h, rect: rect };
+    }
+
+    function fitGraphToView(opts) {
+      if (!sim || !sim.nodes || !sim.nodes.length) return;
+      const rect = svg.getBoundingClientRect();
+      const w = sim.w || Math.max(rect.width || 800, 320);
+      const h = sim.h || Math.max(rect.height || 600, 320);
+      graphView = fitGraphView(sim.nodes, w, h, opts);
+      graphViewInitialized = true;
+      graphNeedsFit = false;
+      applyGraphWorldTransform();
+      positionGraphTooltip();
+    }
+
+    function setGraphZoom(factor, clientX, clientY) {
+      const pivot = clientToViewBox(
+        clientX != null ? clientX : (svg.getBoundingClientRect().left + svg.getBoundingClientRect().width / 2),
+        clientY != null ? clientY : (svg.getBoundingClientRect().top + svg.getBoundingClientRect().height / 2)
+      );
+      graphView = zoomGraphView(graphView, factor, pivot.x, pivot.y);
+      graphViewInitialized = true;
+      graphNeedsFit = false;
+      applyGraphWorldTransform();
+      positionGraphTooltip();
+    }
+
+    function fullTimelineRange() {
+      const tree = state && state.historyTree;
+      const range = tree && tree.range;
+      const start = range ? Date.parse(range.start) : NaN;
+      const end = range ? Date.parse(range.end) : NaN;
+      const now = stateNowMs(state);
+      if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+        return { start: start, end: end };
+      }
+      return { start: now - TIMELINE_PRESET_MS['7d'], end: now };
+    }
+
+    function activeTimelineWindow() {
+      const full = fullTimelineRange();
+      timelineWindow = resolveTimelineWindow(full, timelinePreset, timelineOverride, stateNowMs(state));
+      return timelineWindow;
+    }
+
+    function persistTimelineView() {
+      persistLocal(TIMELINE_PRESET_STORAGE_KEY, timelinePreset);
+      if (timelineOverride) {
+        persistLocal(TIMELINE_VIEW_STORAGE_KEY, JSON.stringify(timelineOverride));
+      } else {
+        try {
+          if (typeof localStorage !== 'undefined' && localStorage) {
+            localStorage.removeItem(TIMELINE_VIEW_STORAGE_KEY);
+          }
+        } catch (_) {
+          /* ignore */
+        }
+      }
+    }
+
+    function syncTimelinePresetChips() {
+      if (!timelinePresetsEl || typeof timelinePresetsEl.querySelectorAll !== 'function') return;
+      const chips = timelinePresetsEl.querySelectorAll('.timeline-preset');
+      for (let i = 0; i < chips.length; i++) {
+        const on = (chips[i].getAttribute('data-preset') || '') === timelinePreset;
+        toggleBtnClass(chips[i], 'active', on);
+        chips[i].setAttribute('aria-pressed', String(on));
+      }
+    }
+
+    function setTimelinePreset(preset) {
+      if (!Object.prototype.hasOwnProperty.call(TIMELINE_PRESET_MS, preset)) return;
+      timelinePreset = preset;
+      timelineOverride = null;
+      expandedTimelineGroups.clear();
+      persistTimelineView();
+      syncTimelinePresetChips();
+      renderHistoryTree();
+    }
+
+    function adjustTimelineZoom(factor, anchorMs) {
+      const full = fullTimelineRange();
+      const win = activeTimelineWindow();
+      timelineOverride = zoomTimelineWindow(win, factor, anchorMs, full.start, full.end);
+      persistTimelineView();
+      renderHistoryTree();
+    }
+
+    function adjustTimelinePan(deltaMs) {
+      const full = fullTimelineRange();
+      const win = activeTimelineWindow();
+      timelineOverride = panTimelineWindow(win, deltaMs, full.start, full.end);
+      persistTimelineView();
+      renderHistoryTree();
+    }
+
+    function measureTimelineTrackWidth() {
+      if (!historyTreeEl || typeof historyTreeEl.querySelector !== 'function') {
+        return timelineTrackWidth;
+      }
+      const track = historyTreeEl.querySelector('.gantt-track');
+      if (track && typeof track.getBoundingClientRect === 'function') {
+        const w = track.getBoundingClientRect().width;
+        if (w > 40) timelineTrackWidth = w;
+      } else if (ganttAxisEl && typeof ganttAxisEl.getBoundingClientRect === 'function') {
+        const w = ganttAxisEl.getBoundingClientRect().width;
+        if (w > 40) timelineTrackWidth = w;
+      }
+      return timelineTrackWidth;
+    }
 
     function updateHerdrRemoteNote() {
       if (!herdrRemoteNote) return;
@@ -1125,6 +1652,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       const h = Math.max(rect.height || 600, 320);
       svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
 
+      const params = forceParams();
       const nodes = [];
       const links = [];
       // Sessionless memory-only projects stay out; optionally hide dormant hubs.
@@ -1137,7 +1665,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         return true;
       });
       const n = Math.max(projects.length, 1);
-      const hubR = Math.min(w, h) * 0.28;
+      const hubR = Math.min(w, h) * params.hubRadiusFactor;
       const cx = w * 0.5;
       const cy = h * 0.5;
 
@@ -1175,8 +1703,8 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
           activityState: sess.activityState,
           awaitingInput: !!sess.awaitingInput,
           recent: !!sess.recent,
-          x: parent.x + Math.cos(a) * 70,
-          y: parent.y + Math.sin(a) * 70,
+          x: parent.x + Math.cos(a) * params.sessionOrbit,
+          y: parent.y + Math.sin(a) * params.sessionOrbit,
           vx: 0,
           vy: 0,
           r: 8,
@@ -1225,6 +1753,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       const alpha = model.alpha;
       const nodes = model.nodes;
       const links = model.links;
+      const params = forceParams();
       for (let i = 0; i < nodes.length; i++) {
         for (let j = i + 1; j < nodes.length; j++) {
           const a = nodes[i];
@@ -1233,9 +1762,9 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
           let dy = b.y - a.y;
           let d2 = dx * dx + dy * dy || 1;
           const dist = Math.sqrt(d2);
-          const min = (a.r + b.r) * 2.2;
+          const min = (a.r + b.r) * params.collideMult;
           if (dist < min) {
-            const f = ((min - dist) / dist) * 0.04 * alpha;
+            const f = ((min - dist) / dist) * params.collideForce * alpha;
             dx *= f;
             dy *= f;
             if (!a.fixed) {
@@ -1247,7 +1776,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
               b.vy += dy;
             }
           } else {
-            const f = (18 / d2) * alpha;
+            const f = (params.repulsion / d2) * alpha;
             dx *= f;
             dy *= f;
             if (!a.fixed) {
@@ -1268,7 +1797,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         let dx = b.x - a.x;
         let dy = b.y - a.y;
         const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        const ideal = l.kind === 'parent' ? 90 : 70;
+        const ideal = l.kind === 'parent' ? params.linkIdealParent : params.linkIdealOther;
         const f = ((dist - ideal) / dist) * 0.02 * alpha;
         dx *= f;
         dy *= f;
@@ -1287,8 +1816,8 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         if (n.kind === 'project') {
           const dx = model.cx - n.x;
           const dy = model.cy - n.y;
-          n.vx += dx * 0.002 * alpha;
-          n.vy += dy * 0.002 * alpha;
+          n.vx += dx * params.centerPull * alpha;
+          n.vy += dy * params.centerPull * alpha;
         }
         if (n.fixed) {
           n.vx = 0;
@@ -1318,12 +1847,16 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       const tipRect = graphTooltip.getBoundingClientRect();
       const sx = graphRect.width / sim.w;
       const sy = graphRect.height / sim.h;
-      let left = (node.x + node.r) * sx + 12;
+      const scale = graphView.scale || 1;
+      const screenX = (node.x * scale + (graphView.tx || 0)) * sx;
+      const screenY = (node.y * scale + (graphView.ty || 0)) * sy;
+      const nodeR = node.r * scale * sx;
+      let left = screenX + nodeR + 12;
       if (left + tipRect.width > graphRect.width - 12) {
-        left = (node.x - node.r) * sx - tipRect.width - 12;
+        left = screenX - nodeR - tipRect.width - 12;
       }
       graphTooltip.style.left = Math.max(12, Math.min(left, graphRect.width - tipRect.width - 12)) + 'px';
-      graphTooltip.style.top = Math.max(12, Math.min(node.y * sy - tipRect.height / 2,
+      graphTooltip.style.top = Math.max(12, Math.min(screenY - tipRect.height / 2,
         graphRect.height - tipRect.height - 12)) + 'px';
     }
 
@@ -1375,12 +1908,21 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     function drawGraph() {
       if (!sim) return;
       const ns = 'http://www.w3.org/2000/svg';
+      if (!graphWorld) {
+        graphWorld = document.createElementNS(ns, 'g');
+        graphWorld.setAttribute('class', 'graph-world');
+        svg.appendChild(graphWorld);
+      }
       if (!graphLayers) {
         graphLayers = ['stars', 'edges', 'nodes'].map(function () {
           const group = document.createElementNS(ns, 'g');
-          svg.appendChild(group);
+          graphWorld.appendChild(group);
           return group;
         });
+      }
+      applyGraphWorldTransform();
+      if (graphNeedsFit && sim.nodes && sim.nodes.length) {
+        fitGraphToView();
       }
       const stars = graphLayers[0];
       const edgeG = graphLayers[1];
@@ -1681,32 +2223,85 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       return list;
     }
 
+    function rangeBounds(range) {
+      if (!range) return { start: NaN, end: NaN };
+      const start = typeof range.start === 'number' ? range.start : Date.parse(range.start);
+      const end = typeof range.end === 'number' ? range.end : Date.parse(range.end);
+      return { start: start, end: end };
+    }
+
     function ganttHtml(markers, range, rowId) {
-      const start = range ? Date.parse(range.start) : NaN;
-      const end = range ? Date.parse(range.end) : NaN;
+      const bounds = rangeBounds(range);
+      const start = bounds.start;
+      const end = bounds.end;
       const span = end - start;
+      const trackW = measureTimelineTrackWidth();
       let html = '<div class="gantt-track">';
       if (span > 0) {
-        (markers || []).forEach(function (m, idx) {
-          if (!m || (m.state !== 'completed' && m.state !== 'failed')) return;
-          const a = Date.parse(m.at);
-          if (isNaN(a)) return;
-          const left = ((a - start) / span) * 100;
-          if (left < 0 || left > 100) return;
-          const mid = 'm-' + String(rowId || 'row') + '-' + idx + '-' + String(m.at);
+        const laid = layoutTimelineMarkers(markers, start, end, trackW, {
+          expandedGroupIds: expandedTimelineGroups,
+        });
+        const lanes = maxTimelineLaneCount(laid);
+        html = '<div class="gantt-track" style="--gantt-lanes:' + lanes + '">';
+        laid.forEach(function (item) {
+          if (!item) return;
+          if (item.kind === 'group') {
+            const gid = 'grp-' + String(rowId || 'row') + '-' + item.groupId;
+            let failed = 0;
+            let completed = 0;
+            (item.markers || []).forEach(function (m) {
+              if (m && m.state === 'failed') failed += 1;
+              else completed += 1;
+            });
+            markerPayload.set(gid, {
+              kind: 'group',
+              groupId: item.groupId,
+              count: item.count,
+              markers: item.markers || [],
+              state: failed && completed ? 'mixed' : failed ? 'failed' : 'completed',
+            });
+            const groupClass = failed && completed ? 'mixed' : failed ? 'failed' : 'completed';
+            html +=
+              '<button type="button" class="gantt-marker group ' +
+              esc(groupClass) +
+              '" style="left:' +
+              item.leftPct.toFixed(2) +
+              '%;--lane:0" data-marker-id="' +
+              esc(gid) +
+              '" data-group-id="' +
+              esc(item.groupId) +
+              '" aria-label="' +
+              esc(item.count + ' turns — click to expand') +
+              '">' +
+              esc(String(item.count)) +
+              '</button>';
+            return;
+          }
+          const m = item.marker;
+          if (!m) return;
+          const mid =
+            'm-' +
+            String(rowId || 'row') +
+            '-' +
+            item.id +
+            '-' +
+            String(m.at);
           markerPayload.set(mid, {
             state: m.state,
             at: m.at,
             prompt: m.prompt || '',
             reply: m.reply || '',
             sessionId: m.sessionId || null,
+            groupId: item.groupId || null,
           });
           html +=
             '<button type="button" class="gantt-marker ' +
             esc(m.state) +
             '" style="left:' +
-            left.toFixed(2) +
-            '%" data-marker-id="' +
+            item.leftPct.toFixed(2) +
+            '%;--lane:' +
+            (item.lane || 0) +
+            '" data-marker-id="' +
             esc(mid) +
             '" aria-label="' +
             esc(stateLabel(m.state) + ' · ' + (m.at || '')) +
@@ -1718,8 +2313,9 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
 
     function renderGanttAxis(range) {
       if (!ganttAxisEl) return;
-      const start = range ? Date.parse(range.start) : NaN;
-      const end = range ? Date.parse(range.end) : NaN;
+      const bounds = rangeBounds(range);
+      const start = bounds.start;
+      const end = bounds.end;
       const span = end - start;
       if (!(span > 0)) {
         ganttAxisEl.innerHTML = '';
@@ -1891,6 +2487,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         if (sortSelect && sortSelect.value !== sortMode) sortSelect.value = sortMode;
       }
       syncFilterChips();
+      syncTimelinePresetChips();
       updateHerdrRemoteNote();
       const hasSessionProjects = tree && (tree.projects || []).length > 0;
       const hasNoSessions = tree && tree.noSessions && (tree.noSessions.children || []).length > 0;
@@ -1900,7 +2497,8 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         if (historyTreeEl.innerHTML !== empty) historyTreeEl.innerHTML = empty;
         return;
       }
-      renderGanttAxis(tree.range);
+      const viewRange = activeTimelineWindow();
+      renderGanttAxis(viewRange);
       const nowMs = stateNowMs(state);
       const windowMs = dormantWindowMs(state);
       let projectNodes = sortProjectNodes(tree.projects || [], sortMode);
@@ -1910,11 +2508,11 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         });
       }
       const projects = filterTree(projectNodes);
-      let html = projects.map(function (p) { return historyRowHtml(p, tree.range); }).join('');
+      let html = projects.map(function (p) { return historyRowHtml(p, viewRange); }).join('');
       // Sessionless folders keep their own bottom group (still reachable for notes).
       if (tree.noSessions) {
         const groupFiltered = filterTree([tree.noSessions])[0];
-        if (groupFiltered) html += historyRowHtml(groupFiltered, tree.range);
+        if (groupFiltered) html += historyRowHtml(groupFiltered, viewRange);
       }
       if (!html) {
         html = hideDormant && !stateFilter
@@ -2015,6 +2613,28 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
 
     function renderMarkerTooltipHtml(payload) {
       if (!payload) return '';
+      if (payload.kind === 'group') {
+        const lines = (payload.markers || []).slice(0, 8).map(function (m, i) {
+          return (
+            '<p class="group-turn"><strong>' +
+            esc(stateLabel(m.state)) +
+            '</strong> · ' +
+            esc(m.at || '') +
+            '<br/><span class="prompt">' +
+            esc((m.prompt || '(no prompt)').slice(0, 120)) +
+            '</span></p>'
+          );
+        }).join('');
+        return (
+          '<p><strong>' +
+          esc(String(payload.count || 0)) +
+          ' turns</strong> · click badge to expand</p>' +
+          lines +
+          ((payload.markers || []).length > 8
+            ? '<p class="completion-meta">+' + ((payload.markers || []).length - 8) + ' more</p>'
+            : '')
+        );
+      }
       return (
         '<p><strong>' +
         esc(stateLabel(payload.state)) +
@@ -2068,8 +2688,23 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         const markerBtn = closest('.gantt-marker');
         if (markerBtn) {
           if (typeof ev.stopPropagation === 'function') ev.stopPropagation();
+          const groupId = markerBtn.getAttribute('data-group-id');
+          const classAttr = markerBtn.getAttribute && markerBtn.getAttribute('class') || '';
+          if (groupId && /\bgroup\b/.test(String(classAttr))) {
+            if (expandedTimelineGroups.has(groupId)) expandedTimelineGroups.delete(groupId);
+            else expandedTimelineGroups.add(groupId);
+            dismissHistoryTooltip();
+            renderHistoryTree();
+            return;
+          }
           const mid = markerBtn.getAttribute('data-marker-id');
           if (mid) showMarkerTooltip(mid, markerBtn);
+          return;
+        }
+        if (closest('.gantt-track') && expandedTimelineGroups.size) {
+          expandedTimelineGroups.clear();
+          dismissHistoryTooltip();
+          renderHistoryTree();
           return;
         }
         const twist = closest('button[data-twist]');
@@ -2441,12 +3076,15 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     }
 
     function updateSim(opts) {
+      opts = opts || {};
       if (!state) return;
       const built = buildSim(state);
       if (!sim || opts.forceRebuild || simStale) {
         sim = Object.assign({}, built, { alpha: 1, nodeSetChanged: true });
+        if (!graphViewInitialized || opts.fit) graphNeedsFit = true;
       } else {
         sim = mergeSimPreserve(sim, built, { preserveAlpha: true, reheatAlpha: 0.85 });
+        if (sim.nodeSetChanged && !graphViewInitialized) graphNeedsFit = true;
       }
       simStale = false;
       renderGraphTooltip();
@@ -2477,7 +3115,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       if (stage) stage.setAttribute('aria-label', graph ? 'activity graph' : 'session history');
       updateHerdrRemoteNote();
       if (graph) {
-        updateSim({ forceRebuild: true });
+        updateSim({ forceRebuild: true, fit: !graphViewInitialized });
         startLoop();
       } else {
         stopLoop();
@@ -2491,17 +3129,11 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     if (hideDormantEl) {
       hideDormantEl.addEventListener('change', function () {
         hideDormant = !!hideDormantEl.checked;
-        try {
-          if (typeof localStorage !== 'undefined' && localStorage) {
-            localStorage.setItem(HIDE_DORMANT_STORAGE_KEY, hideDormant ? '1' : '0');
-          }
-        } catch (_) {
-          /* ignore */
-        }
+        persistLocal(HIDE_DORMANT_STORAGE_KEY, hideDormant ? '1' : '0');
         renderHistoryTree();
         updateDormantHiddenCount();
         simStale = true;
-        updateSim({ forceRebuild: true });
+        updateSim({ forceRebuild: true, fit: true });
         drawGraph();
         if (currentView === 'graph') startLoop();
       });
@@ -2509,21 +3141,211 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     if (showArchivedEl) {
       showArchivedEl.addEventListener('change', function () {
         showArchived = !!showArchivedEl.checked;
-        try {
-          if (typeof localStorage !== 'undefined' && localStorage) {
-            localStorage.setItem(SHOW_ARCHIVED_STORAGE_KEY, showArchived ? '1' : '0');
-          }
-        } catch (_) {
-          /* ignore */
-        }
+        persistLocal(SHOW_ARCHIVED_STORAGE_KEY, showArchived ? '1' : '0');
         renderHistoryTree();
         renderDetail();
         simStale = true;
-        updateSim({ forceRebuild: true });
+        updateSim({ forceRebuild: true, fit: true });
         drawGraph();
         if (currentView === 'graph') startLoop();
       });
     }
+
+    if (timelinePresetsEl) {
+      timelinePresetsEl.addEventListener('click', function (ev) {
+        const target = ev.target;
+        const btn = target && typeof target.closest === 'function'
+          ? target.closest('.timeline-preset')
+          : null;
+        if (!btn) return;
+        const preset = btn.getAttribute('data-preset');
+        if (preset) setTimelinePreset(preset);
+      });
+    }
+    if (timelineZoomInBtn) {
+      timelineZoomInBtn.addEventListener('click', function () { adjustTimelineZoom(1.35); });
+    }
+    if (timelineZoomOutBtn) {
+      timelineZoomOutBtn.addEventListener('click', function () { adjustTimelineZoom(1 / 1.35); });
+    }
+
+    function timelineAnchorFromEvent(ev) {
+      const win = activeTimelineWindow();
+      const span = win.end - win.start;
+      const el = ganttAxisEl || historyTreeEl;
+      if (!el || typeof el.getBoundingClientRect !== 'function') return (win.start + win.end) / 2;
+      const rect = el.getBoundingClientRect();
+      const ratio = rect.width > 0 ? (ev.clientX - rect.left) / rect.width : 0.5;
+      return win.start + span * Math.max(0, Math.min(1, ratio));
+    }
+
+    function onTimelineWheel(ev) {
+      if (!(ev.ctrlKey || ev.metaKey)) return;
+      if (typeof ev.preventDefault === 'function') ev.preventDefault();
+      const dy = ev.deltaY || 0;
+      const factor = dy > 0 ? 1 / 1.15 : 1.15;
+      adjustTimelineZoom(factor, timelineAnchorFromEvent(ev));
+    }
+
+    if (historyViewEl) {
+      historyViewEl.addEventListener('wheel', onTimelineWheel, { passive: false });
+    }
+
+    function beginTimelinePan(ev) {
+      if (ev.button != null && ev.button !== 0) return;
+      const target = ev.target;
+      const closest = target && typeof target.closest === 'function' ? target.closest.bind(target) : null;
+      if (closest && closest('.gantt-marker, button, a, select, input, .filter-chip, .timeline-preset')) return;
+      if (!(closest && (closest('.gantt-axis') || closest('.gantt-track') || closest('.gantt-axis-wrap')))) {
+        return;
+      }
+      const win = activeTimelineWindow();
+      timelinePanning = {
+        x: ev.clientX,
+        start: win.start,
+        end: win.end,
+        width: measureTimelineTrackWidth(),
+      };
+      if (ganttAxisWrapEl) toggleBtnClass(ganttAxisWrapEl, 'panning', true);
+      if (historyTreeEl) toggleBtnClass(historyTreeEl, 'timeline-panning', true);
+      if (typeof ev.preventDefault === 'function') ev.preventDefault();
+    }
+
+    function moveTimelinePan(ev) {
+      if (!timelinePanning) return;
+      const width = timelinePanning.width || measureTimelineTrackWidth();
+      const span = timelinePanning.end - timelinePanning.start;
+      const dx = ev.clientX - timelinePanning.x;
+      const deltaMs = width > 0 ? (-dx / width) * span : 0;
+      const full = fullTimelineRange();
+      timelineOverride = panTimelineWindow(
+        { start: timelinePanning.start, end: timelinePanning.end },
+        deltaMs,
+        full.start,
+        full.end
+      );
+      // Live-update axis/markers without clearing override mid-drag.
+      renderHistoryTree();
+    }
+
+    function endTimelinePan() {
+      if (!timelinePanning) return;
+      timelinePanning = null;
+      if (ganttAxisWrapEl) toggleBtnClass(ganttAxisWrapEl, 'panning', false);
+      if (historyTreeEl) toggleBtnClass(historyTreeEl, 'timeline-panning', false);
+      persistTimelineView();
+    }
+
+    if (ganttAxisWrapEl) {
+      ganttAxisWrapEl.addEventListener('mousedown', beginTimelinePan);
+    }
+    if (historyTreeEl) {
+      historyTreeEl.addEventListener('mousedown', beginTimelinePan);
+    }
+    window.addEventListener('mousemove', moveTimelinePan);
+    window.addEventListener('mouseup', endTimelinePan);
+
+    if (graphZoomInBtn) {
+      graphZoomInBtn.addEventListener('click', function (ev) {
+        if (typeof ev.stopPropagation === 'function') ev.stopPropagation();
+        setGraphZoom(1.25);
+      });
+    }
+    if (graphZoomOutBtn) {
+      graphZoomOutBtn.addEventListener('click', function (ev) {
+        if (typeof ev.stopPropagation === 'function') ev.stopPropagation();
+        setGraphZoom(1 / 1.25);
+      });
+    }
+    if (graphFitBtn) {
+      graphFitBtn.addEventListener('click', function (ev) {
+        if (typeof ev.stopPropagation === 'function') ev.stopPropagation();
+        fitGraphToView();
+        drawGraph();
+      });
+    }
+    if (graphSpreadEl) {
+      graphSpreadEl.addEventListener('input', function () {
+        graphSpread = clampGraphSpread(Number(graphSpreadEl.value) / 100);
+        persistLocal(GRAPH_SPREAD_STORAGE_KEY, String(graphSpread));
+        if (sim) sim.alpha = 1;
+        updateSim({ forceRebuild: true, fit: true });
+        drawGraph();
+        if (currentView === 'graph') startLoop();
+      });
+      graphSpreadEl.addEventListener('click', function (ev) {
+        if (typeof ev.stopPropagation === 'function') ev.stopPropagation();
+      });
+    }
+
+    if (graphViewEl) {
+      graphViewEl.addEventListener('wheel', function (ev) {
+        if (currentView !== 'graph') return;
+        if (typeof ev.preventDefault === 'function') ev.preventDefault();
+        const dy = ev.deltaY || 0;
+        const factor = dy > 0 ? 1 / 1.12 : 1.12;
+        setGraphZoom(factor, ev.clientX, ev.clientY);
+      }, { passive: false });
+    }
+
+    function graphPanTarget(ev) {
+      const target = ev.target;
+      if (!target) return true;
+      if (typeof target.closest === 'function') {
+        if (target.closest('.graph-controls, .graph-tooltip, .node-hit, button, input, label')) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    function beginGraphPan(ev) {
+      if (currentView !== 'graph') return;
+      if (ev.button != null && ev.button !== 0) return;
+      if (!graphPanTarget(ev)) return;
+      const pivot = clientToViewBox(ev.clientX, ev.clientY);
+      graphPanning = {
+        x: ev.clientX,
+        y: ev.clientY,
+        tx: graphView.tx || 0,
+        ty: graphView.ty || 0,
+        sx: pivot.w / Math.max(pivot.rect.width, 1),
+        sy: pivot.h / Math.max(pivot.rect.height, 1),
+      };
+      graphPanMoved = false;
+      if (graphViewEl) toggleBtnClass(graphViewEl, 'panning', true);
+      if (typeof ev.preventDefault === 'function') ev.preventDefault();
+    }
+
+    function moveGraphPan(ev) {
+      if (!graphPanning) return;
+      const dx = (ev.clientX - graphPanning.x) * graphPanning.sx;
+      const dy = (ev.clientY - graphPanning.y) * graphPanning.sy;
+      if (Math.abs(ev.clientX - graphPanning.x) > 3 || Math.abs(ev.clientY - graphPanning.y) > 3) {
+        graphPanMoved = true;
+      }
+      graphView = {
+        scale: graphView.scale || 1,
+        tx: graphPanning.tx + dx,
+        ty: graphPanning.ty + dy,
+      };
+      graphViewInitialized = true;
+      graphNeedsFit = false;
+      applyGraphWorldTransform();
+      positionGraphTooltip();
+    }
+
+    function endGraphPan() {
+      if (!graphPanning) return;
+      graphPanning = null;
+      if (graphViewEl) toggleBtnClass(graphViewEl, 'panning', false);
+    }
+
+    if (svg) {
+      svg.addEventListener('mousedown', beginGraphPan);
+    }
+    window.addEventListener('mousemove', moveGraphPan);
+    window.addEventListener('mouseup', endGraphPan);
 
     async function handleDashboardAction(el) {
       if (!el || !el.getAttribute) return false;
@@ -2613,6 +3435,10 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     // selection in both the real DOM and the dashboard test harness.
     function clearGraphSelection() {
       if (currentView !== 'graph') return;
+      if (graphPanMoved) {
+        graphPanMoved = false;
+        return;
+      }
       selectedId = null;
       dismissGraphTooltip();
       renderDetail();
@@ -2624,7 +3450,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       historyViewEl.addEventListener('click', function (ev) {
         const target = ev.target;
         const closest = target && typeof target.closest === 'function' ? target.closest.bind(target) : null;
-        if (closest && closest('.history-row, .graph-tooltip, .filter-chip, .twist, button, a, select')) return;
+        if (closest && closest('.history-row, .graph-tooltip, .filter-chip, .timeline-preset, .twist, button, a, select, input')) return;
         selectedId = null;
         dismissHistoryTooltip();
         renderDetail();
@@ -2634,11 +3460,20 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       if (ev.key === 'Escape') {
         dismissGraphTooltip();
         dismissHistoryTooltip();
+        if (expandedTimelineGroups.size) {
+          expandedTimelineGroups.clear();
+          renderHistoryTree();
+        }
       }
     });
 
     window.addEventListener('resize', function () {
-      if (state && currentView === 'graph') applyState(state, { forceRebuild: true });
+      if (state && currentView === 'graph') {
+        applyState(state, { forceRebuild: true, fit: true });
+      } else if (state) {
+        measureTimelineTrackWidth();
+        renderHistoryTree();
+      }
     });
 
     function connectSse() {

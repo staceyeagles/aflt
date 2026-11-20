@@ -56,6 +56,18 @@
             <button type="button" class="filter-chip completed" data-state="completed" aria-pressed="false">Completed</button>
             <button type="button" class="filter-chip failed" data-state="failed" aria-pressed="false">Failed</button>
           </div>
+          <div class="timeline-controls" aria-label="Timeline scale">
+            <div class="timeline-presets" id="timeline-presets" role="group" aria-label="Time range">
+              <button type="button" class="timeline-preset" data-preset="24h" aria-pressed="false">24h</button>
+              <button type="button" class="timeline-preset active" data-preset="7d" aria-pressed="true">7d</button>
+              <button type="button" class="timeline-preset" data-preset="30d" aria-pressed="false">30d</button>
+              <button type="button" class="timeline-preset" data-preset="all" aria-pressed="false">all</button>
+            </div>
+            <div class="zoom-btns" role="group" aria-label="Timeline zoom">
+              <button type="button" id="timeline-zoom-out" title="Zoom out" aria-label="Zoom timeline out">−</button>
+              <button type="button" id="timeline-zoom-in" title="Zoom in" aria-label="Zoom timeline in">+</button>
+            </div>
+          </div>
           <div class="gantt-axis-wrap">
             <div class="gantt-axis" id="gantt-axis" aria-hidden="true"></div>
             <div class="gantt-legend" aria-label="Timeline markers">
@@ -70,10 +82,21 @@
         <div id="history-tree" class="history-tree" role="tree"></div>
         <div id="history-tooltip" class="graph-tooltip" role="tooltip" hidden></div>
         <div class="hint history-hint" id="history-hint">
-          click for details · hover a timeline marker for prompt/reply · double-click a session for Herdr
+          click for details · ctrl/⌘-scroll to zoom timeline · drag axis to pan · hover a marker for prompt/reply · double-click a session for Herdr
         </div>
       </div>
       <div id="graph-view" class="graph-view" hidden>
+        <div class="graph-controls" aria-label="Graph view controls">
+          <div class="zoom-btns" role="group" aria-label="Graph zoom">
+            <button type="button" id="graph-zoom-out" title="Zoom out" aria-label="Zoom graph out">−</button>
+            <button type="button" id="graph-zoom-in" title="Zoom in" aria-label="Zoom graph in">+</button>
+            <button type="button" id="graph-fit" title="Fit to view" aria-label="Fit graph to view">Fit</button>
+          </div>
+          <label class="spread-control" for="graph-spread">
+            Spread
+            <input type="range" id="graph-spread" min="0" max="100" value="30" step="1"/>
+          </label>
+        </div>
         <svg id="graph" xmlns="http://www.w3.org/2000/svg"></svg>
         <div id="graph-tooltip" class="graph-tooltip" role="tooltip" hidden></div>
         <div class="hint" id="hint">
@@ -84,7 +107,7 @@
             <span class="completed">Completed</span>
             <span class="failed">Failed</span>
           </div>
-          hover a node · click for details · double-click an agent for Herdr
+          scroll to zoom · drag to pan · hover a node · click for details · double-click an agent for Herdr
         </div>
       </div>
     </main>

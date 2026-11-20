@@ -266,6 +266,43 @@ body {
   position: absolute;
   z-index: 2;
 }
+.timeline-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.65rem;
+}
+.timeline-presets {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+.timeline-preset,
+.zoom-btns button {
+  margin: 0;
+  padding: 0.18rem 0.5rem;
+  border: 1px solid var(--cp-border-strong);
+  border-radius: 0.35rem;
+  background: var(--cp-surface);
+  color: var(--cp-text-muted);
+  font: inherit;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  line-height: 1.2;
+  min-width: 1.6rem;
+}
+.timeline-preset.active,
+.zoom-btns button:hover,
+.timeline-preset:hover {
+  color: var(--cp-text);
+  border-color: var(--cp-accent);
+  background: var(--cp-accent-soft);
+}
+.zoom-btns {
+  display: inline-flex;
+  gap: 0.2rem;
+}
 .gantt-axis-wrap {
   flex: 1 1 160px;
   min-width: 0;
@@ -273,6 +310,11 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
+}
+.gantt-axis-wrap.panning,
+.history-tree.timeline-panning {
+  cursor: grabbing;
+  user-select: none;
 }
 .gantt-axis {
   height: 1.1rem;
@@ -487,14 +529,15 @@ body {
   border-radius: 0;
   background: transparent;
   overflow: visible;
+  --gantt-lanes: 1;
+  min-height: calc(0.55rem * var(--gantt-lanes) + 0.3rem);
 }
 .gantt-marker {
   position: absolute;
-  top: 50%;
+  top: calc(0.25rem + (var(--lane, 0) * 0.55rem));
   width: 0.55rem;
   height: 0.55rem;
   margin-left: -0.275rem;
-  margin-top: -0.275rem;
   border-radius: 50%;
   border: 1px solid var(--cp-surface);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--cp-border) 70%, transparent);
@@ -502,6 +545,7 @@ body {
   padding: 0;
   appearance: none;
   -webkit-appearance: none;
+  z-index: 1;
 }
 .gantt-marker.completed { background: var(--state-completed); }
 .gantt-marker.failed { background: var(--state-failed); }
@@ -509,8 +553,29 @@ body {
 .gantt-marker:focus-visible {
   outline: 2px solid var(--cp-text);
   outline-offset: 1px;
+  z-index: 3;
+}
+.gantt-marker.group {
+  width: auto;
+  min-width: 0.9rem;
+  height: 0.7rem;
+  margin-left: -0.45rem;
+  padding: 0 0.28rem;
+  border-radius: 999px;
+  font-size: 0.58rem;
+  font-weight: 700;
+  line-height: 0.7rem;
+  letter-spacing: 0.02em;
+  color: var(--cp-accent-fg);
+  background: var(--cp-text-muted);
+  box-shadow: none;
   z-index: 2;
 }
+.gantt-marker.group.mixed {
+  background: linear-gradient(90deg, var(--state-completed) 50%, var(--state-failed) 50%);
+}
+.gantt-marker.group.completed { background: var(--state-completed); }
+.gantt-marker.group.failed { background: var(--state-failed); }
 
 .leftoff-panel,
 .history-panel {
@@ -616,11 +681,48 @@ body {
   position: absolute;
   inset: 0;
 }
+.graph-controls {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem 0.85rem;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--cp-border);
+  border-radius: 0.55rem;
+  background: color-mix(in srgb, var(--cp-surface) 88%, transparent);
+  backdrop-filter: blur(6px);
+  pointer-events: auto;
+}
+.spread-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--cp-text-muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+}
+.spread-control input[type="range"] {
+  width: 7rem;
+  accent-color: var(--cp-accent);
+  cursor: pointer;
+}
+.graph-view.panning {
+  cursor: grabbing;
+}
+.graph-view.panning #graph {
+  cursor: grabbing;
+}
 
 #graph {
   width: 100%;
   height: 100%;
   display: block;
+  cursor: grab;
+  touch-action: none;
 }
 
 .hint {
