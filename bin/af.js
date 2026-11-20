@@ -217,15 +217,20 @@ Usage:
   aflt docs checkpoint request|complete [<dir>] [--project NAME] [--reason T]
                             [--note PATH] [--json]
                             Record a documentation checkpoint (opt-in agentDocs).
-                            Never interrupts a busy agent; Doc Bot notify = #2.
+                            Never interrupts a busy agent; may DM doc-bot inbox
+                            when both sides have messaging enabled.
   aflt msg <to> <text...> [--type T] [--reply <msgId>] [--from S] [--json] [--dry-run]
-                            Task-scoped message (off by default; see Messaging).
+                            Opt-in message (team aliases or cross-session DM).
+                            <to> = exact id / unique exact title, or master /
+                            all-siblings (team only). Both sides must opt in.
                             With --reply and no <to>, defaults to=reply sender.
+                            Never wakes agents or changes lifecycle/role/parent.
   aflt msg enable|disable <session> [--json] [--dry-run]
                             Per-session messaging opt-in / opt-out
-  aflt inbox [<session>] [--unread] [--mark-read] [--json]
+  aflt inbox [<session>] [--unread] [--status queued|read|completed]
+                            [--mark-read|--mark-complete] [--json]
                             Messages for a session (default: AGENTFLEET_SESSION/ID).
-                            Plain-shell: aflt inbox <master> to view a team inbox.
+                            Status: queued → read → completed. Plain-shell ok.
   aflt thread <msgId|master> [--json]
                             One thread in order, or whole team log for a master.
   aflt mcp                    Stdio MCP server (tools when messaging enabled)
@@ -4639,15 +4644,18 @@ function cmdDocsCheckpoint(argv) {
       notePath: note,
     });
   }
+  const docBotNotify = summary.docBotNotify || {
+    sent: false,
+    issue: 2,
+    reason: 'no notify result',
+  };
+  const { docBotNotify: _drop, ...checkpoint } = summary;
   const payload = {
     ok: true,
     action,
     project,
-    checkpoint: summary,
-    docBotNotify: agentDocs.notifyDocBot({
-      type: action === 'request' ? 'checkpoint-requested' : 'checkpoint-completed',
-      project,
-    }),
+    checkpoint,
+    docBotNotify,
     warnings: ctx.warnings,
     missing: ctx.missing,
   };
@@ -4662,9 +4670,13 @@ function cmdDocsCheckpoint(argv) {
   for (const w of ctx.warnings) {
     process.stderr.write(`WARNING: ${w}\n`);
   }
-  process.stderr.write(
-    'note: Doc Bot notifications deferred to issue #2 (cross-session messaging).\n'
-  );
+  if (docBotNotify.sent) {
+    process.stderr.write(
+      `note: Doc Bot notified via messaging (${docBotNotify.message && docBotNotify.message.id}).\n`
+    );
+  } else if (docBotNotify.reason) {
+    process.stderr.write(`note: Doc Bot not notified (${docBotNotify.reason}).\n`);
+  }
 }
 
 async function cmdDocs(argv) {
@@ -4804,22 +4816,21 @@ function cmdMsg(argv) {
     flags.reply != null && flags.reply !== true ? String(flags.reply) : null;
 
   if (replyTo && args.length >= 1) {
-    // With --reply: if first arg is a known alias or in-team session, treat as <to>; else all args are text.
+    // With --reply: if first arg is an alias or exact session, treat as <to>; else all args are text.
     if (args[0] === 'master' || args[0] === 'all-siblings') {
       to = args[0];
       textParts = args.slice(1);
     } else {
       let maybeTo = null;
       try {
-        maybeTo = registry.find(args[0]);
+        maybeTo = messages.resolveExactSession(
+          args[0],
+          registry.list({ includeDone: true, includeArchived: true })
+        );
       } catch (_) {
         maybeTo = null;
       }
-      const teamId = messages.teamIdOf(fromSession);
-      const maybeTeam = maybeTo ? messages.teamIdOf(maybeTo) : null;
-      const inTeam =
-        maybeTo && teamId && (maybeTo.id === teamId || maybeTeam === teamId);
-      if (inTeam) {
+      if (maybeTo) {
         to = args[0];
         textParts = args.slice(1);
       } else {
@@ -4836,7 +4847,8 @@ function cmdMsg(argv) {
   if (!replyTo && !to) {
     fail(
       'usage: aflt msg <to> <text...> [--type T] [--reply <msgId>] [--from S] [--json] [--dry-run]\n' +
-        '       aflt msg --reply <msgId> <text...>  (defaults to=reply sender)',
+        '       aflt msg --reply <msgId> <text...>  (defaults to=reply sender)\n' +
+        '       <to> = exact id | unique exact title | master | all-siblings',
       { json: asJson }
     );
   }
@@ -4851,8 +4863,7 @@ function cmdMsg(argv) {
       text,
       type: flags.type,
       replyTo,
-      sessions: registry.list({ includeDone: true }),
-      find: (q) => registry.find(q),
+      sessions: registry.list({ includeDone: true, includeArchived: true }),
       dryRun,
     });
     if (asJson) {
@@ -4888,11 +4899,18 @@ function cmdInbox(argv) {
   const asJson = Boolean(flags.json);
   const unreadOnly = Boolean(flags.unread);
   const markRead = Boolean(flags['mark-read']);
+  const markComplete = Boolean(flags['mark-complete']);
+  const statusFilter =
+    flags.status != null && flags.status !== true ? String(flags.status).trim() : null;
+  if (statusFilter && !messages.MSG_STATUSES.has(statusFilter)) {
+    fail('invalid --status (want queued|read|completed)', { json: asJson });
+  }
   const query = args[0] || messages.resolveEnvSessionId(process.env);
   if (!query) {
     fail(
-      'usage: aflt inbox [<session>] [--unread] [--mark-read] [--json]\n' +
-        '(default session: AGENTFLEET_SESSION / AGENTFLEET_ID; or pass a master id to view)',
+      'usage: aflt inbox [<session>] [--unread] [--status queued|read|completed]\n' +
+        '                  [--mark-read|--mark-complete] [--json]\n' +
+        '(default session: AGENTFLEET_SESSION / AGENTFLEET_ID)',
       { json: asJson }
     );
   }
@@ -4905,11 +4923,6 @@ function cmdInbox(argv) {
   }
   if (!session) fail(`session not found: ${query}`, { json: asJson });
 
-  const teamId = messages.teamIdOf(session);
-  if (!teamId) {
-    fail(`session "${session.title}" has no team; messaging refused`, { json: asJson });
-  }
-
   // Human viewing from a plain shell (no AGENTFLEET_SESSION) is allowed without enablement.
   const envId = messages.resolveEnvSessionId(process.env);
   const viewingAsHuman = !envId;
@@ -4921,15 +4934,20 @@ function cmdInbox(argv) {
     }
   }
 
-  const records = messages.readLog(teamId);
-  const inbox = messages.inboxFor(session, records, { unreadOnly });
-  if (markRead && !viewingAsHuman && inbox.length) {
-    messages.markRead(
-      teamId,
+  const inbox = messages.inboxForSession(session, {
+    unreadOnly,
+    status: statusFilter,
+  });
+  if (!viewingAsHuman && inbox.length && (markRead || markComplete)) {
+    messages.markMessages(
       inbox.map((m) => m.id),
-      session.id
+      session.id,
+      { complete: markComplete }
     );
-    for (const m of inbox) m.read = true;
+    for (const m of inbox) {
+      m.status = markComplete ? 'completed' : 'read';
+      m.read = true;
+    }
   }
 
   if (asJson) {
@@ -4941,11 +4959,11 @@ function cmdInbox(argv) {
     return;
   }
   process.stdout.write(
-    `${pad('READ', 4)} ${pad('ID', 12)} ${pad('FROM', 16)} ${pad('TYPE', 8)} ${pad('THREAD', 12)} TEXT\n`
+    `${pad('STATUS', 9)} ${pad('ID', 12)} ${pad('FROM', 16)} ${pad('TYPE', 8)} ${pad('THREAD', 12)} TEXT\n`
   );
   for (const m of inbox) {
     process.stdout.write(
-      `${pad(m.read ? 'yes' : 'no', 4)} ${pad(m.id, 12)} ${pad(displayId(m.from, 16), 16)} ${pad(m.type || 'note', 8)} ${pad(m.thread || '', 12)} ${String(m.text || '').replace(/\s+/g, ' ').slice(0, 80)}\n`
+      `${pad(m.status || 'queued', 9)} ${pad(m.id, 12)} ${pad(displayId(m.from, 16), 16)} ${pad(m.type || 'note', 8)} ${pad(m.thread || '', 12)} ${String(m.text || '').replace(/\s+/g, ' ').slice(0, 80)}\n`
     );
   }
 }

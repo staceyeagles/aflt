@@ -323,23 +323,26 @@ aflt dashboard --snapshot out.json  # JSON state includes checkpoints{}
 - Delivers project identity + memory/instruction paths on launch/resume for **Cursor and Copilot** without replacing `AGENTS.md`.
 - Works with no memory repo configured; warns when memory is required but missing (`AFLT_MEMORY_MISSING=1`).
 - Checkpoints are bookkeeping only — never interrupts a busy agent. Archive convention: ignore `status-notes/archive/`; aflt never auto-moves or deletes documents.
-- Doc Bot notifications via messaging are **deferred to issue #2** (`notifyDocBot` hook). Copilot Task Complete capture (`aflt dashboard --capture-completions`) is separate and unchanged.
+- Doc Bot notifications use opted-in direct messaging (`notifyDocBot` → `sendDirectMessage`) when both sides have messaging enabled. Copilot Task Complete capture (`aflt dashboard --capture-completions`) is separate and unchanged.
 
 ## Messaging
 
-**Off by default.** Enable with `aflt msg enable <session>`, `--messaging` on `new`/`run`/`master`/`spawn`, or project `.agentfleet.json` `{"messaging": true}` (ancestor walk to git root). Session `messaging: false` overrides project. Messaging-enabled masters pass `messaging: true` to workers unless `--no-messaging`. Team = master; workers use `parent`. No role/parent → no team.
+**Off by default.** Enable with `aflt msg enable <session>`, `--messaging` on `new`/`run`/`master`/`spawn`, or project `.agentfleet.json` `{"messaging": true}` (ancestor walk to git root). Session `messaging: false` overrides project. Messaging-enabled masters pass `messaging: true` to workers unless `--no-messaging`. **Both sides must opt in.** Direct targets are **exact id or unique exact title** only; `master` / `all-siblings` stay team-scoped. Cross-session DMs are durable inbox context — they never wake agents, inject prompts, or change lifecycle/role/parent/project, and are not permission grants. Status: `queued` → `read` → `completed`. Library: `require('…/lib/messages').sendDirectMessage(from, to, body, meta)` (for future turn-capture → Doc Bot).
 
 ```bash
 aflt msg enable auth-master
 aflt msg master "blocked on schema" --type blocked --from auth-w1
 aflt msg all-siblings "FYI" --from auth-w1
+aflt msg doc-bot "turn summary…" --from auth-w1   # cross-session DM (exact title)
 aflt msg --reply <msgId> "ack" --from auth-master
-aflt inbox [--unread] [--mark-read] [--json]
+aflt inbox [--unread] [--status queued|read|completed] [--mark-read|--mark-complete] [--json]
 aflt thread <msgId|master> [--json]
 ```
 
 - **Types:** `question` \| `answer` \| `note` (default) \| `blocked`
 - **Limits:** `AGENTFLEET_MSG_MAX_THREAD` (default 6), `AGENTFLEET_MSG_RATE` (default 10 / 60s)
+- **Doc Bot:** enable messaging on `doc-bot`; poll `aflt inbox` / MCP `read_inbox` when idle. Checkpoints may notify via `notifyDocBot` when both sides are opted in.
+- **Dashboard:** History shows message markers (queued→waiting, read→idle, completed→completed) and lists messages in the session history panel.
 - **MCP:** `aflt mcp` exposes `post_message`, `read_inbox`, `list_team` when messaging is enabled for the inherited identity.
   - **Copilot:** per-run `--additional-mcp-config` + `--allow-tool=af` (no `~/.copilot` write on launch)
   - **Cursor:** install into project/user `mcp.json`; launches get `--approve-mcps` when an `af` server is present; install writes `${env:AGENTFLEET_SESSION}` etc. for identity forwarding

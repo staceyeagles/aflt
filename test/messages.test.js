@@ -112,6 +112,7 @@ describe('task-scoped messaging', () => {
       cwd: project,
       engine: 'cursor',
       status: 'active',
+      messaging: messaging === null ? null : messaging,
     });
     return { master, w1, w2, outsider, lone };
   }
@@ -184,7 +185,7 @@ describe('task-scoped messaging', () => {
     assert.match(blocked.stderr, /messaging not enabled/);
   });
 
-  it('sibling ok; other team refused; no-team refused', () => {
+  it('sibling ok; cross-team DM ok when both opted in; master alias still needs a team', () => {
     const { master, w1, w2, outsider, lone } = seedTeam({ messaging: true, otherTeam: true });
     const ok = af(['msg', w2.title, 'hi sib', '--from', w1.id, '--json']);
     assert.equal(ok.status, 0, ok.stderr);
@@ -192,14 +193,92 @@ describe('task-scoped messaging', () => {
     assert.equal(body.ok, true);
     assert.ok(body.message.id.startsWith('m-'));
     assert.equal(body.message.to, w2.id);
+    assert.equal(body.message.scope, 'team');
 
-    const cross = af(['msg', outsider.title, 'nope', '--from', w1.id]);
-    assert.equal(cross.status, 1, cross.stderr);
-    assert.match(cross.stderr, /not in the same team/);
+    const cross = af(['msg', outsider.title, 'cross hi', '--from', w1.id, '--json']);
+    assert.equal(cross.status, 0, cross.stderr);
+    const cbody = JSON.parse(cross.stdout);
+    assert.equal(cbody.message.scope, 'dm');
+    assert.equal(cbody.message.to, outsider.id);
 
-    const none = af(['msg', master.title, 'nope', '--from', lone.id]);
-    assert.equal(none.status, 1, none.stderr);
-    assert.match(none.stderr, /no team/);
+    const outInbox = af(['inbox', '--json', '--unread'], { AGENTFLEET_SESSION: outsider.id });
+    assert.equal(outInbox.status, 0, outInbox.stderr);
+    assert.ok(JSON.parse(outInbox.stdout).messages.some((m) => m.id === cbody.message.id));
+
+    // Lone (no team) can DM a messaging-enabled session by exact title/id.
+    const loneDm = af(['msg', master.title, 'from lone', '--from', lone.id, '--json']);
+    assert.equal(loneDm.status, 0, loneDm.stderr);
+    assert.equal(JSON.parse(loneDm.stdout).message.scope, 'dm');
+
+    // Team aliases still require a team.
+    const alias = af(['msg', 'master', 'nope', '--from', lone.id]);
+    assert.equal(alias.status, 1, alias.stderr);
+    assert.match(alias.stderr, /no team|master alias/);
+  });
+
+  it('exact id or unique exact title only; ambiguous title rejected', () => {
+    const registry = loadRegistry();
+    const a = registry.add({
+      title: 'SameTitle',
+      chatId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0a01',
+      cwd: project,
+      engine: 'cursor',
+      status: 'active',
+      messaging: true,
+    });
+    const b = registry.add({
+      title: 'SameTitle',
+      chatId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0a02',
+      cwd: project,
+      engine: 'cursor',
+      status: 'active',
+      messaging: true,
+    });
+    const amb = af(['msg', 'SameTitle', 'x', '--from', a.id]);
+    assert.equal(amb.status, 1, amb.stderr);
+    assert.match(amb.stderr, /ambiguous/);
+
+    const byId = af(['msg', b.id, 'ok', '--from', a.id, '--json']);
+    assert.equal(byId.status, 0, byId.stderr);
+    assert.equal(JSON.parse(byId.stdout).message.to, b.id);
+  });
+
+  it('sendDirectMessage library + queued/read/completed statuses', () => {
+    const { master, w1 } = seedTeam({ messaging: true });
+    delete require.cache[require.resolve('../lib/messages')];
+    process.env.AGENTFLEET_HOME = home;
+    const messages = require('../lib/messages');
+    const sessions = loadRegistry().list({ includeDone: true });
+    const sent = messages.sendDirectMessage(w1, master, 'please review', {
+      sessions,
+      source: 'turn-capture-test',
+      type: 'note',
+    });
+    assert.equal(sent.ok, true);
+    assert.equal(sent.message.meta.source, 'turn-capture-test');
+
+    const inbox1 = af(['inbox', '--json'], { AGENTFLEET_SESSION: master.id });
+    const msgs = JSON.parse(inbox1.stdout).messages;
+    const hit = msgs.find((m) => m.id === sent.message.id);
+    assert.equal(hit.status, 'queued');
+
+    assert.equal(
+      af(['inbox', '--mark-read', '--json'], { AGENTFLEET_SESSION: master.id }).status,
+      0
+    );
+    const afterRead = JSON.parse(
+      af(['inbox', '--status', 'read', '--json'], { AGENTFLEET_SESSION: master.id }).stdout
+    ).messages;
+    assert.ok(afterRead.some((m) => m.id === sent.message.id && m.status === 'read'));
+
+    assert.equal(
+      af(['inbox', '--mark-complete', '--json'], { AGENTFLEET_SESSION: master.id }).status,
+      0
+    );
+    const afterDone = JSON.parse(
+      af(['inbox', '--status', 'completed', '--json'], { AGENTFLEET_SESSION: master.id }).stdout
+    ).messages;
+    assert.ok(afterDone.some((m) => m.id === sent.message.id && m.status === 'completed'));
   });
 
   it('master and all-siblings aliases; partial delivery when some disabled', () => {
@@ -457,11 +536,12 @@ exit 0
     const master = messages.messagingPromptBlock(true, { role: 'master' });
     assert.match(master, /message your workers/);
     assert.match(master, /Workers inherit messaging/);
-    assert.doesNotMatch(master, /message your master or siblings/);
+    assert.match(master, /context only/);
     const worker = messages.messagingPromptBlock(true, { role: 'worker' });
     assert.match(worker, /post_message/);
     assert.match(worker, /read_inbox/);
     assert.match(worker, /list_team/);
+    assert.match(worker, /exact id or unique exact title/);
   });
 
   it('recipient not enabled refuses direct send', () => {

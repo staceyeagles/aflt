@@ -1803,8 +1803,8 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         rowActionsHtml(enriched, isProject) +
         '</div>' +
         ganttHtml(markers, range, enriched.id) +
-        // Issue #2: reserved lane for future message markers (messaging not implemented here).
-        '<div class="message-markers" hidden></div></div>';
+        messageMarkersHtml(enriched) +
+        '</div>';
       if (!collapsed) {
         kids.forEach(function (child) {
           html += historyRowHtml(child, range);
@@ -2221,11 +2221,25 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         const expanded = expandedReplies.has(key);
         const body = expanded ? ev.reply : (ev.replyPreview != null ? ev.replyPreview : ev.reply);
         const when = String(ev.at || '').replace('T', ' ').slice(0, 19);
-        let html = '<article class="history-feed-item" data-key="' + esc(key) + '">' +
+        const isMsg = ev.type === 'message';
+        const statusState = isMsg
+          ? (ev.status === 'completed' ? 'completed' : ev.status === 'read' ? 'idle' : 'waiting')
+          : '';
+        let html = '<article class="history-feed-item' + (isMsg ? ' history-message' : '') +
+          '" data-key="' + esc(key) + '">' +
           '<div class="when">' + esc(when) + (ev.sessionTitle ? ' · ' + esc(ev.sessionTitle) : '') +
-          '<span class="kind-tag">' + esc(ev.kind || ev.type || '') + '</span></div>';
+          '<span class="kind-tag">' + esc(ev.kind || ev.type || '') + '</span>' +
+          (isMsg && ev.status
+            ? '<span class="msg-status ' + esc(statusState) + '">' + esc(ev.status) + '</span>'
+            : '') +
+          '</div>';
         if (ev.title) html += '<div class="label">' + esc(ev.title) + '</div>';
-        if (ev.prompt) html += '<div class="prompt">' + esc(ev.prompt) + '</div>';
+        if (isMsg) {
+          html += '<div class="prompt">' + esc((ev.direction === 'out' ? '→ ' : '← ') +
+            (ev.from || '') + ' → ' + (ev.to || '')) + '</div>';
+        } else if (ev.prompt) {
+          html += '<div class="prompt">' + esc(ev.prompt) + '</div>';
+        }
         if (body) {
           html += '<div class="reply' + (more && !expanded ? ' collapsed' : '') + '">' +
             safeMarkdown(body) + '</div>';
@@ -2239,6 +2253,27 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         }
         return html + '</article>';
       }).join('');
+    }
+
+    function messageMarkersHtml(enriched) {
+      const marks = enriched && enriched.messageMarkers;
+      if (!marks || !marks.length) return '<div class="message-markers" hidden></div>';
+      const queued = typeof enriched.messageQueued === 'number'
+        ? enriched.messageQueued
+        : marks.filter(function (m) { return m && m.status === 'queued' && m.direction === 'in'; }).length;
+      const latest = marks[0];
+      const state = latest && latest.state ? latest.state : 'waiting';
+      let html = '<div class="message-markers" title="' +
+        esc((queued ? queued + ' queued · ' : '') + (latest && latest.text ? latest.text : 'messages')) +
+        '">';
+      if (queued > 0) {
+        html += '<span class="msg-dot waiting" aria-label="' + queued + ' queued messages">' +
+          (queued > 9 ? '9+' : String(queued)) + '</span>';
+      } else if (latest) {
+        html += '<span class="msg-dot ' + esc(state) + '" aria-hidden="true"></span>';
+      }
+      html += '</div>';
+      return html;
     }
 
     function renderHistoryPanel() {
