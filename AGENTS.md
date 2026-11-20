@@ -6,7 +6,7 @@ This guide is for **AI coding agents** (GitHub Copilot CLI, Cursor CLI / `cursor
 
 Prefer **`aflt help`** (or `aflt` with no args) for the full usage text. **`aflt <command> --help` is not a dedicated help path** — some commands print a short usage error, and others (`ls`, `sync`, `import`, `doctor`, `setup`, `version`) may **run the command**.
 
-Human overview: [README.md](README.md). Release notes: [CHANGELOG.md](CHANGELOG.md).
+Human overview: [README.md](README.md) (dashboard screenshots in `docs/images/`; regenerate with `npm run screenshots` against a running `aflt dashboard --serve`). Release notes: [CHANGELOG.md](CHANGELOG.md).
 
 ## What's new (2026-11-20)
 

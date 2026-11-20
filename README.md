@@ -18,6 +18,29 @@
 
 Zero npm runtime dependencies beyond **Node ≥18**. Install the CLI (`npm install -g aflt`, or `npm install -g github:wwlib/aflt` before the first registry publish), then optionally run `aflt setup` for machine config. Engine × mode behavior (liveness, completion, handoffs, `aflt wait`): [docs/CAPABILITIES.md](docs/CAPABILITIES.md). Setup deep-dive: [docs/SETUP.md](docs/SETUP.md). Full history: [CHANGELOG.md](CHANGELOG.md).
 
+## Screenshots
+
+Live dashboard (`aflt dashboard --serve`):
+
+![aflt dashboard — star graph of projects and sessions](docs/images/dashboard-graph.png)
+*Graph view: projects and sessions colored by Working / Waiting / Idle / Completed / Failed.*
+
+![aflt dashboard — history timeline, 7d preset](docs/images/dashboard-history.png)
+*History view: activity Gantt with completed/failed turn markers (7d preset).*
+
+![aflt dashboard — sessions overview](docs/images/dashboard-sessions.png)
+*Sessions overview: collapsible project/session tree with live stats.*
+
+### Herdr panel
+
+![Herdr with the aflt "af sessions" panel in the sidebar and a Cursor agent tab open](docs/images/herdr.png)
+
+*Herdr desktop with the bundled **af sessions** panel (lower left). Every registered aflt session is listed with its project, branch, live state and last activity; click one to focus its tab, adopt it, or resume it. `aflt resume` and `aflt run` open sessions as Herdr spaces/tabs (right), and Herdr's live status (working / waiting / idle) feeds the aflt dashboard.*
+
+Install the panel and layout with `aflt setup --apply --herdr` (or `aflt herdr-app install`), then `herdr-app do layout.switch --name af`. See [Herdr integration](#herdr-integration) below for details.
+
+Regenerate with `npm run screenshots` (needs Google Chrome, Node ≥18, and a dashboard running at `DASHBOARD_URL`, default `http://127.0.0.1:8787/`; output in `OUT_DIR`, default `docs/images`).
+
 ## What's new (2026-11-20)
 
 - **Direct messaging** — opt-in `aflt msg` / `aflt inbox` / `aflt thread` + MCP `read_inbox` / `post_message` (`aflt msg enable`, `--messaging`, or `.agentfleet.json` `{"messaging": true}`).
