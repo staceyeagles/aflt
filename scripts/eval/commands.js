@@ -80,6 +80,26 @@ function buildSmokePlan(opts = {}) {
     { id: 'herdr-templates-dry', argv: ['herdr-templates', '--dry-run'], mode: 'dry-run' },
     { id: 'docs-status', argv: ['docs', '--status', '--json'], mode: 'run' },
     { id: 'purge-dry', argv: ['purge', 'missing-eval-id', '--json'], mode: 'run', reason: 'dry-run default (no --apply)' },
+    // Eval report is cheap + empty-history safe; measure/score/gate skipped
+    { id: 'eval-report', argv: ['eval', 'report', '--json'], mode: 'run' },
+    {
+      id: 'eval-gate',
+      argv: ['eval', 'gate', '--json'],
+      mode: 'skip',
+      reason: 'RUBRIC GUARD fails on dirty/untracked protected paths; covered by eval-e2',
+    },
+    {
+      id: 'eval-measure',
+      argv: ['eval', 'measure'],
+      mode: 'skip',
+      reason: 'expensive nested suite; covered by eval-e1 tests',
+    },
+    {
+      id: 'eval-score',
+      argv: ['eval', 'score'],
+      mode: 'skip',
+      reason: 'needs measure results; covered by eval-e2 tests',
+    },
 
     // Mutating — dry-run only
     {

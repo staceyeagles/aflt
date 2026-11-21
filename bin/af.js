@@ -454,6 +454,22 @@ Usage:
                             checks. Writes eval/results/<timestamp>.json (or
                             --out DIR). Never touches real ~/.agentfleet, live
                             engines, or Herdr. Opt-in; does not mutate the repo.
+  aflt eval score [results-file] [--json] [--history PATH] [--qualitative]
+                  [--results-dir DIR]
+                            Deterministic score (0–100) from a measure JSON +
+                            repo rubric (eval/RUBRIC.md). Appends one line to
+                            eval/history.jsonl (or --history). Qualitative
+                            evaluator is opt-in (--qualitative) and skipped
+                            under AGENTFLEET_TEST / AFLT_EVAL_SKIP_QUALITATIVE;
+                            default path never calls live engines.
+  aflt eval report [--json] [--history PATH] [--limit N]
+                            Human-readable summary of the latest score + trend
+                            from history.jsonl.
+  aflt eval gate [--json] [--base REF] [--paths a,b]
+                            RUBRIC GUARD: exit non-zero if protected paths
+                            (eval/RUBRIC.md, scripts/eval/score.js,
+                            scripts/eval/rubric.js) changed vs --base (default
+                            HEAD). Improvement loops must fail this gate.
   aflt help
                             Exit: 0 ok, 1 error, 2 wait timeout, 3 waiting,
                             75 critical registry write failed after a run
@@ -7738,89 +7754,228 @@ async function cmdEval(argv) {
   const { args, flags } = parseArgs(argv || []);
   const sub = args[0];
   const asJson = Boolean(flags.json);
-  const usage = 'usage: aflt eval measure [--json] [--out DIR]';
+  const usage =
+    'usage: aflt eval measure|score|report|gate [--json] …\n' +
+    '  aflt eval measure [--json] [--out DIR]\n' +
+    '  aflt eval score [results-file] [--json] [--history PATH] [--qualitative] [--results-dir DIR]\n' +
+    '  aflt eval report [--json] [--history PATH] [--limit N]\n' +
+    '  aflt eval gate [--json] [--base REF] [--paths a,b]';
   if (!sub || sub === 'help' || sub === '-h' || sub === '--help') {
     fail(usage);
   }
-  if (sub !== 'measure') {
-    fail(`unknown eval subcommand: ${sub}\n${usage}`, { json: asJson });
+
+  if (sub === 'measure') {
+    const outDir =
+      flags.out != null && flags.out !== true ? String(flags.out) : undefined;
+
+    let result;
+    try {
+      result = await evalMeasure.measure({
+        outDir,
+        // Nested suite spawn is expensive; allow hermetic overrides via env.
+        skipSuite: process.env.AFLT_EVAL_SKIP_SUITE === '1',
+        skipCoverage: process.env.AFLT_EVAL_SKIP_COVERAGE === '1',
+        skipSmoke: process.env.AFLT_EVAL_SKIP_SMOKE === '1',
+        skipDashboardApi: process.env.AFLT_EVAL_SKIP_DASHBOARD_API === '1',
+        useInProcessDashboard: process.env.AFLT_EVAL_INPROCESS_DASHBOARD === '1',
+      });
+    } catch (err) {
+      fail(err.message || String(err), { json: asJson });
+    }
+
+    if (asJson) {
+      emitJson({
+        ok: Boolean(result.ok),
+        path: result.path,
+        measuredAt: result.measuredAt,
+        suite: {
+          ok: Boolean(result.suite && result.suite.ok),
+          pass: result.suite && result.suite.pass,
+          fail: result.suite && result.suite.fail,
+          skip: result.suite && result.suite.skip,
+          flakes: (result.suite && result.suite.flakes && result.suite.flakes.length) || 0,
+          hardFails: (result.suite && result.suite.hardFails && result.suite.hardFails.length) || 0,
+          skipped: Boolean(result.suite && result.suite.skipped),
+        },
+        coverage: result.coverage,
+        cliSmoke: {
+          ok: Boolean(result.cliSmoke && result.cliSmoke.ok),
+          failures: result.cliSmoke && result.cliSmoke.failures,
+          commandCount: result.cliSmoke && result.cliSmoke.commandCount,
+        },
+        dashboardApi: {
+          ok: Boolean(result.dashboardApi && result.dashboardApi.ok),
+          port: result.dashboardApi && result.dashboardApi.port,
+          routeCount: result.dashboardApi && result.dashboardApi.routes
+            ? result.dashboardApi.routes.length
+            : 0,
+        },
+      });
+    } else {
+      process.stdout.write(`eval measure ${result.ok ? 'ok' : 'FAILED'}: ${result.path}\n`);
+      const s = result.suite || {};
+      process.stdout.write(
+        `  suite: pass=${s.pass || 0} fail=${s.fail || 0} skip=${s.skip || 0}` +
+          (s.skipped ? ' (skipped)' : '') +
+          ` flakes=${(s.flakes && s.flakes.length) || 0}` +
+          ` hardFails=${(s.hardFails && s.hardFails.length) || 0}\n`
+      );
+      const cov = result.coverage || {};
+      process.stdout.write(
+        `  coverage: ${cov.available ? 'available' : 'unavailable'}` +
+          (cov.reason ? ` (${cov.reason})` : '') +
+          '\n'
+      );
+      const smoke = result.cliSmoke || {};
+      process.stdout.write(
+        `  cliSmoke: ${smoke.ok ? 'ok' : 'FAILED'} commands=${smoke.commandCount || 0}` +
+          (smoke.failures ? ` failures=${smoke.failures}` : '') +
+          '\n'
+      );
+      const api = result.dashboardApi || {};
+      process.stdout.write(
+        `  dashboardApi: ${api.ok ? 'ok' : 'FAILED'}` +
+          (api.port != null ? ` port=${api.port}` : '') +
+          ` routes=${(api.routes && api.routes.length) || 0}\n`
+      );
+    }
+    process.exitCode = result.ok ? 0 : 1;
+    return;
   }
 
-  const outDir =
-    flags.out != null && flags.out !== true ? String(flags.out) : undefined;
+  if (sub === 'score') {
+    const evalScore = require('../scripts/eval/score');
+    const resultsFile = args[1];
+    const historyPath =
+      flags.history != null && flags.history !== true
+        ? String(flags.history)
+        : undefined;
+    const resultsDir =
+      flags['results-dir'] != null && flags['results-dir'] !== true
+        ? String(flags['results-dir'])
+        : undefined;
+    const qualitative = Boolean(flags.qualitative);
 
-  let result;
-  try {
-    result = await evalMeasure.measure({
-      outDir,
-      // Nested suite spawn is expensive; allow hermetic overrides via env.
-      skipSuite: process.env.AFLT_EVAL_SKIP_SUITE === '1',
-      skipCoverage: process.env.AFLT_EVAL_SKIP_COVERAGE === '1',
-      skipSmoke: process.env.AFLT_EVAL_SKIP_SMOKE === '1',
-      skipDashboardApi: process.env.AFLT_EVAL_SKIP_DASHBOARD_API === '1',
-      useInProcessDashboard: process.env.AFLT_EVAL_INPROCESS_DASHBOARD === '1',
+    let result;
+    try {
+      result = evalScore.score({
+        resultsPath: resultsFile,
+        resultsDir,
+        historyPath,
+        qualitative,
+        env: process.env,
+      });
+    } catch (err) {
+      fail(err.message || String(err), { json: asJson });
+    }
+
+    if (asJson) {
+      emitJson({
+        ok: Boolean(result.ok),
+        overall: result.overall,
+        criteria: result.criteria,
+        qualitative: result.qualitative,
+        historyPath: result.historyPath,
+        scoredAt: result.scoredAt,
+        resultsPath: result.resultsPath,
+        rubricVersion: result.rubricVersion,
+      });
+    } else {
+      process.stdout.write(
+        `eval score overall=${result.overall} rubric=v${result.rubricVersion}` +
+          ` scoredAt=${result.scoredAt}\n`
+      );
+      if (result.resultsPath) {
+        process.stdout.write(`  results: ${result.resultsPath}\n`);
+      }
+      process.stdout.write(`  history: ${result.historyPath}\n`);
+      for (const c of result.criteria || []) {
+        process.stdout.write(
+          `  ${c.id}: ${c.score} (w=${c.weight})` +
+            (c.detail ? ` — ${c.detail}` : '') +
+            '\n'
+        );
+      }
+      if (result.qualitative && result.qualitative.skipped) {
+        process.stdout.write(
+          `  qualitative: skipped (${result.qualitative.reason || 'n/a'})\n`
+        );
+      }
+    }
+    process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
+
+  if (sub === 'report') {
+    const evalReport = require('../scripts/eval/report');
+    const historyPath =
+      flags.history != null && flags.history !== true
+        ? String(flags.history)
+        : undefined;
+    const limit =
+      flags.limit != null && flags.limit !== true
+        ? Number(flags.limit)
+        : undefined;
+    let result;
+    try {
+      result = evalReport.report({ historyPath, limit });
+    } catch (err) {
+      fail(err.message || String(err), { json: asJson });
+    }
+    if (asJson) {
+      emitJson({
+        ok: Boolean(result.ok),
+        latest: result.latest,
+        previous: result.previous,
+        trend: result.trend,
+        historyPath: result.historyPath,
+        entryCount: result.trend && result.trend.count,
+      });
+    } else {
+      process.stdout.write(result.text);
+    }
+    process.exitCode = 0;
+    return;
+  }
+
+  if (sub === 'gate') {
+    const evalGate = require('../scripts/eval/gate');
+    const base =
+      flags.base != null && flags.base !== true ? String(flags.base) : 'HEAD';
+    let protectedPaths;
+    if (flags.paths != null && flags.paths !== true) {
+      protectedPaths = String(flags.paths)
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+    const result = evalGate.gate({
+      base,
+      protectedPaths,
     });
-  } catch (err) {
-    fail(err.message || String(err), { json: asJson });
+    if (asJson) {
+      emitJson({
+        ok: Boolean(result.ok),
+        violations: result.violations,
+        protectedPaths: result.protectedPaths,
+        changedFiles: result.changedFiles,
+      });
+    } else if (result.ok) {
+      process.stdout.write(
+        `eval gate ok: no protected-path changes (${result.protectedPaths.length} watched)\n`
+      );
+    } else {
+      process.stderr.write(
+        `eval gate FAILED: protected paths changed:\n` +
+          result.violations.map((v) => `  ${v}`).join('\n') +
+          '\n'
+      );
+    }
+    process.exitCode = result.ok ? 0 : 1;
+    return;
   }
 
-  if (asJson) {
-    emitJson({
-      ok: Boolean(result.ok),
-      path: result.path,
-      measuredAt: result.measuredAt,
-      suite: {
-        ok: Boolean(result.suite && result.suite.ok),
-        pass: result.suite && result.suite.pass,
-        fail: result.suite && result.suite.fail,
-        skip: result.suite && result.suite.skip,
-        flakes: (result.suite && result.suite.flakes && result.suite.flakes.length) || 0,
-        hardFails: (result.suite && result.suite.hardFails && result.suite.hardFails.length) || 0,
-        skipped: Boolean(result.suite && result.suite.skipped),
-      },
-      coverage: result.coverage,
-      cliSmoke: {
-        ok: Boolean(result.cliSmoke && result.cliSmoke.ok),
-        failures: result.cliSmoke && result.cliSmoke.failures,
-        commandCount: result.cliSmoke && result.cliSmoke.commandCount,
-      },
-      dashboardApi: {
-        ok: Boolean(result.dashboardApi && result.dashboardApi.ok),
-        port: result.dashboardApi && result.dashboardApi.port,
-        routeCount: result.dashboardApi && result.dashboardApi.routes
-          ? result.dashboardApi.routes.length
-          : 0,
-      },
-    });
-  } else {
-    process.stdout.write(`eval measure ${result.ok ? 'ok' : 'FAILED'}: ${result.path}\n`);
-    const s = result.suite || {};
-    process.stdout.write(
-      `  suite: pass=${s.pass || 0} fail=${s.fail || 0} skip=${s.skip || 0}` +
-        (s.skipped ? ' (skipped)' : '') +
-        ` flakes=${(s.flakes && s.flakes.length) || 0}` +
-        ` hardFails=${(s.hardFails && s.hardFails.length) || 0}\n`
-    );
-    const cov = result.coverage || {};
-    process.stdout.write(
-      `  coverage: ${cov.available ? 'available' : 'unavailable'}` +
-        (cov.reason ? ` (${cov.reason})` : '') +
-        '\n'
-    );
-    const smoke = result.cliSmoke || {};
-    process.stdout.write(
-      `  cliSmoke: ${smoke.ok ? 'ok' : 'FAILED'} commands=${smoke.commandCount || 0}` +
-        (smoke.failures ? ` failures=${smoke.failures}` : '') +
-        '\n'
-    );
-    const api = result.dashboardApi || {};
-    process.stdout.write(
-      `  dashboardApi: ${api.ok ? 'ok' : 'FAILED'}` +
-        (api.port != null ? ` port=${api.port}` : '') +
-        ` routes=${(api.routes && api.routes.length) || 0}\n`
-    );
-  }
-  process.exitCode = result.ok ? 0 : 1;
+  fail(`unknown eval subcommand: ${sub}\n${usage}`, { json: asJson });
 }
 
 async function cmdNotify(argv) {
