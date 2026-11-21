@@ -35,6 +35,7 @@ const turns = require('../lib/turns');
 const notify = require('../lib/notify');
 const loopLib = require('../lib/loop');
 const serviceLib = require('../lib/service');
+const evalMeasure = require('../scripts/eval/measure');
 const {
   parseArgs,
   resolveCwd,
@@ -445,6 +446,14 @@ Usage:
                             (KeepAlive; logs under $AGENTFLEET_HOME/logs).
                             --print shows the plist without writing. Unsupported
                             on non-macOS.
+  aflt eval measure [--json] [--out DIR]
+                            Hermetic self-measurement: suite summary (pass/fail/
+                            skip, per-file duration, flake rerun), best-effort
+                            coverage via node --experimental-test-coverage,
+                            sandboxed CLI smoke, and dashboard /api contract
+                            checks. Writes eval/results/<timestamp>.json (or
+                            --out DIR). Never touches real ~/.agentfleet, live
+                            engines, or Herdr. Opt-in; does not mutate the repo.
   aflt help
                             Exit: 0 ok, 1 error, 2 wait timeout, 3 waiting,
                             75 critical registry write failed after a run
@@ -677,6 +686,9 @@ async function main() {
       break;
     case 'service':
       cmdService(rest);
+      break;
+    case 'eval':
+      await cmdEval(rest);
       break;
     default:
       fail(`unknown command: ${cmd}\n\n${USAGE}`);
@@ -7720,6 +7732,95 @@ function cmdService(argv) {
   if (!result.ok || result.supported === false) {
     process.exitCode = 1;
   }
+}
+
+async function cmdEval(argv) {
+  const { args, flags } = parseArgs(argv || []);
+  const sub = args[0];
+  const asJson = Boolean(flags.json);
+  const usage = 'usage: aflt eval measure [--json] [--out DIR]';
+  if (!sub || sub === 'help' || sub === '-h' || sub === '--help') {
+    fail(usage);
+  }
+  if (sub !== 'measure') {
+    fail(`unknown eval subcommand: ${sub}\n${usage}`, { json: asJson });
+  }
+
+  const outDir =
+    flags.out != null && flags.out !== true ? String(flags.out) : undefined;
+
+  let result;
+  try {
+    result = await evalMeasure.measure({
+      outDir,
+      // Nested suite spawn is expensive; allow hermetic overrides via env.
+      skipSuite: process.env.AFLT_EVAL_SKIP_SUITE === '1',
+      skipCoverage: process.env.AFLT_EVAL_SKIP_COVERAGE === '1',
+      skipSmoke: process.env.AFLT_EVAL_SKIP_SMOKE === '1',
+      skipDashboardApi: process.env.AFLT_EVAL_SKIP_DASHBOARD_API === '1',
+      useInProcessDashboard: process.env.AFLT_EVAL_INPROCESS_DASHBOARD === '1',
+    });
+  } catch (err) {
+    fail(err.message || String(err), { json: asJson });
+  }
+
+  if (asJson) {
+    emitJson({
+      ok: Boolean(result.ok),
+      path: result.path,
+      measuredAt: result.measuredAt,
+      suite: {
+        ok: Boolean(result.suite && result.suite.ok),
+        pass: result.suite && result.suite.pass,
+        fail: result.suite && result.suite.fail,
+        skip: result.suite && result.suite.skip,
+        flakes: (result.suite && result.suite.flakes && result.suite.flakes.length) || 0,
+        hardFails: (result.suite && result.suite.hardFails && result.suite.hardFails.length) || 0,
+        skipped: Boolean(result.suite && result.suite.skipped),
+      },
+      coverage: result.coverage,
+      cliSmoke: {
+        ok: Boolean(result.cliSmoke && result.cliSmoke.ok),
+        failures: result.cliSmoke && result.cliSmoke.failures,
+        commandCount: result.cliSmoke && result.cliSmoke.commandCount,
+      },
+      dashboardApi: {
+        ok: Boolean(result.dashboardApi && result.dashboardApi.ok),
+        port: result.dashboardApi && result.dashboardApi.port,
+        routeCount: result.dashboardApi && result.dashboardApi.routes
+          ? result.dashboardApi.routes.length
+          : 0,
+      },
+    });
+  } else {
+    process.stdout.write(`eval measure ${result.ok ? 'ok' : 'FAILED'}: ${result.path}\n`);
+    const s = result.suite || {};
+    process.stdout.write(
+      `  suite: pass=${s.pass || 0} fail=${s.fail || 0} skip=${s.skip || 0}` +
+        (s.skipped ? ' (skipped)' : '') +
+        ` flakes=${(s.flakes && s.flakes.length) || 0}` +
+        ` hardFails=${(s.hardFails && s.hardFails.length) || 0}\n`
+    );
+    const cov = result.coverage || {};
+    process.stdout.write(
+      `  coverage: ${cov.available ? 'available' : 'unavailable'}` +
+        (cov.reason ? ` (${cov.reason})` : '') +
+        '\n'
+    );
+    const smoke = result.cliSmoke || {};
+    process.stdout.write(
+      `  cliSmoke: ${smoke.ok ? 'ok' : 'FAILED'} commands=${smoke.commandCount || 0}` +
+        (smoke.failures ? ` failures=${smoke.failures}` : '') +
+        '\n'
+    );
+    const api = result.dashboardApi || {};
+    process.stdout.write(
+      `  dashboardApi: ${api.ok ? 'ok' : 'FAILED'}` +
+        (api.port != null ? ` port=${api.port}` : '') +
+        ` routes=${(api.routes && api.routes.length) || 0}\n`
+    );
+  }
+  process.exitCode = result.ok ? 0 : 1;
 }
 
 async function cmdNotify(argv) {
