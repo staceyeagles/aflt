@@ -418,8 +418,9 @@ Usage:
                             Validate a loop definition JSON file (schema,
                             phases, eval, allow/onPass). Exit 1 on errors.
   aflt loop run <file> [--dry-run] [--json]
-                            Run a multi-phase loop (plan→develop→eval→fix).
-                            Persists state under $AGENTFLEET_HOME/loops/<name>/.
+                            Run a multi-phase loop (plan→develop→eval→fix,
+                            optional plan-next). Persists state under
+                            $AGENTFLEET_HOME/loops/<name>/.
                             --dry-run prints the plan without locking or running.
   aflt loop start <file> [--json]
                             Register a loop as active for the dashboard
