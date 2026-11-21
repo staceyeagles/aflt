@@ -5,6 +5,8 @@ Versions follow [Semantic Versioning](https://semver.org/); see [RELEASING.md](R
 
 ## Unreleased
 
+- **`aflt eval measure` (milestone E1)** — hermetic self-measurement harness (`scripts/eval/`). Runs the node:test suite (pass/fail/skip, per-file duration, one flake rerun), best-effort coverage via `node --experimental-test-coverage` (marks unavailable when unsupported — does not fail the measure), sandboxed CLI smoke against a throwaway `AGENTFLEET_HOME` (read-only / `--dry-run` only; never touches real `~/.agentfleet`, live engines, or Herdr), and dashboard `/api/*` contract checks (`/api/state`, `/api/loops`, definitions, history error shape) with reliable server shutdown. Writes `eval/results/<timestamp>.json` (`--out DIR` override; `--json` summary). Completions + USAGE updated; `eval/results/` gitignored. Hermetic coverage in `test/eval-e1.test.js`.
+
 ## 1.5.0 (2026-11-21)
 
 - **`aflt loop` (milestone 4)** — multi-phase projects: phase `type: "plan-next"` runs a planner session that writes `$AGENTFLEET_HOME/loops/<name>/plan-next.json` (`done: true` → `loop.completed`, or `phases[]` validated and inserted before the plan-next sentinel). Caps via `budget.maxPhases` (+ existing maxRuns/maxHours). Loop-level `goal` / `acceptance` (alias `acceptanceCriteria`), optional `acceptanceEval`, and `plannedPhaseGate` (`approve` default for newly planned phases, or `none`). Final completion writes an acceptance summary status note when goal/acceptance are set. Notify stays opt-in; README documents pointing the webhook at a Grok Bot routine and lists all `loop.*` events + payload fields. Example: `examples/loops/plan-next.json`. Hermetic coverage in `test/loop-m4.test.js` (2 seed phases + one planned phase, resume after simulated crash).
