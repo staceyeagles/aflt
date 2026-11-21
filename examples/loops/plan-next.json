@@ -1,0 +1,56 @@
+{
+  "name": "plan-next-demo",
+  "project": "demo",
+  "cwd": ".",
+  "engine": "cursor",
+  "goal": "Create ALPHA.txt then BETA.txt, then finish.",
+  "acceptance": "ALPHA.txt and BETA.txt exist with the expected one-line contents.",
+  "plannedPhaseGate": "none",
+  "allow": {
+    "commit": false,
+    "merge": false,
+    "push": false
+  },
+  "budget": {
+    "maxRuns": 30,
+    "maxHours": 2,
+    "maxPhases": 8
+  },
+  "phases": [
+    {
+      "id": "write-alpha",
+      "engine": "cursor",
+      "session": "loop-plan-next-demo",
+      "prompt": "Create ALPHA.txt containing exactly: alpha\nDo not switch to plan mode. Do not commit.",
+      "eval": {
+        "command": ["grep", "-x", "alpha", "ALPHA.txt"],
+        "exitCode": 0
+      },
+      "maxFixAttempts": 3,
+      "onPass": "none",
+      "force": true
+    },
+    {
+      "id": "write-beta",
+      "engine": "cursor",
+      "session": "loop-plan-next-demo",
+      "prompt": "Create BETA.txt containing exactly: beta\nDo not switch to plan mode. Do not commit.",
+      "eval": {
+        "command": ["grep", "-x", "beta", "BETA.txt"],
+        "exitCode": 0
+      },
+      "maxFixAttempts": 3,
+      "onPass": "none",
+      "force": true
+    },
+    {
+      "id": "plan-next",
+      "type": "plan-next",
+      "engine": "cursor",
+      "session": "loop-plan-next-demo-planner",
+      "maxFixAttempts": 2,
+      "onPass": "none",
+      "force": true
+    }
+  ]
+}
