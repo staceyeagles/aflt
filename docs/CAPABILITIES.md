@@ -2,6 +2,8 @@
 
 How `af` observes liveness, completion, blocked/needs-input, handoffs, and continuation for each engine × mode. Linked from the [README](../README.md).
 
+OpenCode headless / interactive follow the same liveness and handoff patterns as Cursor (process/`runPid` for headless; Herdr pane for interactive). OpenCode does not emit OSC 7501; `aflt wait` on interactive OpenCode behaves like Cursor interactive (timeout or terminal exit). Turn history comes from read-only `opencode.db` capture, not Herdr scrapes.
+
 | Capability | Cursor headless | Cursor interactive (Herdr) | Copilot headless | Copilot interactive (Herdr) |
 |---|---|---|---|---|
 | **Liveness** | `runPid` / process group on same host | Herdr terminal `state=live` labeled `af_id=<id>` with non-shell agent (`env` / engine). `runtime=shell` = live tab, agent stopped. Agents list titles come from session-group `herdr.space` + `space.rename` / `tab.rename` (not the repo folder) | same as Cursor headless | same as Cursor interactive |

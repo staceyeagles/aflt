@@ -9,6 +9,7 @@ const { spawn } = require('child_process');
 const registry = require('../lib/registry');
 const cursor = require('../lib/cursor');
 const copilot = require('../lib/copilot');
+const opencode = require('../lib/opencode');
 const engine = require('../lib/engine');
 const config = require('../lib/config');
 const backends = require('../lib/backends');
@@ -71,19 +72,19 @@ const PKG_VERSION = (() => {
   }
 })();
 
-const USAGE = `aflt (AgentFleet) — track & resume Cursor / Copilot CLI agent sessions
+const USAGE = `aflt (AgentFleet) — track & resume Cursor / Copilot / OpenCode CLI agent sessions
 Aliases: af, agentfleet (same CLI)
 
 Usage:
   aflt --version | -v | version [--json]
                             Print version (aflt ${PKG_VERSION})
-  aflt new "<title>" [--cwd DIR] [--prompt "..."] [--model X] [--engine cursor|copilot]
+  aflt new "<title>" [--cwd DIR] [--prompt "..."] [--model X] [--engine cursor|copilot|opencode]
                             [--project NAME] [--force] [--messaging|--no-messaging]
                             [--tag T]... [--dry-run]
-  aflt add "<title>" --chat <id> [--cwd DIR] [--model X] [--engine cursor|copilot]
+  aflt add "<title>" --chat <id> [--cwd DIR] [--model X] [--engine cursor|copilot|opencode]
                             [--project NAME] [--tag T]... [--prompt "..."]
                             For --engine copilot, --chat is the Copilot session UUID
-  aflt import [--engine cursor|copilot] [cursor|copilot]
+  aflt import [--engine cursor|copilot|opencode] [cursor|copilot|opencode]
                             List local chats/sessions to register. Default engine
                             follows AGENTFLEET_ENGINE/config (builtin: cursor).
                             Cursor: scan ~/.cursor/chats (unchanged). Copilot:
@@ -125,7 +126,7 @@ Usage:
                             Write a standalone SVG or self-contained HTML snapshot
                             of the current activity graph (no server). Parent dirs
                             created as needed. Only .svg / .html(.htm) supported.
-  aflt turns backfill [<id|title>...] [--engine copilot|cursor|all] [--apply] [--json]
+  aflt turns backfill [<id|title>...] [--engine copilot|cursor|opencode|all] [--apply] [--json]
                             Import interactive turns into runs/<id>/turns.jsonl from
                             engine stores (Copilot events.jsonl; Cursor transcripts when
                             uniquely mapped). Dry-run by default (counts only); pass
@@ -178,7 +179,7 @@ Usage:
                             unless --commit (requires --apply; refuses dirty index;
                             stages DASHBOARD.md + managed roots only). --push requires
                             --commit.
-  aflt memory doc [--engine cursor|copilot] [--dry-run] [--json] [--force]
+  aflt memory doc [--engine cursor|copilot|opencode] [--dry-run] [--json] [--force]
                             Launch a portable Doc Bot session (\`doc-bot\`) in the memory
                             repo with DOC-AGENT.md as the prompt (Cursor CLI or Copilot CLI
                             via --engine). Fails if DOC-AGENT.md is missing. --dry-run does
@@ -188,7 +189,7 @@ Usage:
                             folder/lastSync/sessions/stale (stale = sync would change files).
   aflt sync [--dry-run] [--json]
                             Persist last-known Herdr runtime evidence (does not change status/lastUsed)
-  aflt run "<title>" --prompt "..." [--cwd DIR] [--model X] [--engine cursor|copilot]
+  aflt run "<title>" --prompt "..." [--cwd DIR] [--model X] [--engine cursor|copilot|opencode]
                             [--project NAME] [--mode ask|plan] [--force]
                             [--output-format text|json] [--timeout SEC]
                             [--messaging|--no-messaging] [--no-docs]
@@ -199,7 +200,7 @@ Usage:
   aflt run <title|id> --prompt "..." [...]
                             Same, resuming an existing tracked session
   aflt log <title|id> [--path]  Print last captured run output (or its path)
-  aflt spawn --parent <id|title> --prompt TEXT [--engine cursor|copilot] [--cwd DIR]
+  aflt spawn --parent <id|title> --prompt TEXT [--engine cursor|copilot|opencode] [--cwd DIR]
                             [--project NAME] [--title T] [--task TEXT] [--model X]
                             [--timeout SEC] [--force] [--interactive] [--detach]
                             [--messaging|--no-messaging] [--dry-run] [--json]
@@ -210,8 +211,8 @@ Usage:
                             Messaging-enabled masters pass messaging:true to workers
                             unless --no-messaging. Workers inherit the master's project
                             unless --project is set.
-  aflt master --goal TEXT [--engine cursor|copilot] [--cwd DIR] [--title T] [--model X]
-                            [--project NAME] [--worker-engine copilot|cursor]
+  aflt master --goal TEXT [--engine cursor|copilot|opencode] [--cwd DIR] [--title T] [--model X]
+                            [--project NAME] [--worker-engine copilot|cursor|opencode]
                             [--headless] [--timeout SEC]
                             [--force] [--messaging|--no-messaging] [--no-docs]
                             [--dry-run] [--json]
@@ -220,7 +221,7 @@ Usage:
                             --headless uses aflt run machinery (workerStatus tracked).
                             On successful headless exit, runs aflt docs once if the
                             project has {"docs": true} (skip with --no-docs).
-  aflt docs [<project dir>] [--since <commit>] [--engine cursor|copilot] [--model X]
+  aflt docs [<project dir>] [--since <commit>] [--engine cursor|copilot|opencode] [--model X]
                             [--force|--no-force] [--anyway] [--dry-run] [--json]
                             Documentarian: one headless docs worker (role=docs) that
                             updates only configured docs paths. Opt-in via
@@ -330,8 +331,8 @@ Usage:
                             (park→label→keep when needed), then rename space
                             (group title) and tab (session title). Migrates
                             legacy cwd-based spaces. App must be open to move panes.
-  aflt cursor | aflt copilot    Set default engine for new sessions (config.json)
-  aflt engine [cursor|copilot]
+  aflt cursor | aflt copilot | aflt opencode  Set default engine for new sessions (config.json)
+  aflt engine [cursor|copilot|opencode]
                             Print default engine + source, or set it
   aflt rename <title|id> "<new title>"
   aflt cwd <title|id> [path] [--dry-run] [--json]
@@ -374,7 +375,7 @@ Usage:
                             pass --apply to mutate. Never touches Herdr panes.
                             Refuses busy sessions unless --force (stop first).
                             --yes skips typed confirm (required for non-TTY apply).
-  aflt orphans [--days N] [--engine cursor|copilot|all] [--category C]...
+  aflt orphans [--days N] [--engine cursor|copilot|opencode|all] [--category C]...
                             [--json] [--allow-uncertain-engine] [--include-interactive]
                             Scan for orphan/stale sessions and chats (dry-run).
   aflt orphans --purge [--ids id,…] [--category C]... [--apply] [--yes] [--force]
@@ -418,7 +419,7 @@ Usage:
 Environment:
   AGENTFLEET_HOME         Registry dir (default: ~/.agentfleet)
   AGENTFLEET_REGISTRY     Override sessions.json path
-  AGENTFLEET_ENGINE       Default engine for NEW sessions (cursor|copilot);
+  AGENTFLEET_ENGINE       Default engine for NEW sessions (cursor|copilot|opencode);
                             after --engine flag, before config.json / builtin
   AFLT_PROJECT            Default project name for NEW sessions (after --project
                             and parent inheritance; before .agentfleet.json /
@@ -433,6 +434,8 @@ Environment:
                             value is Bearer <key> for Authorization)
   AGENTFLEET_CURSOR_BIN   Override cursor-agent binary
   AGENTFLEET_COPILOT_BIN  Override copilot binary
+  AGENTFLEET_OPENCODE_BIN Override opencode binary
+  AGENTFLEET_OPENCODE_HOME OpenCode data dir (default ~/.local/share/opencode)
   AGENTFLEET_VIA          Default --via backend (resume --all; also overrides
                             single-session default: herdr vs plain)
   AGENTFLEET_TMUX_SESSION tmux session name (default: agentfleet)
@@ -581,6 +584,7 @@ async function main() {
       break;
     case 'cursor':
     case 'copilot':
+    case 'opencode':
       cmdSetDefaultEngine(cmd, rest);
       break;
     case 'engine':
@@ -642,7 +646,7 @@ async function cmdNew(argv) {
   const { args, flags } = parseArgs(argv);
   const title = args[0];
   if (!title) {
-    fail('usage: aflt new "<title>" [--cwd DIR] [--prompt "..."] [--model X] [--engine cursor|copilot]');
+    fail('usage: aflt new "<title>" [--cwd DIR] [--prompt "..."] [--model X] [--engine cursor|copilot|opencode]');
   }
 
   const cwd = resolveCwd(flags.cwd || flags.C);
@@ -669,6 +673,15 @@ async function cmdNew(argv) {
     } else {
       chatId = copilot.newSessionId();
       process.stderr.write(`Minted Copilot session id ${chatId}\n`);
+    }
+  } else if (engineName === 'opencode') {
+    if (dryRun) {
+      chatId = opencode.dryRunSessionId();
+      process.stderr.write('[dry-run] would create an OpenCode session via opencode serve\n');
+    } else {
+      process.stderr.write(`Creating OpenCode session via ${opencode.resolveOpencodeBin()} serve…\n`);
+      chatId = await opencode.createSession({ cwd, title });
+      process.stderr.write(`Created OpenCode session ${chatId}\n`);
     }
   } else if (dryRun) {
     chatId = '00000000-0000-4000-8000-000000000000';
@@ -763,7 +776,7 @@ function cmdAdd(argv) {
   const title = args[0];
   const chatId = flags.chat || flags.c;
   if (!title || !chatId) {
-    fail('usage: aflt add "<title>" --chat <id> [--cwd DIR] [--engine cursor|copilot]');
+    fail('usage: aflt add "<title>" --chat <id> [--cwd DIR] [--engine cursor|copilot|opencode]');
   }
 
   // New row: same precedence as aflt new/run (--engine > AGENTFLEET_ENGINE > config > cursor).
@@ -1416,7 +1429,7 @@ function cmdTurns(argv) {
 
   if (!sub || sub === 'help') {
     fail(
-      'usage: aflt turns backfill [<id|title>...] [--engine copilot|cursor|all] [--apply] [--json]\n' +
+      'usage: aflt turns backfill [<id|title>...] [--engine copilot|cursor|opencode|all] [--apply] [--json]\n' +
         '  Dry-run by default (report counts). Pass --apply to write runs/<id>/turns.jsonl.',
       { json: asJson }
     );
@@ -1428,8 +1441,8 @@ function cmdTurns(argv) {
   let engineFilter = 'all';
   if (flags.engine != null && flags.engine !== true) {
     engineFilter = String(flags.engine).toLowerCase();
-    if (!['copilot', 'cursor', 'all'].includes(engineFilter)) {
-      fail('--engine must be copilot, cursor, or all', { json: asJson });
+    if (!['copilot', 'cursor', 'opencode', 'all'].includes(engineFilter)) {
+      fail('--engine must be copilot, cursor, opencode, or all', { json: asJson });
     }
   }
 
@@ -2252,7 +2265,7 @@ function cmdEngine(argv) {
     );
     return;
   }
-  if (args.length !== 1) fail('usage: aflt engine [cursor|copilot]');
+  if (args.length !== 1) fail('usage: aflt engine [cursor|copilot|opencode]');
   let engineName;
   try {
     engineName = config.setDefaultEngine(args[0]);
@@ -3455,6 +3468,28 @@ function printSession(s, verb, { stream } = {}) {
 }
 
 /**
+ * Mint / create an engine-native session id for a new aflt registry row.
+ * Cursor: create-chat UUID. Copilot: local UUID. OpenCode: ses_* via serve API.
+ */
+async function createEngineChatId(engineName, { cwd, title, quiet = false } = {}) {
+  if (engineName === 'copilot') {
+    return copilot.newSessionId();
+  }
+  if (engineName === 'opencode') {
+    if (!quiet) {
+      process.stderr.write(`Creating OpenCode session via ${opencode.resolveOpencodeBin()} serve…\n`);
+    }
+    const id = await opencode.createSession({ cwd, title });
+    if (!quiet) process.stderr.write(`Created OpenCode session ${id}\n`);
+    return id;
+  }
+  if (!quiet) {
+    process.stderr.write(`Creating chat via ${cursor.resolveCursorBin()} create-chat…\n`);
+  }
+  return cursor.createChat();
+}
+
+/**
  * Headless print-mode run for an already-registered session.
  * Shared by `aflt run`, `aflt spawn`, and headless `aflt send` continuations.
  * Spawns the engine detached in its own process group (still awaited; not
@@ -3479,6 +3514,9 @@ async function executeHeadlessRun(session, opts = {}) {
   const engineName = session.engine || 'cursor';
   if (mode && engineName === 'copilot') {
     fail('--mode ask|plan is a Cursor flag; Copilot has no equivalent here');
+  }
+  if (mode && engineName === 'opencode') {
+    fail('--mode ask|plan is a Cursor flag; OpenCode has no equivalent here');
   }
 
   const prepared = agentDocs.prepareLaunch(session, {
@@ -3514,6 +3552,13 @@ async function executeHeadlessRun(session, opts = {}) {
       outputFormat,
       silent,
     });
+  } else if (engineName === 'opencode') {
+    bin = opencode.resolveOpencodeBin();
+    argvRun = opencode.buildPrintArgs(session, {
+      prompt: effectivePrompt,
+      force,
+      outputFormat,
+    });
   } else {
     fail(`unsupported engine: ${engineName}`);
   }
@@ -3533,6 +3578,10 @@ async function executeHeadlessRun(session, opts = {}) {
           'Copilot run without --force: no --allow-all-tools. Tool calls will not auto-approve.\n'
         );
       }
+    } else if (engineName === 'opencode' && force) {
+      process.stderr.write(
+        'warning: --force is currently a no-op for OpenCode (no stable CLI permission-grant flag mapped yet).\n'
+      );
     }
   }
 
@@ -3735,6 +3784,9 @@ function headlessCommandPreview(session, { prompt, mode, force, outputFormat, tr
   } else if (engineName === 'copilot') {
     bin = copilot.resolveCopilotBin();
     argvRun = copilot.buildPrintArgs(session, { prompt, force, outputFormat, silent });
+  } else if (engineName === 'opencode') {
+    bin = opencode.resolveOpencodeBin();
+    argvRun = opencode.buildPrintArgs(session, { prompt, force, outputFormat });
   } else {
     fail(`unsupported engine: ${engineName}`);
   }
@@ -3747,7 +3799,7 @@ async function cmdRun(argv) {
   const prompt = flags.prompt;
   if (!titleOrId || !prompt || prompt === true) {
     fail(
-      'usage: aflt run "<title>" --prompt "..." [--cwd DIR] [--engine cursor|copilot] [--mode ask|plan] [--force] [--messaging|--no-messaging] [--dry-run] [--json]'
+      'usage: aflt run "<title>" --prompt "..." [--cwd DIR] [--engine cursor|copilot|opencode] [--mode ask|plan] [--force] [--messaging|--no-messaging] [--dry-run] [--json]'
     );
   }
 
@@ -3795,16 +3847,19 @@ async function cmdRun(argv) {
     if (mode && engineName === 'copilot') {
       fail('--mode ask|plan is a Cursor flag; Copilot has no equivalent here');
     }
+    if (mode && engineName === 'opencode') {
+      fail('--mode ask|plan is a Cursor flag; OpenCode has no equivalent here');
+    }
     const cwd = resolveCwd(flags.cwd || flags.C);
     let chatId;
     if (dryRun) {
-      chatId = '00000000-0000-4000-8000-000000000000';
+      chatId =
+        engineName === 'opencode'
+          ? opencode.dryRunSessionId()
+          : '00000000-0000-4000-8000-000000000000';
       process.stderr.write(`[dry-run] would create a ${engineName} session in ${cwd}\n`);
-    } else if (engineName === 'cursor') {
-      process.stderr.write(`Creating chat via ${cursor.resolveCursorBin()} create-chat…\n`);
-      chatId = await cursor.createChat();
     } else {
-      chatId = copilot.newSessionId();
+      chatId = await createEngineChatId(engineName, { cwd, title: titleOrId });
     }
     const messagingFlag = messages.normalizeMessagingFlag(flags);
     const entry = {
@@ -3832,6 +3887,9 @@ async function cmdRun(argv) {
   const engineName = session.engine || 'cursor';
   if (mode && engineName === 'copilot') {
     fail('--mode ask|plan is a Cursor flag; Copilot has no equivalent here');
+  }
+  if (mode && engineName === 'opencode') {
+    fail('--mode ask|plan is a Cursor flag; OpenCode has no equivalent here');
   }
 
   const runOpts = {
@@ -3904,7 +3962,7 @@ async function cmdSpawn(argv) {
   const prompt = flags.prompt;
   if (!parentQuery || parentQuery === true || !prompt || prompt === true) {
     fail(
-      'usage: aflt spawn --parent <id|title> --prompt TEXT [--engine cursor|copilot] [--cwd DIR] [--title T] [--task TEXT] [--interactive] [--detach] [--force] [--messaging|--no-messaging] [--dry-run] [--json]'
+      'usage: aflt spawn --parent <id|title> --prompt TEXT [--engine cursor|copilot|opencode] [--cwd DIR] [--title T] [--task TEXT] [--interactive] [--detach] [--force] [--messaging|--no-messaging] [--dry-run] [--json]'
     );
   }
 
@@ -4040,13 +4098,7 @@ async function cmdSpawn(argv) {
     return;
   }
 
-  let chatId;
-  if (engineName === 'cursor') {
-    process.stderr.write(`Creating chat via ${cursor.resolveCursorBin()} create-chat…\n`);
-    chatId = await cursor.createChat();
-  } else {
-    chatId = copilot.newSessionId();
-  }
+  const chatId = await createEngineChatId(engineName, { cwd, title });
 
   const resultsDir = path.join(fleetDir(), 'results');
   fs.mkdirSync(resultsDir, { recursive: true, mode: 0o700 });
@@ -4378,7 +4430,7 @@ async function cmdMaster(argv) {
   const goal = flags.goal;
   if (!goal || goal === true) {
     fail(
-      'usage: aflt master --goal TEXT [--engine cursor|copilot] [--cwd DIR] [--title T] [--model X] [--worker-engine copilot|cursor] [--headless] [--timeout SEC] [--force] [--messaging|--no-messaging] [--no-docs] [--dry-run] [--json]'
+      'usage: aflt master --goal TEXT [--engine cursor|copilot|opencode] [--cwd DIR] [--title T] [--model X] [--worker-engine copilot|cursor|opencode] [--headless] [--timeout SEC] [--force] [--messaging|--no-messaging] [--no-docs] [--dry-run] [--json]'
     );
   }
   const goalText = String(goal);
@@ -4519,13 +4571,7 @@ async function cmdMaster(argv) {
     return;
   }
 
-  let chatId;
-  if (engineName === 'cursor') {
-    process.stderr.write(`Creating chat via ${cursor.resolveCursorBin()} create-chat…\n`);
-    chatId = await cursor.createChat();
-  } else {
-    chatId = copilot.newSessionId();
-  }
+  const chatId = await createEngineChatId(engineName, { cwd, title });
 
   fs.mkdirSync(resultsDir, { recursive: true, mode: 0o700 });
   const plansDir = path.join(fleetDir(), 'plans');
@@ -4961,13 +5007,11 @@ async function runDocsForProject(projectRoot, opts = {}) {
   }
 
   if (!session) {
-    let chatId;
-    if (engineName === 'cursor') {
-      if (!quiet) process.stderr.write(`Creating chat via ${cursor.resolveCursorBin()} create-chat…\n`);
-      chatId = await cursor.createChat();
-    } else {
-      chatId = copilot.newSessionId();
-    }
+    const chatId = await createEngineChatId(engineName, {
+      cwd: projectRoot,
+      title,
+      quiet,
+    });
     fs.mkdirSync(path.join(fleetDir(), 'results'), { recursive: true, mode: 0o700 });
     const docsEntry = {
       title,
@@ -7163,6 +7207,17 @@ function cmdDoctor(argv) {
     add('copilot_bin', false, err.message);
   }
   try {
+    const bin = opencode.resolveOpencodeBin();
+    const present = Boolean(
+      process.env.AGENTFLEET_OPENCODE_BIN ||
+        require('../lib/util').which('opencode') ||
+        (bin && fs.existsSync(bin))
+    );
+    add('opencode_bin', present, bin);
+  } catch (err) {
+    add('opencode_bin', false, err.message);
+  }
+  try {
     const sessions = registry.list({ includeDone: true });
     const wiring = mcp.doctorMcpWiring(sessions, process.env);
     if (wiring) {
@@ -7196,6 +7251,7 @@ function cmdDoctor(argv) {
       (c) =>
         ![
           'copilot_bin',
+          'opencode_bin',
           'hc_on_path',
           'hc_server_status',
           'hc_ls',

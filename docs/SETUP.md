@@ -745,7 +745,7 @@ aflt which-backend
 | Cursor `aflt resume --via herdr` | **Verified** live. hc 0.1.16 **rejects** a `--` separator (`cannot start "--"`); current `aflt` omits it. Default `--trust` required to clear the workspace-trust dialog. |
 | Copilot `copilot -p` / `aflt run --engine copilot` **without** `--force` | **Verified** live no-tool "pong" (CLI 1.0.83). Auth confirmed by that CLI result; credential files were not read. `--help` overstated the need for `--allow-all-tools`. |
 | Copilot `--force` (`--allow-all-tools`) | Supported by `af`; **not** live-tested (broad tool grant). `af` never adds `--allow-all` / `--yolo`. |
-| OpenCode | **Template only** (`aflt herdr-templates` → `hc run opencode "…"`). Not wrapped by `aflt run`. First-message send not live-tested. |
+| OpenCode | Full engine (`--engine opencode`): `aflt run` / `new` / `resume` / `spawn`; Herdr template still via `aflt herdr-templates`. Turn capture from `opencode.db` (read-only). |
 | Herdr desktop Cursor/OpenCode integrations | **Unconfigured**. Herdr.app is present; `~/.config/herdr-app` is absent. Needs the GUI. |
 | Reboot persistence | **Not tested** (Mini was not rebooted). |
 | `cursor-agent persist` | Exists (`list` / `attach` / `stop`); not wrapped by `af`. |
