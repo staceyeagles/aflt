@@ -34,6 +34,7 @@ const purgeLib = require('../lib/purge');
 const turns = require('../lib/turns');
 const notify = require('../lib/notify');
 const loopLib = require('../lib/loop');
+const serviceLib = require('../lib/service');
 const {
   parseArgs,
   resolveCwd,
@@ -420,12 +421,25 @@ Usage:
                             Run a multi-phase loop (plan→develop→eval→fix).
                             Persists state under $AGENTFLEET_HOME/loops/<name>/.
                             --dry-run prints the plan without locking or running.
+  aflt loop start <file> [--json]
+                            Register a loop as active for the dashboard
+                            scheduler (does not run phases in this process).
+  aflt loop pause <name> [--json]
+                            Pause an active/running loop (runner yields; stays
+                            registered until stop).
   aflt loop status [name] [--json]
                             Show one loop's state, or list all loops.
   aflt loop stop <name> [--json]
                             Request stop (sets stopRequested; signals live runner).
   aflt loop resume <name> [--json]
-                            Resume a stopped/running loop from saved state.
+                            Resume a paused/stopped/running loop from saved state
+                            (runs in this process). Dashboard API resume only
+                            re-activates for the scheduler.
+  aflt service install|uninstall|status [--port N] [--host H] [--print] [--json]
+                            macOS LaunchAgent for \`aflt dashboard --serve\`
+                            (KeepAlive; logs under $AGENTFLEET_HOME/logs).
+                            --print shows the plist without writing. Unsupported
+                            on non-macOS.
   aflt help
                             Exit: 0 ok, 1 error, 2 wait timeout, 3 waiting,
                             75 critical registry write failed after a run
@@ -446,6 +460,8 @@ Environment:
                             (else config.json notify.key)
   AFLT_NOTIFY_HEADER      Notify auth header name (default Authorization;
                             value is Bearer <key> for Authorization)
+  AFLT_LOOP_HEARTBEAT_SECONDS  Opt-in loop.heartbeat interval in seconds
+                            (else config.json loop.heartbeatSeconds; default off)
   AGENTFLEET_CURSOR_BIN   Override cursor-agent binary
   AGENTFLEET_COPILOT_BIN  Override copilot binary
   AGENTFLEET_OPENCODE_BIN Override opencode binary
@@ -653,6 +669,9 @@ async function main() {
       break;
     case 'loop':
       await cmdLoop(rest);
+      break;
+    case 'service':
+      cmdService(rest);
       break;
     default:
       fail(`unknown command: ${cmd}\n\n${USAGE}`);
@@ -7301,7 +7320,7 @@ async function cmdLoop(argv) {
   const sub = args[0];
   const asJson = Boolean(flags.json);
   const usage =
-    'usage: aflt loop validate <file> | run <file> [--dry-run] | status [name] | stop <name> | resume <name> [--json]';
+    'usage: aflt loop validate <file> | run <file> [--dry-run] | start <file> | pause <name> | status [name] | stop <name> | resume <name> [--json]';
   if (!sub || sub === 'help' || sub === '-h' || sub === '--help') {
     fail(usage);
   }
@@ -7402,6 +7421,74 @@ async function cmdLoop(argv) {
     return;
   }
 
+  if (sub === 'start') {
+    const file = args[1];
+    if (!file) fail('usage: aflt loop start <file> [--json]');
+    let result;
+    try {
+      result = loopLib.startFromFile(file);
+    } catch (err) {
+      fail(err.message, { json: asJson });
+    }
+    if (asJson) {
+      emitJson({
+        ok: Boolean(result.ok),
+        path: result.path || null,
+        status: result.status || null,
+        message: result.message || null,
+        error: result.error || (result.errors && result.errors.join('; ')) || null,
+        errors: result.errors || null,
+        warnings: result.warnings || null,
+        state: result.state
+          ? {
+              name: result.state.name,
+              status: result.state.status,
+              active: Boolean(result.state.active),
+              phaseId: result.state.phaseId,
+            }
+          : null,
+      });
+    } else if (result.errors) {
+      for (const e of result.errors) process.stderr.write(`error: ${e}\n`);
+    } else if (result.ok) {
+      process.stdout.write(
+        `loop "${result.state.name}" registered active (status=${result.status})` +
+          (result.message ? ` — ${result.message}` : '') +
+          '\n'
+      );
+    } else {
+      process.stderr.write(`loop start failed: ${result.error || 'unknown'}\n`);
+    }
+    process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
+
+  if (sub === 'pause') {
+    const name = args[1];
+    if (!name) fail('usage: aflt loop pause <name> [--json]');
+    let result;
+    try {
+      result = loopLib.requestPause(name);
+    } catch (err) {
+      fail(err.message, { json: asJson });
+    }
+    if (!result.ok) fail(result.error || 'loop pause failed', { json: asJson });
+    if (asJson) {
+      emitJson({
+        ok: true,
+        name: result.state && result.state.name,
+        status: result.status,
+        pauseRequested: result.pauseRequested,
+        active: result.state ? Boolean(result.state.active) : undefined,
+      });
+    } else {
+      process.stdout.write(
+        `loop "${result.state.name}" pause requested (status=${result.status})\n`
+      );
+    }
+    return;
+  }
+
   if (sub === 'status') {
     const name = args[1] || null;
     let result;
@@ -7419,7 +7506,7 @@ async function cmdLoop(argv) {
       } else {
         for (const row of result.loops) {
           process.stdout.write(
-            `${pad(row.name, 24)} ${pad(row.status, 10)} phase=${row.phaseId || '-'} updated=${row.updatedAt || '-'}\n`
+            `${pad(row.name, 24)} ${pad(row.status, 10)} active=${row.active ? 'y' : 'n'} phase=${row.phaseId || '-'} updated=${row.updatedAt || '-'}\n`
           );
         }
       }
@@ -7428,11 +7515,13 @@ async function cmdLoop(argv) {
         [
           `name: ${result.name}`,
           `status: ${result.status}`,
+          `active: ${result.active}`,
           `phase: ${result.phaseId || '-'} (index ${result.phaseIndex}) attempt=${result.attempt} step=${result.step}`,
           `runsUsed: ${result.runsUsed}`,
           `cwd: ${result.cwd || '-'}`,
           `project: ${result.project || '-'}`,
           `stopRequested: ${result.stopRequested}`,
+          `pauseRequested: ${result.pauseRequested}`,
           result.lastError ? `lastError: ${result.lastError}` : null,
           result.lock
             ? `lock: pid=${result.lock.pid} alive=${result.lock.alive}`
@@ -7516,6 +7605,81 @@ async function cmdLoop(argv) {
   }
 
   fail(`unknown loop subcommand: ${sub}\n${usage}`);
+}
+
+function cmdService(argv) {
+  const { args, flags } = parseArgs(argv || []);
+  const sub = args[0];
+  const asJson = Boolean(flags.json);
+  const usage =
+    'usage: aflt service install|uninstall|status [--port N] [--host H] [--print] [--json]';
+  if (!sub || sub === 'help' || sub === '-h' || sub === '--help') {
+    fail(usage);
+  }
+
+  const common = {
+    print: Boolean(flags.print),
+    host: flags.host,
+    port: flags.port != null ? Number(flags.port) : undefined,
+    env: process.env,
+  };
+
+  let result;
+  try {
+    if (sub === 'install') {
+      result = serviceLib.install(common);
+    } else if (sub === 'uninstall') {
+      result = serviceLib.uninstall(common);
+    } else if (sub === 'status') {
+      result = serviceLib.status(common);
+    } else {
+      fail(`unknown service subcommand: ${sub}\n${usage}`);
+    }
+  } catch (err) {
+    fail(err.message, { json: asJson });
+  }
+
+  if (asJson) {
+    emitJson(result);
+  } else if (!result.supported) {
+    process.stderr.write(`${result.error}\n`);
+  } else if (flags.print && result.plist) {
+    process.stdout.write(result.plist);
+    if (!result.plist.endsWith('\n')) process.stdout.write('\n');
+  } else if (sub === 'status') {
+    process.stdout.write(
+      [
+        `label: ${result.label}`,
+        `path: ${result.path}`,
+        `exists: ${result.exists}`,
+        `loaded: ${result.loaded}`,
+        result.logsDir ? `logs: ${result.logsDir}` : null,
+        result.listError ? `list: ${result.listError}` : null,
+      ]
+        .filter(Boolean)
+        .join('\n') + '\n'
+    );
+  } else if (sub === 'install') {
+    if (result.print) {
+      process.stdout.write(result.plist);
+    } else {
+      process.stdout.write(
+        `service ${result.written ? 'installed' : 'planned'}: ${result.path}` +
+          ` (host=${result.host} port=${result.port}` +
+          `${result.loaded ? ', loaded' : ''})\n`
+      );
+    }
+  } else if (sub === 'uninstall') {
+    process.stdout.write(
+      `service uninstall: ${result.path}` +
+        `${result.removed ? ' (removed)' : result.exists ? '' : ' (not present)'}` +
+        `${result.unloaded ? ', unloaded' : ''}\n`
+    );
+  }
+
+  if (!result.ok || result.supported === false) {
+    process.exitCode = 1;
+  }
 }
 
 async function cmdNotify(argv) {
