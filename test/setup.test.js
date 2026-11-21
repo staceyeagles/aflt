@@ -173,8 +173,10 @@ describe('aflt setup', () => {
     const j = JSON.parse(r.stdout);
     assert.equal(j.engines.cursor.present, false);
     assert.equal(j.engines.copilot.present, false);
+    assert.equal(j.engines.opencode.present, false);
     assert.match(j.engines.cursor.detail, /not on PATH/);
     assert.match(j.engines.copilot.detail, /not on PATH/);
+    assert.match(j.engines.opencode.detail, /not on PATH/);
     assert.deepEqual(snapshotTree(home), before);
     assert.deepEqual(snapshotTree(stubDir), beforeStub);
   });
@@ -297,6 +299,7 @@ describe('aflt setup', () => {
     assert.equal(typeof j.node.ok, 'boolean');
     assert.equal(typeof j.engines.cursor.present, 'boolean');
     assert.equal(typeof j.engines.copilot.present, 'boolean');
+    assert.equal(typeof j.engines.opencode.present, 'boolean');
     assert.equal(typeof j.herdr.requested, 'boolean');
   });
 

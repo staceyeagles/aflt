@@ -1,7 +1,7 @@
 {
   "name": "aflt",
   "version": "1.3.0",
-  "description": "Track, resume, and headlessly run Cursor CLI (and optional Copilot CLI) sessions",
+  "description": "Track, resume, and headlessly run Cursor, Copilot, and OpenCode CLI sessions",
   "bin": {
     "agentfleet": "bin/af.js",
     "af": "bin/af.js",
@@ -32,6 +32,8 @@
   "keywords": [
     "cursor",
     "cursor-agent",
+    "copilot",
+    "opencode",
     "cli",
     "tmux",
     "iterm2",

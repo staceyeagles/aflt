@@ -71,6 +71,9 @@ describe('lib/config', () => {
       assert.equal(config.getDefaultEngineFromConfig(), null);
 
       assert.throws(() => config.setDefaultEngine('claude'), /invalid engine/);
+
+      config.setDefaultEngine('opencode');
+      assert.equal(config.getDefaultEngineFromConfig(), 'opencode');
     });
   });
 });

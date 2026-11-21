@@ -10,9 +10,10 @@ Human overview: [README.md](README.md) (dashboard screenshots in `docs/images/`;
 
 ## What's new (2026-11-20)
 
+- **OpenCode engine** — `--engine opencode` for `new` / `run` / `resume` / `spawn` / `memory doc` etc.; headless `opencode run`; resume with `--session`; turn capture from `opencode.db` (read-only); soft `aflt doctor` check.
 - **Direct messaging** — opt-in `aflt msg` / `aflt inbox` / `aflt thread` + MCP `read_inbox` / `post_message` (`aflt msg enable`, `--messaging`, or `.agentfleet.json` `{"messaging": true}`).
 - **Project↔repo metadata** — portable mappings in `<memoryRepo>/<project>/.agentfleet.json`; inspect with `aflt projects [--json]`.
-- **Interactive turn capture** — redacted turns in `runs/<id>/turns.jsonl`; backfill with `aflt turns backfill [--apply]`.
+- **Interactive turn capture** — redacted turns in `runs/<id>/turns.jsonl`; backfill with `aflt turns backfill [--apply]` (Copilot / Cursor / OpenCode).
 - **`aflt purge` / `aflt orphans`** — full delete (dry-run unless `--apply`) and orphan/stale scan (`orphans --purge --ids … [--apply]`).
 - **Turns → Doc Bot** — `emitTurnCaptured` DMs `doc-bot` when both sides have messaging enabled (else no-op).
 - **Notify webhook** — opt-in `config.json` `notify` or `AFLT_NOTIFY_URL`/`KEY`/`HEADER`; events `run.completed` / `run.failed` / `turn.captured`; `aflt notify test`; flushed before `aflt run` exits.
@@ -71,6 +72,7 @@ Also install the engine(s) you will use (`aflt setup` reports missing engines bu
 
 - Cursor CLI: `curl https://cursor.com/install -fsS | bash` (`cursor-agent` / `agent` on PATH). Override with `AGENTFLEET_CURSOR_BIN`.
 - Copilot CLI (optional): `npm install -g @github/copilot`. Override with `AGENTFLEET_COPILOT_BIN`.
+- OpenCode CLI (optional): [opencode.ai](https://opencode.ai) (`curl -fsSL https://opencode.ai/v2/install | bash`). Override with `AGENTFLEET_OPENCODE_BIN`; data home override `AGENTFLEET_OPENCODE_HOME` (default `~/.local/share/opencode`).
 - Herdr (`hc` + optional `herdr-app`) is recommended for interactive sessions but is not required for headless `aflt run` / `spawn`. Pass `--herdr` to `aflt setup` only when you want templates/panel installed.
 
 Optional bash completion: `source /path/to/aflt/completions/af.bash` (completes `aflt`, `af`, and `agentfleet`).
@@ -114,7 +116,7 @@ aflt dashboard --snapshot /tmp/aflt.svg  # read-only SVG/HTML snapshot (≠ memo
 aflt memory sync                # opt-in: write cwd project timeline + root DASHBOARD.md
 aflt memory dashboard           # regenerate root DASHBOARD.md only
 aflt memory config [--apply]    # refresh DOC-AGENT.md / DOCUMENTATION-PROCESS.md (dry-run default)
-aflt memory doc [--engine cursor|copilot]  # Doc Bot session (DOC-AGENT.md)
+aflt memory doc [--engine cursor|copilot|opencode]  # Doc Bot session (DOC-AGENT.md)
 aflt memory sync --all --commit --push  # nightly: sync + commit generated + push
 aflt children --json            # workers of this master, or a summary of masters
 ```
@@ -182,11 +184,11 @@ aflt help
 ### Create, register, list
 
 ```bash
-aflt new "<title>" [--cwd DIR] [--prompt "..."] [--model X] [--engine cursor|copilot]
+aflt new "<title>" [--cwd DIR] [--prompt "..."] [--model X] [--engine cursor|copilot|opencode]
                    [--project NAME] [--force] [--messaging|--no-messaging] [--tag T]... [--dry-run]
 # create-chat / mint UUID → register → interactive launch
 
-aflt add "<title>" --chat <id> [--cwd DIR] [--model X] [--engine cursor|copilot]
+aflt add "<title>" --chat <id> [--cwd DIR] [--model X] [--engine cursor|copilot|opencode]
                    [--project NAME] [--tag T]... [--prompt "..."]
 # For --engine copilot, --chat is the Copilot session UUID
 
@@ -229,7 +231,7 @@ aflt dashboard --serve [--port 8787] [--host 127.0.0.1] [--json] [--capture-comp
 aflt dashboard --snapshot <file.svg|html>
 # Standalone SVG or self-contained HTML snapshot of the activity UI (no server).
 
-aflt turns backfill [<id|title>...] [--engine copilot|cursor|all] [--apply] [--json]
+aflt turns backfill [<id|title>...] [--engine copilot|cursor|opencode|all] [--apply] [--json]
 # Import interactive Copilot (events.jsonl user↔assistant loops and optional
 # session.task_complete) / Cursor (unique transcript) turns into
 # runs/<id>/turns.jsonl. Dry-run by default; --apply writes. Idempotent (dedupe).
@@ -275,7 +277,7 @@ aflt memory config [--apply] [--json] [--no-redact] [--active-days N] [--commit]
 # (refuses dirty index; stages DASHBOARD.md + managed roots only); --push
 # requires --commit. Never commits unless asked.
 
-aflt memory doc [--engine cursor|copilot] [--dry-run] [--json] [--force]
+aflt memory doc [--engine cursor|copilot|opencode] [--dry-run] [--json] [--force]
 # Launch a portable Doc Bot `aflt run` session (title doc-bot) in the memory
 # repo using DOC-AGENT.md as the prompt. Works with Cursor CLI or Copilot CLI.
 # --dry-run does not create a session or start an engine.
@@ -342,7 +344,7 @@ included, and document read errors are surfaced without hiding session activity.
 ### Headless run and logs
 
 ```bash
-aflt run "<title>" --prompt "..." [--cwd DIR] [--model X] [--engine cursor|copilot]
+aflt run "<title>" --prompt "..." [--cwd DIR] [--model X] [--engine cursor|copilot|opencode]
                    [--project NAME] [--mode ask|plan] [--force]
                    [--output-format text|json] [--timeout SEC]
                    [--messaging|--no-messaging] [--no-docs]
@@ -358,7 +360,7 @@ Timeout on a headless run exits **124**.
 ### Master / worker orchestration
 
 ```bash
-aflt master --goal TEXT [--engine cursor|copilot] [--cwd DIR] [--title T] [--model X]
+aflt master --goal TEXT [--engine cursor|copilot|opencode] [--cwd DIR] [--title T] [--model X]
             [--project NAME] [--worker-engine copilot|cursor] [--headless] [--timeout SEC]
             [--force] [--messaging|--no-messaging] [--no-docs]
             [--dry-run] [--json]
@@ -366,7 +368,7 @@ aflt master --goal TEXT [--engine cursor|copilot] [--cwd DIR] [--title T] [--mod
 # --headless uses aflt run machinery (workerStatus tracked).
 # Successful headless exit may run aflt docs if the project has {"docs": true}.
 
-aflt spawn --parent <id|title> --prompt TEXT [--engine cursor|copilot] [--cwd DIR]
+aflt spawn --parent <id|title> --prompt TEXT [--engine cursor|copilot|opencode] [--cwd DIR]
            [--project NAME] [--title T] [--task TEXT] [--model X] [--timeout SEC]
            [--force] [--interactive] [--detach]
            [--messaging|--no-messaging] [--dry-run] [--json]
@@ -462,7 +464,7 @@ aflt purge <title|id>... [--with-children] [--apply] [--force] [--yes] [--json]
 # --apply mutates. Never touches Herdr. Refuses busy unless --force.
 # --yes skips typed confirm (required for non-TTY / agent apply).
 
-aflt orphans [--days N] [--engine cursor|copilot|all] [--category C]... [--json]
+aflt orphans [--days N] [--engine cursor|copilot|opencode|all] [--category C]... [--json]
            [--allow-uncertain-engine] [--include-interactive]
 aflt orphans --purge --ids id,… [--apply] [--yes] [--force] [--json]
            [--days N] [--allow-uncertain-engine]
@@ -482,8 +484,8 @@ New-session precedence: **`--engine` → `AGENTFLEET_ENGINE` → `~/.agentfleet/
 
 ```bash
 aflt engine                 # print default + source
-aflt engine cursor|copilot  # persist defaultEngine
-aflt cursor | aflt copilot  # aliases
+aflt engine cursor|copilot|opencode  # persist defaultEngine
+aflt cursor | aflt copilot | aflt opencode  # aliases
 ```
 
 ### Messaging (opt-in)
@@ -543,7 +545,7 @@ Cursor install writes `"${env:AGENTFLEET_SESSION}"` (and related) so `cursor-age
 Off by default. Enable with `.agentfleet.json` `{"docs": true}`.
 
 ```bash
-aflt docs [<project dir>] [--since <commit>] [--engine cursor|copilot] [--model X]
+aflt docs [<project dir>] [--since <commit>] [--engine cursor|copilot|opencode] [--model X]
           [--force|--no-force] [--anyway] [--dry-run] [--json]
 aflt docs --status [--json] [--all] [<dir>...]
 ```
@@ -595,17 +597,17 @@ aflt herdr-app status
 
 ## Engines, permissions, and handoffs
 
-| | Cursor | Copilot |
-|---|--------|---------|
-| Binary | `cursor-agent` / `agent` (`AGENTFLEET_CURSOR_BIN`) | `copilot` (`AGENTFLEET_COPILOT_BIN`) |
-| Session id | `create-chat` UUID; resume `--resume` | Local UUID; `--session-id=` (create-or-resume; do **not** use `--resume=` for a fresh id) |
-| Workspace | `--workspace` / `--trust` (default on; `--no-trust` keeps the dialog) | `-C <cwd>` |
-| Headless | `-p`, `--output-format`, `--mode ask\|plan`, `--force` | `-p`, `--output-format`; `--force` → `--allow-all-tools` |
-| Interactive `--force` | Unchanged for Cursor on `new`/`resume` | `--allow-all-tools` |
-| Import | Scan `~/.cursor/chats/` | `~/.copilot/session-state/` (`AGENTFLEET_COPILOT_HOME` / `COPILOT_HOME`) |
-| Completion signal (interactive) | No OSC 7501 — `aflt wait` cannot detect turn-complete while the engine is live | OSC 7501 via Herdr (`idle` / `working` / `done` / `blocked` / `error`) |
+| | Cursor | Copilot | OpenCode |
+|---|--------|---------|----------|
+| Binary | `cursor-agent` / `agent` (`AGENTFLEET_CURSOR_BIN`) | `copilot` (`AGENTFLEET_COPILOT_BIN`) | `opencode` (`AGENTFLEET_OPENCODE_BIN`) |
+| Session id | `create-chat` UUID; resume `--resume` | Local UUID; `--session-id=` (create-or-resume; do **not** use `--resume=` for a fresh id) | `ses_*` via short-lived `opencode serve` + `POST /session`; resume `--session` |
+| Workspace | `--workspace` / `--trust` (default on; `--no-trust` keeps the dialog) | `-C <cwd>` | spawn `cwd` (OpenCode project directory) |
+| Headless | `-p`, `--output-format`, `--mode ask\|plan`, `--force` | `-p`, `--output-format`; `--force` → `--allow-all-tools` | `opencode run [--format json] [--session]`; `--force` currently a no-op (no stable permission-grant flag) |
+| Interactive `--force` | Unchanged for Cursor on `new`/`resume` | `--allow-all-tools` | Currently a no-op (same as Cursor interactive) |
+| Import / turns | Scan `~/.cursor/chats/` + agent transcripts | `~/.copilot/session-state/` events.jsonl | Read-only `~/.local/share/opencode/opencode.db` (`AGENTFLEET_OPENCODE_HOME`) |
+| Completion signal (interactive) | No OSC 7501 — `aflt wait` cannot detect turn-complete while the engine is live | OSC 7501 via Herdr (`idle` / `working` / `done` / `blocked` / `error`) | Same as Cursor interactive (no OSC assumed); Herdr template still available |
 
-OpenCode is a **Herdr template only** (`aflt herdr-templates`); it is not wrapped by `aflt run`.
+OpenCode Herdr template remains installable via `aflt herdr-templates` (`opencode.md`).
 
 **Handoffs:** workers should write `$AGENTFLEET_RESULT` (default `$AGENTFLEET_HOME/results/<id>.md`) with Summary, Files changed, and Open questions. After a successful **headless** run, if the file is missing or stale, `aflt` may write an **af-fallback** from stdout. There is no automatic fallback for interactive runs. Freshness: the file is fresh iff it exists and `mtime` is after `runStartedAt` or `resultMtimeAtStart`. `aflt result --require-fresh` exits 1 if stale.
 
@@ -745,6 +747,9 @@ Set by the caller or the environment:
 | `AFLT_NOTIFY_HEADER` | Notify auth header name (default `Authorization` with `Bearer <key>`) |
 | `AGENTFLEET_CURSOR_BIN` | Override `cursor-agent` |
 | `AGENTFLEET_COPILOT_BIN` | Override `copilot` |
+| `AGENTFLEET_OPENCODE_BIN` | Override `opencode` |
+| `AGENTFLEET_OPENCODE_HOME` | OpenCode data dir (default `~/.local/share/opencode`) |
+| `AGENTFLEET_OPENCODE_DB` | Override path to `opencode.db` (tests) |
 | `AGENTFLEET_COPILOT_HOME` | Copilot home for import (else `COPILOT_HOME` / `~/.copilot`) |
 | `AGENTFLEET_VIA` | Default `--via` / single-resume herdr vs plain |
 | `AGENTFLEET_TMUX_SESSION` | tmux session name (default `agentfleet`) |

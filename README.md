@@ -2,7 +2,7 @@
   <img src="assets/logo.png" alt="aflt / AgentFleet" width="112" height="112"/>
 </p>
 
-<p align="center"><strong>aflt</strong> / AgentFleet — track, resume, and orchestrate Cursor &amp; Copilot CLI agents</p>
+<p align="center"><strong>aflt</strong> / AgentFleet — track, resume, and orchestrate Cursor, Copilot &amp; OpenCode CLI agents</p>
 
 <p align="center">
   <img alt="Node 18+" src="https://img.shields.io/badge/node-%3E%3D18-brightgreen?logo=node.js&logoColor=white"/>
@@ -14,7 +14,7 @@
 
 `aflt` is the main command; `af` and `agentfleet` are aliases that run the same CLI.
 
-**For AI agents:** [AGENTS.md](AGENTS.md) — install, commands, engines, and how to delegate or orchestrate work from Cursor or Copilot CLI.
+**For AI agents:** [AGENTS.md](AGENTS.md) — install, commands, engines, and how to delegate or orchestrate work from Cursor, Copilot, or OpenCode CLI.
 
 Zero npm runtime dependencies beyond **Node ≥18**. Install the CLI (`npm install -g aflt`, or `npm install -g github:wwlib/aflt` before the first registry publish), then optionally run `aflt setup` for machine config. Engine × mode behavior (liveness, completion, handoffs, `aflt wait`): [docs/CAPABILITIES.md](docs/CAPABILITIES.md). Setup deep-dive: [docs/SETUP.md](docs/SETUP.md). Full history: [CHANGELOG.md](CHANGELOG.md).
 
@@ -43,9 +43,10 @@ Regenerate with `npm run screenshots` (needs Google Chrome, Node ≥18, and a da
 
 ## What's new (2026-11-20)
 
+- **OpenCode engine** — `--engine opencode` for `aflt new` / `run` / `resume` / `spawn` / `memory doc` (and related); headless `opencode run`; resume via `--session`; turn capture from `~/.local/share/opencode/opencode.db` (read-only; `node:sqlite` when available); soft check in `aflt doctor`.
 - **Direct messaging** — opt-in `aflt msg` / `aflt inbox` / `aflt thread` + MCP `read_inbox` / `post_message` (`aflt msg enable`, `--messaging`, or `.agentfleet.json` `{"messaging": true}`).
 - **Project↔repo metadata** — portable mappings in `<memoryRepo>/<project>/.agentfleet.json`; inspect with `aflt projects [--json]`.
-- **Interactive turn capture** — redacted turns in `runs/<id>/turns.jsonl`; backfill with `aflt turns backfill [--apply]`.
+- **Interactive turn capture** — redacted turns in `runs/<id>/turns.jsonl`; backfill with `aflt turns backfill [--apply]` (Copilot, Cursor, OpenCode).
 - **`aflt purge` / `aflt orphans`** — full delete (dry-run unless `--apply`) and orphan/stale scan (`orphans --purge --ids … [--apply]`).
 - **Turns → Doc Bot** — `emitTurnCaptured` DMs `doc-bot` when both sides have messaging enabled (else no-op).
 - **Notify webhook** — opt-in `config.json` `notify` or `AFLT_NOTIFY_URL`/`KEY`/`HEADER`; events `run.completed` / `run.failed` / `turn.captured`; `aflt notify test`; flushed before `aflt run` exits.
@@ -61,7 +62,7 @@ CLI coding agents are powerful but ephemeral: chat IDs live in engine-local stor
 | Area | What you get |
 |------|----------------|
 | **Registry** | Atomic `sessions.json`; runs/, results/, plans/, messages/, docs/ under `$AGENTFLEET_HOME` |
-| **Engines** | Cursor CLI (`cursor-agent` / `agent`) and GitHub Copilot CLI; precedence `--engine` → `AGENTFLEET_ENGINE` → `config.json` → `cursor` |
+| **Engines** | Cursor CLI (`cursor-agent` / `agent`), GitHub Copilot CLI, and OpenCode (`opencode`); precedence `--engine` → `AGENTFLEET_ENGINE` → `config.json` → `cursor` |
 | **Modes** | Interactive TUI (Herdr by default when `hc` is on PATH) vs headless `aflt run` / spawn |
 | **Herdr** | `hc` terminals + desktop app spaces/tabs + bundled `af-sessions` panel; shell-only reboot recovery via in-tab relaunch |
 | **Orchestration** | `aflt master`, `aflt spawn [--detach]`, `children`, `wait`, `result [--require-fresh]`, `tail`, `send`, `stop`, `rm --children` |
@@ -205,7 +206,7 @@ Each session stores identity (`id`, `title`, `chatId`, `cwd`, `branch`, `model`,
 <details>
 <summary><code>aflt new</code> / <code>aflt add</code> / <code>aflt resume</code> / <code>aflt run</code> options</summary>
 
-- **`aflt new "<title>"`** — `--cwd` `--prompt` `--model` `--engine cursor|copilot` `--project` `--force` `--messaging|--no-messaging` `--tag` `--dry-run` (plus Cursor `--no-trust` where applicable)
+- **`aflt new "<title>"`** — `--cwd` `--prompt` `--model` `--engine cursor|copilot|opencode` `--project` `--force` `--messaging|--no-messaging` `--tag` `--dry-run` (plus Cursor `--no-trust` where applicable)
 - **`aflt add "<title>" --chat <id>`** — `--cwd` `--model` `--engine` `--project` `--tag` `--prompt`
 - **`aflt run`** — `--prompt` (required) `--cwd` `--model` `--engine` `--project` `--mode ask|plan` (Cursor) `--force` `--output-format text|json` `--timeout` `--messaging|--no-messaging` `--no-docs` `--dry-run` `--json`
 - **`aflt timeline [<project>]`** — `--all` `--json` `--since <date>` (ISO or YYYY-MM-DD); read-only. Default project: `<project>` arg → `AFLT_PROJECT` → cwd's derived project. Text shows local times (JSON keeps ISO UTC). Commits come from each session's own cwd (`commitsReason`: `not-git` / `missing-cwd`); an open-ended row that is not a live run is bounded at `lastUsed` (`open-ended` when it never ran).
@@ -340,7 +341,7 @@ aflt cursor / aflt copilot     # aliases
 | Interactive `--force` | Unchanged for Cursor on `new`/`resume` | `--allow-all-tools` |
 | Import | Scan `~/.cursor/chats/` | `~/.copilot/session-state/` (`AGENTFLEET_COPILOT_HOME` / `COPILOT_HOME`) |
 
-OpenCode is a **Herdr template only** (`aflt herdr-templates`); not wrapped by `aflt run`.
+OpenCode is a **full engine** (`--engine opencode`): headless `opencode run`, interactive `--session`, Herdr template still via `aflt herdr-templates`.
 
 ## Headless vs interactive
 
