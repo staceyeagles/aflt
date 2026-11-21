@@ -257,8 +257,9 @@ describe('interactive turn capture', () => {
     assert.equal(turns.readTurns(session.id).length, 1);
   });
 
-  it('emitTurnCaptured no-ops without messaging; invokes configured handler', () => {
+  it('emitTurnCaptured queues for batch (no immediate DM); invokes configured handler', () => {
     const turns = loadTurns(home);
+    const agentDocs = require('../lib/agent-docs');
     const seen = [];
     const envelope = turns.emitTurnCaptured(
       { sessionId: 's1', turnId: 't1', prompt: 'p', reply: 'r' },
@@ -266,11 +267,14 @@ describe('interactive turn capture', () => {
     );
     assert.equal(envelope.deferred, true);
     assert.equal(envelope.sent, false);
+    assert.equal(envelope.queued, true);
+    assert.ok(envelope.pendingId);
     assert.equal(envelope.issue, 2);
     assert.equal(envelope.type, 'turn-captured');
     assert.equal(envelope.project, 'demo');
-    assert.match(String(envelope.reason || ''), /doc-bot|messaging|registry/i);
+    assert.match(String(envelope.reason || ''), /queued|batch|note/i);
     assert.equal(seen.length, 0);
+    assert.ok(agentDocs.summarizeDocBotQueue().pending >= 1);
 
     turns.setTurnCapturedHandler((e) => seen.push(e));
     turns.emitTurnCaptured({ sessionId: 's1', turnId: 't2' }, { project: 'x' });
@@ -279,9 +283,15 @@ describe('interactive turn capture', () => {
     turns.setTurnCapturedHandler(null);
   });
 
-  it('emitTurnCaptured sends to doc-bot when both sides opt into messaging', () => {
+  it('emitTurnCaptured batches to doc-bot only after a dated note is written', () => {
     clearMods();
-    for (const m of ['../lib/messages', '../lib/registry', '../lib/project']) {
+    for (const m of [
+      '../lib/messages',
+      '../lib/registry',
+      '../lib/project',
+      '../lib/agent-docs',
+      '../lib/memory',
+    ]) {
       try {
         delete require.cache[require.resolve(m)];
       } catch (_) {
@@ -293,6 +303,18 @@ describe('interactive turn capture', () => {
     const registry = require('../lib/registry');
     const messages = require('../lib/messages');
     const turns = require('../lib/turns');
+    const agentDocs = require('../lib/agent-docs');
+    const memory = require('../lib/memory');
+
+    const mem = path.join(home, 'turn-mem');
+    memory.initMemoryRepo(mem);
+    process.env.AFLT_MEMORY_REPO = mem;
+    const project = 'demo';
+    fs.mkdirSync(path.join(mem, project, 'status-notes'), { recursive: true });
+    fs.writeFileSync(
+      path.join(mem, project, 'status-notes', '2026-11-19T1600-landed.md'),
+      '# landed\n'
+    );
 
     const doc = registry.add({
       title: 'doc-bot',
@@ -310,6 +332,7 @@ describe('interactive turn capture', () => {
       engine: 'copilot',
       status: 'active',
       messaging: true,
+      project,
     });
 
     const envelope = turns.emitTurnCaptured(
@@ -319,18 +342,23 @@ describe('interactive turn capture', () => {
         prompt: 'do the thing',
         reply: 'done the thing',
       },
-      { project: 'demo' }
+      { project }
     );
-    assert.equal(envelope.sent, true, envelope.reason);
-    assert.equal(envelope.deferred, false);
-    assert.ok(envelope.message && envelope.message.id);
+    assert.equal(envelope.sent, false);
+    assert.equal(envelope.queued, true);
+    assert.equal(messages.inboxForSession(doc, { unreadOnly: true }).length, 0);
+
+    const done = agentDocs.completeCheckpoint(project, {
+      sessionId: worker.id,
+      notePath: 'status-notes/2026-11-19T1600-landed.md',
+      requireNote: true,
+    });
+    assert.equal(done.docBotNotify.sent, true, done.docBotNotify.reason);
 
     const inbox = messages.inboxForSession(doc, { unreadOnly: true });
-    const hit = inbox.find((m) => m.id === envelope.message.id);
+    const hit = inbox.find((m) => m.meta && m.meta.source === 'flushDocBotBatch');
     assert.ok(hit);
-    assert.equal(hit.meta && hit.meta.source, 'emitTurnCaptured');
-    assert.match(hit.text, /do the thing/);
-    assert.match(hit.text, /done the thing/);
+    assert.match(hit.text, /do the thing|turn-captured|batch/i);
   });
 
   it('backfill dry-run does not write; --apply writes', () => {

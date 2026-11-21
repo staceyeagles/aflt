@@ -246,8 +246,16 @@ Usage:
   aflt docs checkpoint request|complete [<dir>] [--project NAME] [--reason T]
                             [--note PATH] [--json]
                             Record a documentation checkpoint (opt-in agentDocs).
-                            Never interrupts a busy agent; may DM doc-bot inbox
-                            when both sides have messaging enabled.
+                            Requests at safe boundaries only; complete requires a
+                            dated note under status-notes/ (not archive/). Never
+                            interrupts a busy agent. Doc Bot notify is batched
+                            after the note is written (messaging optional).
+  aflt docs notify flush|ack|status|retry [<dir>] [--project NAME] [--id ID]
+                            [--json]
+                            Batched Doc Bot queue: flush note-ready items (one
+                            message per batch), ack after Doc Bot reports notes
+                            written, show queue status, or process checkpoint
+                            retries with backoff.
   aflt msg <to> <text...> [--type T] [--reply <msgId>] [--from S] [--json] [--dry-run]
                             Opt-in message (team aliases or cross-session DM).
                             <to> = exact id / unique exact title, or master /
@@ -3689,6 +3697,20 @@ async function executeHeadlessRun(session, opts = {}) {
     /* ignore */
   }
 
+  // Opt-in agentDocs: request a checkpoint at the run-exit safe boundary only
+  // when the agent is no longer busy. Never treats elapsed time as progress.
+  try {
+    const fresh = registry.find(session.id) || session;
+    if (!stopped) {
+      agentDocs.maybeRequestAtBoundary(fresh, 'run-exit', {
+        reason: 'run-exit',
+      });
+    }
+    agentDocs.processCheckpointRetries({});
+  } catch (_) {
+    /* ignore */
+  }
+
   return {
     code,
     timedOut: result.timedOut,
@@ -5202,6 +5224,8 @@ function cmdDocsStatus({ asJson, wantAll }, dirArgsIn) {
     if (ctx.enabled) {
       checkpoint = agentDocs.summarizeCheckpoint(ctx.project, {
         hours: ctx.checkpointHours,
+        retryMax: ctx.retryMax,
+        retryBackoffMinutes: ctx.retryBackoffMinutes,
       });
     }
     return {
@@ -5215,8 +5239,12 @@ function cmdDocsStatus({ asJson, wantAll }, dirArgsIn) {
         agentDocsPath: ctx.agentDocsPath,
         agentsMdPath: ctx.agentsMdPath,
         warnings: ctx.warnings,
+        boundaries: ctx.boundaries,
+        requireNote: ctx.requireNote,
+        statusNotes: ctx.statusNotes,
+        archivePolicy: ctx.archivePolicy,
         checkpoint,
-        // Issue #2: Doc Bot notifications via messaging — not sent here.
+        docBotQueue: agentDocs.summarizeDocBotQueue(),
         docBotNotify: agentDocs.DOC_BOT_NOTIFY_DEFERRED,
       },
     };
@@ -5319,14 +5347,22 @@ function cmdDocsCheckpoint(argv) {
     summary = agentDocs.requestCheckpoint(project, {
       sessionId: process.env.AGENTFLEET_ID || process.env.AGENTFLEET_SESSION || null,
       reason,
+      boundary: 'manual',
+      hours: ctx.checkpointHours,
     });
   } else {
     const note =
       flags.note && flags.note !== true ? String(flags.note) : null;
-    summary = agentDocs.completeCheckpoint(project, {
-      sessionId: process.env.AGENTFLEET_ID || process.env.AGENTFLEET_SESSION || null,
-      notePath: note,
-    });
+    try {
+      summary = agentDocs.completeCheckpoint(project, {
+        sessionId: process.env.AGENTFLEET_ID || process.env.AGENTFLEET_SESSION || null,
+        notePath: note,
+        cwd,
+        requireNote: ctx.requireNote,
+      });
+    } catch (err) {
+      fail(err.message || String(err), { json: asJson });
+    }
   }
   const docBotNotify = summary.docBotNotify || {
     sent: false,
@@ -5340,6 +5376,7 @@ function cmdDocsCheckpoint(argv) {
     project,
     checkpoint,
     docBotNotify,
+    docBotQueue: agentDocs.summarizeDocBotQueue(),
     warnings: ctx.warnings,
     missing: ctx.missing,
   };
@@ -5356,10 +5393,96 @@ function cmdDocsCheckpoint(argv) {
   }
   if (docBotNotify.sent) {
     process.stderr.write(
-      `note: Doc Bot notified via messaging (${docBotNotify.message && docBotNotify.message.id}).\n`
+      `note: Doc Bot batch notified (${docBotNotify.batchId || (docBotNotify.message && docBotNotify.message.id)}).\n`
     );
   } else if (docBotNotify.reason) {
-    process.stderr.write(`note: Doc Bot not notified (${docBotNotify.reason}).\n`);
+    process.stderr.write(`note: Doc Bot notify (${docBotNotify.reason}).\n`);
+  }
+}
+
+function cmdDocsNotify(argv) {
+  const { args, flags } = parseArgs(argv);
+  const action = args[0] ? String(args[0]) : '';
+  const asJson = Boolean(flags.json);
+  if (!['flush', 'ack', 'status', 'retry'].includes(action)) {
+    fail(
+      'usage: aflt docs notify flush|ack|status|retry [<dir>] [--project NAME] [--id ID] [--json]',
+      { json: asJson }
+    );
+  }
+  const dirArg = args[1] || flags.cwd || flags.C || process.cwd();
+  const cwd = resolveCwd(dirArg);
+  const projectFlag =
+    flags.project && flags.project !== true ? String(flags.project).trim() : null;
+  const idFlag = flags.id && flags.id !== true ? String(flags.id).trim() : null;
+
+  if (action === 'status') {
+    const queue = agentDocs.summarizeDocBotQueue();
+    const fleet = agentDocs.resolveFleetAgentDocsConfig();
+    const payload = { ok: true, action, queue, fleet };
+    if (asJson) {
+      emitJson(payload);
+      return;
+    }
+    process.stdout.write(
+      `docs-notify  status  pending=${queue.pending} ready=${queue.pendingNoteReady}` +
+        ` batches=${queue.batches} acked=${queue.batchesAcked}\n`
+    );
+    return;
+  }
+
+  if (action === 'ack') {
+    const id = idFlag || (args[1] && !args[1].startsWith('-') ? String(args[1]) : null);
+    if (!id) {
+      fail('usage: aflt docs notify ack --id <batchId|messageId> [--json]', { json: asJson });
+    }
+    const result = agentDocs.ackDocBotBatch(id);
+    if (!result.ok) fail(result.reason || 'ack failed', { json: asJson });
+    if (asJson) {
+      emitJson({ ok: true, action, batch: result.batch, already: Boolean(result.already) });
+      return;
+    }
+    process.stdout.write(
+      `docs-notify  ack  batch=${result.batch.id}  status=${result.batch.status}\n`
+    );
+    return;
+  }
+
+  if (action === 'retry') {
+    const result = agentDocs.processCheckpointRetries({
+      projects: projectFlag ? [projectFlag] : undefined,
+    });
+    if (asJson) {
+      emitJson({ ok: true, action, ...result });
+      return;
+    }
+    const n = (result.results || []).filter((r) => r.retried).length;
+    process.stdout.write(`docs-notify  retry  retried=${n}\n`);
+    return;
+  }
+
+  // flush
+  const ctx = agentDocs.resolveAgentDocsContext(
+    { cwd, project: projectFlag },
+    { cwd, project: projectFlag }
+  );
+  const project = projectFlag || ctx.project;
+  const result = agentDocs.flushDocBotBatch({
+    project: projectFlag || undefined,
+    sessionId: process.env.AGENTFLEET_ID || process.env.AGENTFLEET_SESSION || null,
+  });
+  if (asJson) {
+    emitJson({ ok: true, action, project, ...result, queue: agentDocs.summarizeDocBotQueue() });
+    return;
+  }
+  process.stdout.write(
+    `docs-notify  flush  project=${project}  flushed=${result.flushed || 0}` +
+      `  sent=${Boolean(result.sent)}` +
+      (result.batch ? `  batch=${result.batch.id}` : '') +
+      `\n`
+  );
+  if (result.reason && !result.sent) {
+    process.stderr.write(`note: ${result.reason}\n`);
   }
 }
 
@@ -5378,6 +5501,12 @@ async function cmdDocs(argv) {
   if (args[0] === 'checkpoint') {
     const idx = argv.indexOf('checkpoint');
     cmdDocsCheckpoint(idx >= 0 ? argv.slice(idx + 1) : args.slice(1));
+    return;
+  }
+
+  if (args[0] === 'notify') {
+    const idx = argv.indexOf('notify');
+    cmdDocsNotify(idx >= 0 ? argv.slice(idx + 1) : args.slice(1));
     return;
   }
 
@@ -7055,6 +7184,12 @@ function cmdDoctor(argv) {
   } catch (err) {
     add('memory_doc_agent', true, `status unavailable: ${err.message}`);
   }
+  try {
+    const st = agentDocs.doctorAgentDocsStatus(process.env);
+    add(st.name, st.ok, st.detail);
+  } catch (err) {
+    add('agent_docs', true, `status unavailable: ${err.message}`);
+  }
   // copilot/hc optional for plain-only workflows — warn on old herdr-core but do not fail exit
   const ok = checks
     .filter(
@@ -7070,6 +7205,7 @@ function cmdDoctor(argv) {
           'mcp_wiring',
           'notify',
           'memory_doc_agent',
+          'agent_docs',
         ].includes(c.name)
     )
     .every((c) => c.ok);

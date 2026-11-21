@@ -47,7 +47,8 @@ Regenerate with `npm run screenshots` (needs Google Chrome, Node ≥18, and a da
 - **Project↔repo metadata** — portable mappings in `<memoryRepo>/<project>/.agentfleet.json`; inspect with `aflt projects [--json]`.
 - **Interactive turn capture** — redacted turns in `runs/<id>/turns.jsonl`; backfill with `aflt turns backfill [--apply]`.
 - **`aflt purge` / `aflt orphans`** — full delete (dry-run unless `--apply`) and orphan/stale scan (`orphans --purge --ids … [--apply]`).
-- **Turns → Doc Bot** — `emitTurnCaptured` DMs `doc-bot` when both sides have messaging enabled (else no-op).
+- **Agent docs lifecycle (issue #3)** — checkpoint cadence at safe boundaries, note acknowledgement, bounded retry/backoff, batched Doc Bot notify after notes are written (`aflt docs notify …`); archive convention labeled/ignored in reporting.
+- **Turns → Doc Bot** — `emitTurnCaptured` enqueues turns for batched Doc Bot notify (one message per batch after a dated note; messaging optional).
 - **Notify webhook** — opt-in `config.json` `notify` or `AFLT_NOTIFY_URL`/`KEY`/`HEADER`; events `run.completed` / `run.failed` / `turn.captured`; `aflt notify test`; flushed before `aflt run` exits.
 - **Dashboard UX** — Graph zoom/pan/Fit/Spread; History Gantt presets (24h/7d/30d/all), zoom/scroll, marker stacking and count badges (`aflt dashboard --serve`).
 - **`aflt memory config`** — refresh template-managed memory root files (`DOC-AGENT.md`, `DOCUMENTATION-PROCESS.md`) after upgrades (dry-run default; `--apply`; optional `--commit`/`--push`); `aflt doctor` hints when `DOC-AGENT.md` is outdated.
@@ -70,7 +71,7 @@ CLI coding agents are powerful but ephemeral: chat IDs live in engine-local stor
 | **Memory** | Opt-in `aflt memory` repo: sync per-project timelines + root `DASHBOARD.md` into a local git working tree; `memory config` refreshes template-managed root docs; optional `--commit`/`--push` for generated `_aflt/` + root `DASHBOARD.md` |
 | **Messaging** | Opt-in `aflt msg` / `inbox` / `thread` + stdio MCP (`aflt mcp`) for Copilot & Cursor |
 | **Documentarian** | Opt-in `aflt docs`; auto once after headless master / `aflt wait --docs` |
-| **Agent docs** | Opt-in `agentDocs`: shared `DOCUMENTATION-PROCESS.md` + project `AGENT-DOCS.md`, launch path delivery, checkpoint status (Doc Bot notify = issue #2) |
+| **Agent docs** | Opt-in `agentDocs`: shared process + `AGENT-DOCS.md`, launch paths, safe-boundary checkpoints, note ack, retry/backoff, batched Doc Bot notify, archive labeling |
 | **Ops** | `aflt setup`, `aflt import`, `aflt doctor`, `aflt notify test`, `aflt purge` / `aflt orphans`, `aflt turns backfill`, `--json` / `--dry-run` on mutating paths |
 
 ## Architecture
@@ -173,6 +174,7 @@ Home directory: **`$AGENTFLEET_HOME`** (default `~/.agentfleet`). Override regis
 | `messages/dm__<idA>__<idB>.jsonl` | Cross-session direct-message log (sorted ids) |
 | `docs/<hash>.json` | Documentarian since-tracking |
 | `doc-checkpoints/<project>.json` | Opt-in agentDocs checkpoint state |
+| `doc-bot-pending.json` | Batched Doc Bot pending items + batch ack records |
 
 Each session stores identity (`id`, `title`, `chatId`, `cwd`, `branch`, `model`, `engine`), optional `project`, lifecycle `status` (`active`\|`paused`\|`done`), `tags` / `notes` / `prompt`, optional `herdr` evidence from `aflt sync`, and orchestration fields (`parent`, `role`, `task`, `result`, `workerStatus`, run pid metadata, `messaging`, …).
 
@@ -383,20 +385,38 @@ aflt rm --children <master> [--with-master] …
 
 ## Agent documentation (opt-in)
 
-**Off by default.** Enable with `.agentfleet.json` `{"agentDocs": true}` (optional `docCheckpointHours`, default 4 — overdue labeling only; elapsed time is **not** progress).
+**Off by default.** Enable with `.agentfleet.json` `{"agentDocs": true}` (optional `docCheckpointHours`, default 4 — overdue labeling only; elapsed time is **not** progress). Fleet knobs in `$AGENTFLEET_HOME/config.json`:
+
+```json
+{
+  "agentDocs": {
+    "boundaries": ["turn-complete", "run-exit"],
+    "requireNote": true,
+    "retryMax": 3,
+    "retryBackoffMinutes": [30, 120, 360],
+    "batchNotify": true
+  }
+}
+```
 
 ```bash
 # Copy templates/AGENT-DOCS.md into the project root; memory init writes DOCUMENTATION-PROCESS.md
 aflt docs checkpoint request [--reason …] [--json]
-aflt docs checkpoint complete [--note path] [--json]
-aflt docs --status --json   # includes agentDocs.checkpoint missing/overdue
-aflt dashboard --snapshot out.html --json  # SVG/HTML file; stdout JSON includes checkpoints{}
+aflt docs checkpoint complete --note status-notes/YYYY-MM-DDTHHMM-slug.md [--json]
+aflt docs notify flush|ack|status|retry [--json]
+aflt docs --status --json   # checkpoint missing/overdue/retry + docBotQueue + archive policy
+aflt dashboard --snapshot out.html --json  # includes checkpoints{} + docBotQueue
+aflt doctor --json          # agent_docs check (boundaries / pending / acks)
 ```
 
 - Delivers project identity + memory/instruction paths on launch/resume for **Cursor and Copilot** without replacing `AGENTS.md`.
 - Works with no memory repo configured; warns when memory is required but missing (`AFLT_MEMORY_MISSING=1`).
-- Checkpoints are bookkeeping only — never interrupts a busy agent. Archive convention: ignore `status-notes/archive/`; aflt never auto-moves or deletes documents.
-- Doc Bot notifications use opted-in direct messaging (`notifyDocBot` → `sendDirectMessage`) when both sides have messaging enabled. Copilot Task Complete capture (`aflt dashboard --capture-completions`) is separate and unchanged.
+- **Cadence:** requests only at safe boundaries (`turn-complete` / `run-exit`; optional `session-launch` if listed). Never while busy; elapsed time alone never creates a request.
+- **Acknowledgement:** `complete` requires a dated note under live `status-notes/` (not `archive/`).
+- **Retry:** bounded backoff reminders for unacked open checkpoints (`aflt docs notify retry`).
+- **Doc Bot batches:** notes are written before notify; pending turns/checkpoints flush as one message; `aflt docs notify ack` records acknowledgement. Messaging optional (context only, not permissions).
+- **Archive:** live pickup ignores `status-notes/archive/`; reporting may label archived counts; aflt never auto-moves or deletes documents.
+- **vs completion capture:** Copilot Task Complete capture (`aflt dashboard --capture-completions` / `lib/task-completions.js`) is a separate opt-in path into memory notes. This lifecycle covers instructions, checkpoints, archive, and batched Doc Bot context.
 
 ## Messaging
 
@@ -490,7 +510,7 @@ aflt import copilot <uuid|prefix>…   # register; --title (single id), --tag, -
 }
 ```
 
-Resolved by walking cwd → ancestors until the git root (or filesystem root). Optional `"project"` / `"projectId"` is a create-time launch default referencing the **project id** (not a checkout path). Optional `"agentDocs": true` delivers docs-process paths on launch and tracks checkpoints (`docCheckpointHours` is overdue labeling only).
+Resolved by walking cwd → ancestors until the git root (or filesystem root). Optional `"project"` / `"projectId"` is a create-time launch default referencing the **project id** (not a checkout path). Optional `"agentDocs": true` delivers docs-process paths on launch and tracks checkpoints (`docCheckpointHours` is overdue labeling only). Fleet `config.json` `"agentDocs"` sets boundaries / requireNote / retry / batchNotify.
 
 ### Memory project metadata: `<memoryRepo>/<project>/.agentfleet.json`
 
