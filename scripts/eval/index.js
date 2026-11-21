@@ -9,6 +9,7 @@ const score = require('./score');
 const gate = require('./gate');
 const report = require('./report');
 const rubric = require('./rubric');
+const improve = require('./improve');
 
 module.exports = {
   ...measure,
@@ -20,4 +21,5 @@ module.exports = {
   ...gate,
   ...report,
   ...rubric,
+  ...improve,
 };

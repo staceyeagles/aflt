@@ -10,6 +10,7 @@ Human overview: [README.md](README.md) (dashboard screenshots in `docs/images/`;
 
 ## What's new (2026-11-21)
 
+- **`aflt eval` self-improve (E3)** — `examples/loops/self-improve.json`: measure → score + baseline → plan-next (one small fix) → build → `aflt eval gate --improve` (suite green + score ≥ baseline + RUBRIC GUARD); stop via `aflt eval plateau` (plateau or max rounds, default 3). Autonomous profile: `plannedPhaseGate: "none"`, `allow.*` false (opt in commit/merge via allow + onPass). Helpers: `scripts/eval/improve.js`.
 - **`aflt eval measure` (E1)** — hermetic self-measurement (`scripts/eval/`): suite summary + flake rerun, best-effort coverage, sandboxed CLI smoke, dashboard `/api` contracts; writes `eval/results/<timestamp>.json` (`--json` / `--out DIR`). Never touches real `~/.agentfleet`, live engines, or Herdr.
 - **`aflt eval score` / `report` / `gate` (E2)** — deterministic 0–100 score from measure JSON + human-owned `eval/RUBRIC.md`; appends `eval/history.jsonl`; `report` shows latest + trend; `gate` (RUBRIC GUARD) fails if rubric/scoring impl paths change. Qualitative opt-in only; skipped in tests; never calls live engines by default.
 - **`aflt loop` (M4)** — multi-phase projects: `type: "plan-next"` planner writes next phases (or `done: true`) to `$AGENTFLEET_HOME/loops/<name>/plan-next.json`; `budget.maxPhases`; loop `goal` / `acceptance` + optional `acceptanceEval`; `plannedPhaseGate` (default `approve` for planned phases). Example: `examples/loops/plan-next.json`.
@@ -368,9 +369,9 @@ aflt log <title|id> [--path]
 
 Timeout on a headless run exits **124**.
 
-### Eval measure + score (milestones E1–E2)
+### Eval measure + score + improve (milestones E1–E3)
 
-Hermetic self-measurement and deterministic scoring for later improve loops. Opt-in; never mutates the real registry or calls live engines.
+Hermetic self-measurement, deterministic scoring, and an opt-in self-improve loop. Never mutates the real registry or calls live engines from measure/score/gate/plateau.
 
 ```bash
 aflt eval measure [--json] [--out DIR]
@@ -378,8 +379,10 @@ aflt eval measure [--json] [--out DIR]
 # Sandbox: throwaway AGENTFLEET_HOME. Coverage unavailable → recorded, measure still ok.
 
 aflt eval score [results-file] [--json] [--history PATH] [--qualitative] [--results-dir DIR]
+            [--write-baseline PATH] [--max-rounds N]
 # Score latest (or given) measure JSON against eval/RUBRIC.md (0–100).
 # Appends one JSON line to eval/history.jsonl (gitignore; override with --history).
+# --write-baseline records improve baseline (bare flag → eval/improve-baseline.json).
 # --qualitative is opt-in and always skipped when AGENTFLEET_TEST=1 or
 # AFLT_EVAL_SKIP_QUALITATIVE=1; default path never spawns engines.
 
@@ -387,12 +390,23 @@ aflt eval report [--json] [--history PATH] [--limit N]
 # Human-readable latest score + trend (delta) from history.jsonl.
 
 aflt eval gate [--json] [--base REF] [--paths a,b]
+           [--improve] [--baseline PATH] [--results PATH] [--results-dir DIR]
+           [--history PATH] [--score N]
 # RUBRIC GUARD: exit 1 if protected paths changed vs --base (default HEAD).
 # Protected: eval/RUBRIC.md, scripts/eval/score.js, scripts/eval/rubric.js.
-# Improvement / eval-improve loops must fail this gate. Rubric is human-only.
+# --improve also requires suite green + score >= baseline (self-improve gate).
+
+aflt eval plateau [--json] [--baseline PATH] [--history PATH] [--max-rounds N] [--rounds N]
+# stop=true when score plateaued vs previous round/baseline or rounds >= max (default 3).
+
+aflt loop validate examples/loops/self-improve.json
+aflt loop run examples/loops/self-improve.json --dry-run
+# E3 improve loop: measure → score+baseline → plan-next (one fix) → build → gate --improve.
+# Autonomous profile: plannedPhaseGate "none"; allow.commit/merge/push false (document-only
+# until a human enables them for onPass commit/merge). Reuses loop.* notify + memory notes.
 ```
 
-Implementation: `scripts/eval/` (no new npm deps). Generated `eval/results/` and `eval/history.jsonl` are gitignored. Hermetic tests: `test/eval-e1.test.js`, `test/eval-e2.test.js`.
+Implementation: `scripts/eval/` (no new npm deps). Generated `eval/results/`, `eval/history.jsonl`, and `eval/improve-baseline.json` are gitignored. Hermetic tests: `test/eval-e1.test.js`, `test/eval-e2.test.js`, `test/eval-e3.test.js`.
 
 ### Loop runner (milestones 1–4)
 
@@ -409,7 +423,7 @@ aflt loop resume <name> [--json]       # run in this process from saved state
 aflt loop approve <name> [--json]      # release gate: "approve"
 ```
 
-Definition keys: `name`, `project`, `cwd`, `engine`, `allow`, `budget` (`maxRuns` / `maxHours` / `maxPhases`), optional `goal` / `acceptance` (or `acceptanceCriteria`) / `acceptanceEval` / `plannedPhaseGate` (`approve`|`none`, default `approve` for phases appended by plan-next), `phases[]` (`id`, optional `type: "run"|"plan-next"`, `engine`, `session`, `prompt`|`promptFile`, `eval.command` string|argv, `eval.passRegex` / `eval.exitCode`, `maxFixAttempts`, `onPass`, optional `gate: "approve"`). Examples: `examples/loops/hello-eval.json`, `examples/loops/plan-next.json`. UI-saved definitions: `$AGENTFLEET_HOME/loops/definitions/<name>.json` (override with `config.json` `loop.definitionsDir` / `loop.dir` / `loopsDir`).
+Definition keys: `name`, `project`, `cwd`, `engine`, `allow`, `budget` (`maxRuns` / `maxHours` / `maxPhases`), optional `goal` / `acceptance` (or `acceptanceCriteria`) / `acceptanceEval` / `plannedPhaseGate` (`approve`|`none`, default `approve` for phases appended by plan-next), `phases[]` (`id`, optional `type: "run"|"plan-next"`, `engine`, `session`, `prompt`|`promptFile`, `eval.command` string|argv, `eval.passRegex` / `eval.exitCode`, `maxFixAttempts`, `onPass`, optional `gate: "approve"`). Examples: `examples/loops/hello-eval.json`, `examples/loops/plan-next.json`, `examples/loops/self-improve.json`. UI-saved definitions: `$AGENTFLEET_HOME/loops/definitions/<name>.json` (override with `config.json` `loop.definitionsDir` / `loop.dir` / `loopsDir`).
 
 **Plan-next (M4):** a phase with `type: "plan-next"` builds a planner prompt (goal, acceptance, recent history, status notes) and requires the engine to write JSON to `$AGENTFLEET_HOME/loops/<name>/plan-next.json`. `{ "done": true }` completes planning (loop finishes after remaining phases / optional `acceptanceEval`); `{ "phases": [ … ] }` validates and inserts phases **before** the plan-next sentinel (then continues, returning to plan-next later). Newly planned phases get `gate: "approve"` unless they set `gate` or the loop sets `plannedPhaseGate: "none"`. Cap growth with `budget.maxPhases`. When `goal` / `acceptance` are set, completion writes an acceptance-summary status note to memory.
 
