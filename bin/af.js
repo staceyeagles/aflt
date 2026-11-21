@@ -435,6 +435,10 @@ Usage:
                             Resume a paused/stopped/running loop from saved state
                             (runs in this process). Dashboard API resume only
                             re-activates for the scheduler.
+  aflt loop approve <name> [--json]
+                            Release an approval gate (phase gate: "approve";
+                            emits loop.gate.approved and re-activates for the
+                            dashboard scheduler).
   aflt service install|uninstall|status [--port N] [--host H] [--print] [--json]
                             macOS LaunchAgent for \`aflt dashboard --serve\`
                             (KeepAlive; logs under $AGENTFLEET_HOME/logs).
@@ -7320,7 +7324,7 @@ async function cmdLoop(argv) {
   const sub = args[0];
   const asJson = Boolean(flags.json);
   const usage =
-    'usage: aflt loop validate <file> | run <file> [--dry-run] | start <file> | pause <name> | status [name] | stop <name> | resume <name> [--json]';
+    'usage: aflt loop validate <file> | run <file> [--dry-run] | start <file> | pause <name> | status [name] | stop <name> | resume <name> | approve <name> [--json]';
   if (!sub || sub === 'help' || sub === '-h' || sub === '--help') {
     fail(usage);
   }
@@ -7601,6 +7605,41 @@ async function cmdLoop(argv) {
     }
     await notify.flushPendingNotifies();
     process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
+
+  if (sub === 'approve') {
+    const name = args[1];
+    if (!name) fail('usage: aflt loop approve <name> [--json]');
+    let result;
+    try {
+      result = loopLib.requestApprove(name, { force: Boolean(flags.force) });
+    } catch (err) {
+      fail(err.message, { json: asJson });
+    }
+    if (result && result.notify && typeof result.notify.then === 'function') {
+      try {
+        await result.notify;
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    if (!result.ok) fail(result.error || 'loop approve failed', { json: asJson });
+    if (asJson) {
+      emitJson({
+        ok: true,
+        name: result.state && result.state.name,
+        status: result.status,
+        phaseId: result.phaseId,
+        active: result.active,
+        gate: result.state && result.state.gate,
+      });
+    } else {
+      process.stdout.write(
+        `loop "${result.state.name}" approved (phase=${result.phaseId || '-'}, status=${result.status})\n`
+      );
+    }
+    await notify.flushPendingNotifies();
     return;
   }
 

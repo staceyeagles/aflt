@@ -10,6 +10,7 @@ Human overview: [README.md](README.md) (dashboard screenshots in `docs/images/`;
 
 ## What's new (2026-11-21)
 
+- **`aflt loop` (M3)** — Loops view in `aflt dashboard --serve` (list, phase pipeline, eval tails, History session links, start/pause/resume/stop/approve, define/edit form). Definitions save only under `$AGENTFLEET_HOME/loops/definitions` (or configured loops dir). Phase `gate: "approve"` → `loop.gate.waiting` + `POST /api/loops/:name/approve` / `aflt loop approve`.
 - **`aflt loop` (M2)** — unattended loops via dashboard scheduler (`start` / `pause` + API); `aflt service` macOS LaunchAgent for `dashboard --serve`; opt-in `loop.heartbeat` notify (default off).
 - **`aflt loop` (M1)** — multi-phase plan→develop→eval→fix runner (`validate` / `run [--dry-run]` / `status` / `stop` / `resume`). Definition JSON under `examples/loops/`; state in `$AGENTFLEET_HOME/loops/<name>/`; opt-in `loop.*` notify events; memory timeline + status notes when `memoryRepo` is set.
 
@@ -364,7 +365,7 @@ aflt log <title|id> [--path]
 
 Timeout on a headless run exits **124**.
 
-### Loop runner (milestones 1–2)
+### Loop runner (milestones 1–3)
 
 Long-running phases without a bot waking aflt: each phase runs a prompt in a Cursor/Copilot/OpenCode session, then an eval command; on failure the eval output is sent back as a fix prompt (up to `maxFixAttempts`). State is atomic under `$AGENTFLEET_HOME/loops/<name>/state.json`; a runner lock prevents two runners on one loop. Prompts are always argv data (no shell interpolation). `onPass` (`none`|`commit`|`merge`|`push`) only runs when loop-level `allow` flags permit (default all false).
 
@@ -376,15 +377,18 @@ aflt loop pause <name> [--json]
 aflt loop status [name] [--json]
 aflt loop stop <name> [--json]
 aflt loop resume <name> [--json]       # run in this process from saved state
+aflt loop approve <name> [--json]      # release gate: "approve"
 ```
 
-Definition keys: `name`, `project`, `cwd`, `engine`, `allow`, `budget` (`maxRuns` / `maxHours`), `phases[]` (`id`, `engine`, `session`, `prompt`|`promptFile`, `eval.command` string|argv, `eval.passRegex` / `eval.exitCode`, `maxFixAttempts`, `onPass`). Example: `examples/loops/hello-eval.json`.
+Definition keys: `name`, `project`, `cwd`, `engine`, `allow`, `budget` (`maxRuns` / `maxHours`), `phases[]` (`id`, `engine`, `session`, `prompt`|`promptFile`, `eval.command` string|argv, `eval.passRegex` / `eval.exitCode`, `maxFixAttempts`, `onPass`, optional `gate: "approve"`). Example: `examples/loops/hello-eval.json`. UI-saved definitions: `$AGENTFLEET_HOME/loops/definitions/<name>.json` (override with `config.json` `loop.definitionsDir` / `loop.dir` / `loopsDir`).
 
 **Unattended (M2):** `aflt loop start` sets `active: true` without running phases. `aflt dashboard --serve` hosts an in-process scheduler that picks up active loops (one runner per name; lock respected), resumes `running` loops with a dead lock on server start, and re-queues after a runner crash. Dashboard API: `GET /api/loops`, `GET /api/loops/:name`, `POST /api/loops/:name/{pause,resume,stop}` (loopback + action token, same as archive/focus). CLI `pause` / API pause yield between steps (`status=paused`); API resume re-activates for the scheduler; CLI `resume` still runs in-process.
 
+**Dashboard UI (M3):** Loops view (with History / Graph) lists loops with live status via the existing SSE refresh; phase + step pipeline; eval output tails; links into History for the phase session; start from a path under the allowed loops dirs; define/edit form (server validates with `validateDefinition`, writes only under the definitions dir — no arbitrary path writes). Approval checkpoints: phase `gate: "approve"` sets `status=waiting` and emits `loop.gate.waiting`; `POST /api/loops/:name/approve` / `aflt loop approve` releases it (`loop.gate.approved`). Also: `POST /api/loops` (save), `GET /api/loops/definitions`, `POST /api/loops/start`, `GET|POST /api/loops/:name/definition`.
+
 **Service:** `aflt service install|uninstall|status [--port N] [--host H] [--print] [--json]` — macOS LaunchAgent `~/Library/LaunchAgents/dev.aflt.dashboard.plist` runs `aflt dashboard --serve` with KeepAlive; logs under `$AGENTFLEET_HOME/logs`. `--print` shows the plist without writing. Non-macOS prints a clear unsupported message (exit 1). Never call real `launchctl` from tests (inject a fake).
 
-Opt-in notify events (same `notify` / `AFLT_NOTIFY_*` config): `loop.started`, `loop.phase.started`, `loop.phase.passed`, `loop.phase.failed`, `loop.completed`, `loop.failed`, `loop.stopped`, and opt-in `loop.heartbeat` — payload includes loop name, phase id, attempt, summary, redacted cwd. Heartbeat interval: `config.json` `loop.heartbeatSeconds` (or `notify.loopHeartbeatSeconds`) / `AFLT_LOOP_HEARTBEAT_SECONDS` (default off / 0). Memory: appends `<project>/_aflt/loop-timeline.jsonl` and writes a status note per phase result when `memoryRepo` is configured; no-op otherwise.
+Opt-in notify events (same `notify` / `AFLT_NOTIFY_*` config): `loop.started`, `loop.phase.started`, `loop.phase.passed`, `loop.phase.failed`, `loop.completed`, `loop.failed`, `loop.stopped`, `loop.gate.waiting`, `loop.gate.approved`, and opt-in `loop.heartbeat` — payload includes loop name, phase id, attempt, summary, redacted cwd. Heartbeat interval: `config.json` `loop.heartbeatSeconds` (or `notify.loopHeartbeatSeconds`) / `AFLT_LOOP_HEARTBEAT_SECONDS` (default off / 0). Memory: appends `<project>/_aflt/loop-timeline.jsonl` and writes a status note per phase result when `memoryRepo` is configured; no-op otherwise.
 
 ### Master / worker orchestration
 
@@ -751,7 +755,7 @@ Portable mappings (many-to-many projects↔repos). Template: `templates/project-
 
 Optional `"project"` is a create-time default when `--project` / `AFLT_PROJECT` / source `.agentfleet.json` are unset (useful for non-repo agent groups). Optional `"memoryRepo"` comes from `aflt memory init` (override with `AFLT_MEMORY_REPO`). Optional `"memoryActiveDays"` sets the Active/Dormant threshold for root `DASHBOARD.md` (positive integer; overridden by `--active-days`; default 14). Optional `"repositories"` maps normalized remotes → machine-local checkout paths (not portable; inspect with `aflt projects`). Optional `"agentDocs"` configures checkpoint cadence / note ack / retry / Doc Bot batching for projects that opt in via `.agentfleet.json` `{"agentDocs": true}` (`aflt doctor` reports the resolved knobs + pending queue).
 
-Optional `"notify"` (or `AFLT_NOTIFY_URL` / `AFLT_NOTIFY_KEY` / `AFLT_NOTIFY_HEADER`) enables fire-and-forget webhook POSTs on headless run completion/failure (`run.completed` / `run.failed`), interactive turn capture (`turn.captured` via `emitTurnCaptured`), and `aflt loop` lifecycle (`loop.started` / `loop.phase.started` / `loop.phase.passed` / `loop.phase.failed` / `loop.completed` / `loop.failed` / `loop.stopped` / opt-in `loop.heartbeat`). Off unless a URL is set. Default auth header is `Authorization: Bearer <key>`; a custom `header` / `AFLT_NOTIFY_HEADER` sends the raw key. Bodies include event, session id, title, project, engine, redacted cwd, exit status, timestamp, and a short redacted summary (reuses `memory.redactSensitive`; never include secrets). Short timeout; failures log to stderr and never break the run. Headless `aflt run` awaits the webhook before exit; pending `turn.captured` posts are flushed on CLI shutdown. `aflt notify test` sends a sample event; `aflt doctor` reports notify status without printing the key.
+Optional `"notify"` (or `AFLT_NOTIFY_URL` / `AFLT_NOTIFY_KEY` / `AFLT_NOTIFY_HEADER`) enables fire-and-forget webhook POSTs on headless run completion/failure (`run.completed` / `run.failed`), interactive turn capture (`turn.captured` via `emitTurnCaptured`), and `aflt loop` lifecycle (`loop.started` / `loop.phase.*` / `loop.completed` / `loop.failed` / `loop.stopped` / `loop.gate.waiting` / `loop.gate.approved` / opt-in `loop.heartbeat`). Off unless a URL is set. Default auth header is `Authorization: Bearer <key>`; a custom `header` / `AFLT_NOTIFY_HEADER` sends the raw key. Bodies include event, session id, title, project, engine, redacted cwd, exit status, timestamp, and a short redacted summary (reuses `memory.redactSensitive`; never include secrets). Short timeout; failures log to stderr and never break the run. Headless `aflt run` awaits the webhook before exit; pending `turn.captured` posts are flushed on CLI shutdown. `aflt notify test` sends a sample event; `aflt doctor` reports notify status without printing the key.
 
 ---
 
