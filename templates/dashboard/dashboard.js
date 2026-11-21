@@ -2615,6 +2615,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
             reply: m.reply || '',
             sessionId: m.sessionId || null,
             groupId: item.groupId || null,
+            usage: m.usage || null,
           });
           html +=
             '<button type="button" class="gantt-marker ' +
@@ -2738,6 +2739,10 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         if (wc) bits.push(wc + ' Working');
       } else {
         bits.push(enriched.engine || '');
+      }
+      if (enriched.usage) {
+        const uBit = formatUsageMetaBit(enriched.usage);
+        if (uBit) bits.push(uBit);
       }
       const when = agoLabel(enriched.lastActivity);
       if (when) bits.push(when);
@@ -2955,12 +2960,14 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
             : '')
         );
       }
+      const usageLine = payload.usage ? formatUsageTooltipLine(payload.usage) : '';
       return (
         '<p><strong>' +
         esc(stateLabel(payload.state)) +
         '</strong> · ' +
         esc(payload.at || '') +
         '</p>' +
+        (usageLine ? '<p class="usage-line">' + esc(usageLine) + '</p>' : '') +
         '<div class="label">Prompt</div><p>' +
         esc(payload.prompt || '(no prompt)') +
         '</p>' +
@@ -3226,6 +3233,122 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       return [ev.type, ev.at, ev.sessionId || '', ev.path || '', idx].join('|');
     }
 
+    function formatUsageMetaBit(summary) {
+      if (!summary) return '';
+      const total = summary.totalTokens != null
+        ? summary.totalTokens
+        : (summary.totalInput != null || summary.outputTokens != null)
+          ? (summary.totalInput || 0) + (summary.outputTokens || 0)
+          : null;
+      if (total == null) return '';
+      const approx = summary.accuracy === 'estimated' || summary.accuracy === 'partial' ? '~' : '';
+      function fmtTok(n) {
+        if (n == null || !isFinite(Number(n))) return '';
+        const v = Number(n);
+        if (Math.abs(v) < 1000) return String(Math.round(v));
+        if (Math.abs(v) < 1000000) {
+          const k = v / 1000;
+          const rounded = k >= 100 ? Math.round(k) : Math.round(k * 10) / 10;
+          return String(rounded).replace(/\.0$/, '') + 'k';
+        }
+        return String(Math.round((v / 1000000) * 10) / 10).replace(/\.0$/, '') + 'm';
+      }
+      let bit = approx + fmtTok(total) + ' tok';
+      if (summary.promptToResponse != null && Number(summary.promptToResponse) > 0) {
+        const ratio = Number(summary.promptToResponse);
+        bit += ' · ' + (ratio >= 10 ? String(Math.round(ratio)) : String(ratio)) + ':1';
+      }
+      return bit;
+    }
+
+    function formatUsageTooltipLine(u) {
+      if (!u) return '';
+      const inn = u.totalInput != null ? u.totalInput : u.inputTokens;
+      const out = u.outputTokens;
+      if (inn == null && out == null) return '';
+      function loc(n) {
+        if (n == null) return '?';
+        try { return Number(n).toLocaleString('en-US'); } catch (_) { return String(n); }
+      }
+      let line = loc(inn) + ' in → ' + loc(out) + ' out';
+      if (u.promptToResponse != null) {
+        const ratio = Number(u.promptToResponse);
+        line += ' (' + (ratio >= 10 ? String(Math.round(ratio)) : String(ratio)) + ':1)';
+      }
+      if (u.accuracy) line += ' · ' + u.accuracy;
+      return line;
+    }
+
+    function renderUsageSummaryBlock(summary) {
+      if (!summary || (summary.totalTokens == null && summary.totalInput == null && !summary.turnCount)) {
+        return '';
+      }
+      const bits = [];
+      if (summary.totalTokens != null) bits.push(Number(summary.totalTokens).toLocaleString('en-US') + ' tok');
+      if (summary.inputTokens != null || summary.cacheRead != null) {
+        const uncached = summary.inputTokens != null ? Number(summary.inputTokens).toLocaleString('en-US') : '?';
+        const cached = (summary.cacheRead || 0) + (summary.cacheWrite || 0);
+        bits.push(uncached + ' uncached' + (cached ? ' + ' + Number(cached).toLocaleString('en-US') + ' cached' : ''));
+      }
+      if (summary.outputTokens != null) {
+        let out = Number(summary.outputTokens).toLocaleString('en-US') + ' out';
+        if (summary.reasoningTokens) out += ' (+' + Number(summary.reasoningTokens).toLocaleString('en-US') + ' reasoning)';
+        bits.push(out);
+      }
+      if (summary.promptToResponse != null) {
+        const ratio = Number(summary.promptToResponse);
+        bits.push((ratio >= 10 ? String(Math.round(ratio)) : String(ratio)) + ':1');
+      }
+      if (summary.cost != null) bits.push('$' + Number(summary.cost).toFixed(4));
+      if (summary.premiumRequests != null) bits.push(summary.premiumRequests + ' premium');
+      return (
+        '<div class="usage-summary">' +
+        '<span class="usage-badge ' + esc(summary.accuracy || 'reported') + '">' +
+        esc(summary.accuracy || 'reported') + '</span> ' +
+        esc(bits.join(' · ')) +
+        '</div>'
+      );
+    }
+
+    function renderUsageBarChart(items) {
+      const turns = (items || []).filter(function (ev) {
+        return ev && ev.usage && (ev.usage.totalInput != null || ev.usage.outputTokens != null);
+      }).slice(0, 24);
+      if (!turns.length) return '';
+      let maxIn = 1;
+      let maxOut = 1;
+      turns.forEach(function (ev) {
+        const inn = Number(ev.usage.totalInput || ev.usage.inputTokens || 0);
+        const out = Number(ev.usage.outputTokens || 0);
+        if (inn > maxIn) maxIn = inn;
+        if (out > maxOut) maxOut = out;
+      });
+      const w = 240;
+      const h = 48;
+      const gap = 2;
+      const barW = Math.max(2, Math.floor((w - gap * turns.length) / turns.length));
+      let rects = '';
+      turns.slice().reverse().forEach(function (ev, i) {
+        const inn = Number(ev.usage.totalInput || ev.usage.inputTokens || 0);
+        const out = Number(ev.usage.outputTokens || 0);
+        const inH = Math.max(1, Math.round((inn / maxIn) * (h / 2 - 2)));
+        const outH = Math.max(1, Math.round((out / maxOut) * (h / 2 - 2)));
+        const x = i * (barW + gap);
+        const est = ev.usage.accuracy === 'estimated' || ev.usage.accuracy === 'partial';
+        const cls = est ? 'usage-bar estimated' : 'usage-bar';
+        rects +=
+          '<rect class="' + cls + ' in" x="' + x + '" y="' + (h / 2 - inH) +
+          '" width="' + barW + '" height="' + inH + '" />' +
+          '<rect class="' + cls + ' out" x="' + x + '" y="' + (h / 2 + 1) +
+          '" width="' + barW + '" height="' + outH + '" />';
+      });
+      return (
+        '<div class="usage-chart" title="Input (top) vs output (bottom) tokens per turn">' +
+        '<svg viewBox="0 0 ' + w + ' ' + h + '" width="100%" height="' + h +
+        '" role="img" aria-label="Token usage per turn">' + rects + '</svg></div>'
+      );
+    }
+
     function renderHistoryItems(items) {
       if (!items || !items.length) return '<p class="empty">No prompt history recorded.</p>';
       return items.map(function (ev, idx) {
@@ -3248,6 +3371,10 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
             : '') +
           '</div>';
         if (ev.title) html += '<div class="label">' + esc(ev.title) + '</div>';
+        if (ev.usage) {
+          const uLine = formatUsageTooltipLine(ev.usage);
+          if (uLine) html += '<p class="usage-line">' + esc(uLine) + '</p>';
+        }
         if (isMsg) {
           html += '<div class="prompt">' + esc((ev.direction === 'out' ? '→ ' : '← ') +
             (ev.from || '') + ' → ' + (ev.to || '')) + '</div>';
@@ -3305,7 +3432,11 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       } else if (loaded.loading && !data) {
         feedHtml += '<p class="empty">Loading history…</p>';
       }
-      if (data && !loaded.offline) feedHtml += renderHistoryItems(data.history);
+      if (data && !loaded.offline) {
+        if (data.usageSummary) feedHtml += renderUsageSummaryBlock(data.usageSummary);
+        if (data.history) feedHtml += renderUsageBarChart(data.history);
+        feedHtml += renderHistoryItems(data.history);
+      }
       if (historyFeed && historyFeed.innerHTML !== feedHtml) historyFeed.innerHTML = feedHtml;
     }
 

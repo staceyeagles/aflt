@@ -3635,6 +3635,36 @@ async function createEngineChatId(engineName, { cwd, title, quiet = false } = {}
  * Streams stdout into the run log as data arrives.
  * @returns {{ code, timedOut, outPath, result, stopped }}
  */
+/**
+ * Resolve engine vs user-facing output format for headless runs.
+ * Cursor: when the user did not explicitly pass --output-format, request
+ * `json` from cursor-agent so result.usage is available, then present the
+ * extracted result text as user-facing stdout (unless they asked for json).
+ */
+function resolveHeadlessOutputFormats(engineName, outputFormat, opts = {}) {
+  const userFormat = outputFormat || 'text';
+  const explicit = Boolean(opts.outputFormatExplicit);
+  let engineFormat = userFormat;
+  let presentAsText = false;
+  if (engineName === 'cursor' && !explicit && (userFormat === 'text' || !userFormat)) {
+    engineFormat = 'json';
+    presentAsText = true;
+  } else if (engineName === 'opencode' && !explicit && (userFormat === 'text' || !userFormat)) {
+    // Prefer json stream so step_finish tokens are available; present text.
+    engineFormat = 'json';
+    presentAsText = true;
+  } else if (engineName === 'copilot' && !explicit && (userFormat === 'text' || !userFormat)) {
+    // Copilot tokens live in events.jsonl; keep text for user-facing stdout.
+    engineFormat = 'text';
+    presentAsText = false;
+  }
+  if (userFormat === 'json' || userFormat === 'stream-json') {
+    presentAsText = false;
+    engineFormat = userFormat;
+  }
+  return { userFormat, engineFormat, presentAsText, explicit };
+}
+
 async function executeHeadlessRun(session, opts = {}) {
   const {
     prompt,
@@ -3656,6 +3686,11 @@ async function executeHeadlessRun(session, opts = {}) {
   if (mode && engineName === 'opencode') {
     fail('--mode ask|plan is a Cursor flag; OpenCode has no equivalent here');
   }
+
+  const formats = resolveHeadlessOutputFormats(engineName, outputFormat, {
+    outputFormatExplicit: Boolean(opts.outputFormatExplicit),
+  });
+  const engineOutputFormat = formats.engineFormat;
 
   const prepared = agentDocs.prepareLaunch(session, {
     prompt,
@@ -3679,7 +3714,7 @@ async function executeHeadlessRun(session, opts = {}) {
       prompt: effectivePrompt,
       mode,
       force,
-      outputFormat,
+      outputFormat: engineOutputFormat,
       trust,
     });
   } else if (engineName === 'copilot') {
@@ -3687,7 +3722,7 @@ async function executeHeadlessRun(session, opts = {}) {
     argvRun = copilot.buildPrintArgs(session, {
       prompt: effectivePrompt,
       force,
-      outputFormat,
+      outputFormat: engineOutputFormat,
       silent,
     });
   } else if (engineName === 'opencode') {
@@ -3695,7 +3730,7 @@ async function executeHeadlessRun(session, opts = {}) {
     argvRun = opencode.buildPrintArgs(session, {
       prompt: effectivePrompt,
       force,
-      outputFormat,
+      outputFormat: engineOutputFormat,
     });
   } else {
     fail(`unsupported engine: ${engineName}`);
@@ -3777,13 +3812,16 @@ async function executeHeadlessRun(session, opts = {}) {
   }
 
   let spawnIdentityError = null;
+  // When we rewrite stdout (Cursor/OpenCode internal json → text), avoid
+  // streaming raw JSON into the run log; rewrite the file after parse.
+  const deferLogBody = Boolean(formats.presentAsText);
   const result = await runlib.spawnCaptured(bin, argvRun, {
     cwd: session.cwd,
     timeoutMs: timeoutSec ? timeoutSec * 1000 : 0,
     env: childEnv,
     detached: true,
     forwardSignals: true,
-    logPath: outPath,
+    logPath: deferLogBody ? null : outPath,
     onSpawn: ({ pid, pgid }) => {
       if (!trackRun) return;
       const idWrite = registry.criticalUpdate(
@@ -3815,6 +3853,136 @@ async function executeHeadlessRun(session, opts = {}) {
     ? runlib.signalExitCode(result.interruptedBy)
     : null;
   const lastExit = result.timedOut ? 124 : exitFromSignal != null ? exitFromSignal : result.code;
+
+  // Extract usage + user-facing text from engine stdout when applicable.
+  let displayStdout = result.stdout || '';
+  let capturedUsage = null;
+  let parsedModel = session.model || null;
+  try {
+    if (engineName === 'cursor' && (engineOutputFormat === 'json' || engineOutputFormat === 'stream-json')) {
+      const parsed = cursor.parseCursorPrintOutput(result.stdout || '', {
+        format: engineOutputFormat,
+        model: session.model || null,
+      });
+      if (formats.presentAsText || formats.userFormat === 'text') {
+        displayStdout = parsed.result != null ? parsed.result : displayStdout;
+      }
+      capturedUsage = parsed.usage;
+      if (parsed.model) parsedModel = parsed.model;
+    } else if (engineName === 'opencode' && engineOutputFormat === 'json') {
+      const parsed = opencode.parseOpenCodeJsonOutput(result.stdout || '', {
+        model: session.model || null,
+      });
+      if (formats.presentAsText || formats.userFormat === 'text') {
+        displayStdout = parsed.result != null ? parsed.result : displayStdout;
+      }
+      capturedUsage = parsed.usage;
+      if (parsed.model) parsedModel = parsed.model;
+    } else if (engineName === 'copilot') {
+      // Prefer events.jsonl sync; also try stdout when json was requested.
+      if (engineOutputFormat === 'json') {
+        const parsed = copilot.parseCopilotJsonOutput(result.stdout || '', {
+          model: session.model || null,
+        });
+        if (formats.userFormat === 'text' && parsed.assistantText) {
+          displayStdout = parsed.assistantText;
+        }
+        capturedUsage = parsed.usage;
+        if (parsed.model) parsedModel = parsed.model;
+      }
+    }
+  } catch (_) {
+    /* keep raw stdout */
+  }
+
+  if (!capturedUsage && (effectivePrompt || displayStdout)) {
+    try {
+      const usageLib = require('../lib/usage');
+      capturedUsage = usageLib.estimateUsageFromText({
+        prompt: effectivePrompt,
+        reply: displayStdout,
+        cli: engineName,
+        model: parsedModel,
+      });
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  // Rewrite / finalize run log with user-facing text + optional usage footer.
+  try {
+    if (deferLogBody) {
+      runlib.writeRunLog(outPath, {
+        argv: [bin, ...argvRun],
+        cwd: session.cwd,
+        stdout: displayStdout,
+        stderr: result.stderr || '',
+        code: lastExit,
+        signal: result.interruptedBy || result.signal || null,
+        timedOut: result.timedOut,
+        kind: 'headless',
+        prompt: effectivePrompt,
+        usage: capturedUsage,
+      });
+    } else if (capturedUsage) {
+      // Footer already written without usage — append a usage line for parsers.
+      try {
+        fs.appendFileSync(outPath, `# usage: ${JSON.stringify(capturedUsage)}\n`, {
+          encoding: 'utf8',
+        });
+      } catch (_) {
+        /* ignore */
+      }
+    }
+  } catch (_) {
+    /* ignore log rewrite errors */
+  }
+
+  // Record headless turn + usage-summary (deduped vs run-log markers later).
+  // skipEmit: run.completed / run.failed already cover the webhook; avoid a
+  // duplicate turn.captured that would break notify flush expectations.
+  try {
+    const turnsLib = require('../lib/turns');
+    const at = runStartedAt || nowIso();
+    turnsLib.appendTurn(
+      {
+        sessionId: session.id,
+        chatId: session.chatId || null,
+        engine: engineName,
+        source: 'headless-run',
+        at,
+        prompt: effectivePrompt,
+        reply: displayStdout,
+        promptSource: 'headless-prompt',
+        replySource: 'headless-stdout',
+        engineEventId: `headless:${session.id}:${runId || at}`,
+        usage: capturedUsage || undefined,
+      },
+      { meta: { project: session.project || null }, skipEmit: true }
+    );
+    if (engineName === 'copilot') {
+      // Enrich from events.jsonl when available (real token counts).
+      turnsLib.syncCopilotSession(session, {
+        apply: true,
+        fullScan: true,
+        source: 'copilot-events',
+        meta: { project: session.project || null },
+      });
+    } else if (engineName === 'opencode' && !capturedUsage) {
+      turnsLib.syncOpencodeSession(session, {
+        apply: true,
+        fullScan: true,
+        source: 'opencode-db',
+        meta: { project: session.project || null },
+      });
+    }
+  } catch (_) {
+    /* ignore turn capture errors */
+  }
+
+  // Present extracted text to callers (preserve aflt --json / log semantics).
+  result.stdout = displayStdout;
+  result.usage = capturedUsage;
 
   const patch = {
     lastRunAt: nowIso(),
@@ -3909,6 +4077,7 @@ async function executeHeadlessRun(session, opts = {}) {
     runId,
     runStartedAt,
     resultMtimeAtStart,
+    usage: capturedUsage,
   };
 }
 
@@ -3953,6 +4122,7 @@ async function cmdRun(argv) {
   if (mode && mode !== 'ask' && mode !== 'plan') {
     fail(`unknown --mode: ${mode} (want ask or plan)`);
   }
+  const outputFormatExplicit = Boolean(flags['output-format']);
   const outputFormat = flags['output-format'] ? String(flags['output-format']) : 'text';
   const force = Boolean(flags.force);
   const dryRun = Boolean(flags['dry-run']);
@@ -4035,22 +4205,29 @@ async function cmdRun(argv) {
     mode,
     force,
     outputFormat,
+    outputFormatExplicit,
     trust,
     timeoutSec,
     silent: !flags['no-silent'],
   };
 
   if (dryRun) {
+    const previewOpts = {
+      ...runOpts,
+      outputFormat: resolveHeadlessOutputFormats(engineName, outputFormat, {
+        outputFormatExplicit,
+      }).engineFormat,
+    };
     if (asJson) {
       emitJson({
         ok: true,
         dryRun: true,
         session: { id: session.id, title: session.title, engine: session.engine || 'cursor' },
-        command: headlessCommandPreview(session, runOpts),
+        command: headlessCommandPreview(session, previewOpts),
       });
       return;
     }
-    const shell = headlessCommandPreview(session, runOpts);
+    const shell = headlessCommandPreview(session, previewOpts);
     process.stdout.write(`cd ${JSON.stringify(session.cwd)} && ${shell}\n`);
     return;
   }

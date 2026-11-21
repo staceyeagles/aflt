@@ -1510,6 +1510,51 @@ body {
 #document-content hr { margin: 1.5rem 0; border: 0; border-top: 1px solid var(--cp-border); }
 #document-content .markdown-image { color: var(--cp-text-muted); }
 
+/* Token usage (History tree / panel / Gantt tooltip) */
+.usage-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.6rem;
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.8rem;
+  color: var(--cp-text-muted);
+  background: var(--cp-surface-soft);
+  border: 1px solid var(--cp-border);
+  border-radius: 0.4rem;
+}
+.usage-badge {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  border-radius: 0.25rem;
+  border: 1px solid var(--cp-border);
+  background: var(--cp-surface);
+}
+.usage-badge.reported { color: var(--state-completed, #2563eb); border-color: currentColor; }
+.usage-badge.estimated { color: var(--cp-text-muted); border-style: dashed; }
+.usage-badge.partial { color: var(--state-waiting, #d97706); border-color: currentColor; }
+.usage-line {
+  margin: 0.15rem 0 0.35rem;
+  font-size: 0.75rem;
+  color: var(--cp-text-muted);
+}
+.usage-chart {
+  margin: 0 0 0.75rem;
+  padding: 0.35rem 0.5rem;
+  background: var(--cp-surface-soft);
+  border: 1px solid var(--cp-border);
+  border-radius: 0.4rem;
+}
+.usage-chart svg { display: block; }
+.usage-bar.in { fill: var(--state-completed, #2563eb); opacity: 0.85; }
+.usage-bar.out { fill: var(--state-working, #16a34a); opacity: 0.75; }
+.usage-bar.estimated { opacity: 0.45; stroke: var(--cp-border-strong); stroke-width: 0.5; stroke-dasharray: 2 1; }
+
 @media (prefers-reduced-motion: reduce) {
   .pulse, .working-indicator { animation: none; }
   .traveler { display: none; }
