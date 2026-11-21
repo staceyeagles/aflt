@@ -42,7 +42,7 @@ _af() {
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  cmds="version new add import ls list timeline projects dashboard memory sync run log spawn master docs children result wait tail send stop resume pick adopt cursor copilot opencode engine rename cwd set-cwd done rm remove purge orphans note export import-file which-backend setup herdr-templates herdr-app doctor msg inbox thread mcp help turns archive unarchive loop notify"
+  cmds="version new add import ls list timeline projects dashboard memory sync run log spawn master docs children result wait tail send stop resume pick adopt cursor copilot opencode engine rename cwd set-cwd done rm remove purge orphans note export import-file which-backend setup herdr-templates herdr-app doctor msg inbox thread mcp help turns archive unarchive loop notify service"
 
   if [[ ${COMP_CWORD} -eq 1 ]]; then
     COMPREPLY=( $(compgen -W "${cmds}" -- "${cur}") )
@@ -260,15 +260,22 @@ _af() {
       ;;
     loop)
       if [[ ${COMP_CWORD} -eq 2 ]]; then
-        COMPREPLY=( $(compgen -W "validate run status stop resume" -- "${cur}") )
-      elif [[ "${COMP_WORDS[2]}" == "validate" ]]; then
+        COMPREPLY=( $(compgen -W "validate run start pause status stop resume" -- "${cur}") )
+      elif [[ "${COMP_WORDS[2]}" == "validate" || "${COMP_WORDS[2]}" == "start" ]]; then
         COMPREPLY=( $(compgen -W "--json" -- "${cur}") )
       elif [[ "${COMP_WORDS[2]}" == "run" ]]; then
         COMPREPLY=( $(compgen -W "--dry-run --json" -- "${cur}") )
-      elif [[ "${COMP_WORDS[2]}" == "status" || "${COMP_WORDS[2]}" == "stop" || "${COMP_WORDS[2]}" == "resume" ]]; then
+      elif [[ "${COMP_WORDS[2]}" == "status" || "${COMP_WORDS[2]}" == "stop" || "${COMP_WORDS[2]}" == "resume" || "${COMP_WORDS[2]}" == "pause" ]]; then
         COMPREPLY=( $(compgen -W "--json --force" -- "${cur}") )
       else
-        COMPREPLY=( $(compgen -W "validate run status stop resume --json --dry-run" -- "${cur}") )
+        COMPREPLY=( $(compgen -W "validate run start pause status stop resume --json --dry-run" -- "${cur}") )
+      fi
+      ;;
+    service)
+      if [[ ${COMP_CWORD} -eq 2 ]]; then
+        COMPREPLY=( $(compgen -W "install uninstall status" -- "${cur}") )
+      else
+        COMPREPLY=( $(compgen -W "--port --host --print --json install uninstall status" -- "${cur}") )
       fi
       ;;
     notify)
