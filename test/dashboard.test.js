@@ -2665,6 +2665,8 @@ describe('aflt dashboard', () => {
     assert.match(histNode.markers[0].reply || '', /All green/);
     assert.deepEqual(histNode.segments, []);
     assert.ok(Array.isArray(histNode.messageMarkers));
+    // Project rows never carry aggregated child markers (server payload).
+    assert.ok(!byName.alpha.markers || byName.alpha.markers.length === 0);
 
     const handle = dash.createDashboardServer({
       memoryRepo: mem,
@@ -2697,6 +2699,87 @@ describe('aflt dashboard', () => {
     } finally {
       await handle.close();
     }
+
+    // History UI: project rows never show rolled-up Gantt markers (even when collapsed);
+    // session rows keep their own markers once expanded.
+    const elements = new Map();
+    function makeElement(_ns, tagName) {
+      return {
+        html: '', handlers: {}, attributes: {}, style: {}, hidden: false, children: [], tagName,
+        get innerHTML() { return this.html; },
+        set innerHTML(v) { this.html = v; },
+        textContent: '',
+        setAttribute(name, value) { this.attributes[name] = String(value); },
+        getAttribute(name) { return this.attributes[name]; },
+        appendChild(child) { this.children.push(child); child.parent = this; return child; },
+        removeChild(child) {
+          this.children.splice(this.children.indexOf(child), 1);
+          child.parent = null;
+          return child;
+        },
+        addEventListener(type, listener) { this.handlers[type] = listener; },
+        getBoundingClientRect() { return { width: 800, height: 600, left: 0, top: 0 }; },
+        querySelector() { return null; },
+        querySelectorAll() { return []; },
+      };
+    }
+    function element(id) {
+      if (!elements.has(id)) elements.set(id, makeElement());
+      return elements.get(id);
+    }
+    const renderState = JSON.parse(JSON.stringify(state));
+    element('aflt-dashboard-data').textContent = JSON.stringify(renderState);
+    element('graph').parent = element('graph-view');
+    element('graph-view').parent = element('stage');
+    element('hide-dormant').checked = false;
+    const browser = vm.createContext({
+      document: { getElementById: element, createElementNS: makeElement, createTextNode: (t) => ({ nodeType: 3, nodeValue: t }) },
+      window: { addEventListener() {} },
+      location: { hostname: '127.0.0.1' },
+      localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
+      URL,
+      matchMedia: () => ({ matches: true }),
+      setInterval() {}, setTimeout() {}, clearTimeout() {},
+      requestAnimationFrame() { return 1; },
+      cancelAnimationFrame() {},
+      fetch() { assert.fail('no fetch'); },
+      EventSource() { assert.fail('no SSE'); },
+    });
+    const scripts = [...dash.renderHtmlDocument(renderState).matchAll(/<script>([\s\S]*?)<\/script>/g)];
+    scripts.slice(1).forEach((script) => vm.runInContext(script[1], browser));
+
+    function projectRowChunk(html) {
+      return html.match(/history-row project[\s\S]*?(?=history-row session|history-row project|history-row group|$)/);
+    }
+    // Collapsed: project row is present and must not roll up child markers.
+    let treeHtml = element('history-tree').innerHTML;
+    assert.match(treeHtml, /history-row project/);
+    assert.doesNotMatch(treeHtml, /history-row session/);
+    const collapsedProject = projectRowChunk(treeHtml);
+    assert.ok(collapsedProject && collapsedProject[0]);
+    assert.doesNotMatch(collapsedProject[0], /gantt-marker/);
+
+    // Expand alpha so session markers render; project row still has none.
+    element('history-tree').handlers.click({
+      target: {
+        closest: (sel) => {
+          if (sel === 'button[data-twist]') {
+            return { disabled: false, getAttribute: () => 'project:alpha' };
+          }
+          return null;
+        },
+      },
+      stopPropagation() {},
+    });
+    treeHtml = element('history-tree').innerHTML;
+    assert.match(treeHtml, /history-row session/);
+    assert.match(treeHtml, /gantt-marker/);
+    const expandedProject = projectRowChunk(treeHtml);
+    assert.ok(expandedProject && expandedProject[0]);
+    assert.doesNotMatch(expandedProject[0], /gantt-marker/);
+    const sessionChunk = treeHtml.match(/history-row session[\s\S]*?(?=history-row session|history-row project|history-row group|$)/);
+    assert.ok(sessionChunk && sessionChunk[0]);
+    assert.match(sessionChunk[0], /gantt-marker/);
   });
 
   it('graph force/spread helpers tighten layout and fit/zoom/pan the view', () => {
@@ -2803,6 +2886,70 @@ describe('aflt dashboard', () => {
     assert.equal(mild.length, 2);
     assert.ok(mild.every((item) => item.kind === 'marker'));
     assert.ok(mild.some((item) => item.lane === 1) || mild[0].leftPct !== mild[1].leftPct);
+  });
+
+  it('resolveTimelineWindow anchors duration presets at now (not a stale/short data range)', () => {
+    clearDashboardModules();
+    const ui = require('../templates/dashboard/dashboard.js');
+    // Reproduce the 2026-11-20 dashboard bug: now is late evening, data max is mid-afternoon,
+    // and a short data span must not become the visible 24h window.
+    const now = Date.parse('2026-11-21T04:19:00.000Z'); // 23:19 ET
+    const hour = 60 * 60 * 1000;
+    const staleEnd = Date.parse('2026-11-20T20:26:00.000Z'); // 15:26 ET
+    const staleStart = Date.parse('2026-11-20T10:41:00.000Z'); // 05:41 ET
+    const shortData = { start: staleStart, end: staleEnd };
+
+    const day = ui.resolveTimelineWindow(shortData, '24h', null, now);
+    assert.equal(day.end, now, '24h right edge is now, not data max');
+    assert.equal(day.start, now - 24 * hour, '24h keeps a full-day span');
+    assert.ok(day.start < staleStart, 'window may extend before earliest marker');
+
+    const week = ui.resolveTimelineWindow(shortData, '7d', null, now);
+    assert.equal(week.end, now);
+    assert.equal(week.start, now - 7 * 24 * hour);
+
+    const month = ui.resolveTimelineWindow(shortData, '30d', null, now);
+    assert.equal(month.end, now);
+    assert.equal(month.start, now - 30 * 24 * hour);
+
+    const all = ui.resolveTimelineWindow(shortData, 'all', null, now);
+    assert.equal(all.start, shortData.start, 'all keeps data min');
+    assert.equal(all.end, now, 'all extends right edge to now');
+
+    // Newest marker after "now" (clock skew / future-dated) → right edge follows data.
+    const ahead = { start: now - 40 * 24 * hour, end: now + 2 * hour };
+    const dayAhead = ui.resolveTimelineWindow(ahead, '24h', null, now);
+    assert.equal(dayAhead.end, ahead.end);
+    assert.equal(dayAhead.start, ahead.end - 24 * hour);
+
+    // Manual pan/zoom override sticks (live refresh must not re-anchor while panned).
+    const panned = {
+      start: staleStart,
+      end: staleEnd,
+    };
+    const stuck = ui.resolveTimelineWindow(shortData, '24h', panned, now);
+    assert.equal(stuck.start, panned.start);
+    assert.equal(stuck.end, panned.end);
+
+    // Clearing override (preset click) re-anchors to now.
+    const reset = ui.resolveTimelineWindow(shortData, '24h', null, now);
+    assert.equal(reset.end, now);
+    assert.equal(reset.start, now - 24 * hour);
+
+    // Markers that were off the right edge of the stale window sit inside the reset window.
+    const newest = Date.parse('2026-11-20T22:35:00.000Z'); // 17:35 ET
+    assert.ok(newest > stuck.end, 'stale window hid the newest marker');
+    assert.ok(newest >= reset.start && newest <= reset.end, 'reset window includes newest marker');
+  });
+
+  it('formatTimelineAxisLabel uses local time (not UTC)', () => {
+    clearDashboardModules();
+    const ui = require('../templates/dashboard/dashboard.js');
+    const local = new Date(2026, 10, 20, 17, 35, 0, 0); // Nov 20 2026 17:35 local
+    const short = ui.formatTimelineAxisLabel(local.getTime(), 12 * 60 * 60 * 1000);
+    assert.equal(short, '17:35');
+    const long = ui.formatTimelineAxisLabel(local.getTime(), 10 * 24 * 60 * 60 * 1000);
+    assert.equal(long, '11/20');
   });
 });
 

@@ -1,0 +1,7 @@
+{"type":"user.message","id":"u-steer-1","timestamp":"2026-11-19T22:50:00.000Z","data":{"content":"Ship the feature with tests"}}
+{"type":"assistant.turn_start","id":"ts-steer-0","timestamp":"2026-11-19T22:50:01.000Z","data":{"turnId":"0"}}
+{"type":"assistant.message","id":"a-steer-partial","timestamp":"2026-11-19T22:50:02.000Z","data":{"messageId":"m-steer-partial","content":"Working on it…","toolRequests":[{"name":"bash","arguments":"{}"}]}}
+{"type":"user.message","id":"u-steer-2","timestamp":"2026-11-19T22:50:05.000Z","data":{"content":"Also cover the logout edge case"}}
+{"type":"assistant.message","id":"a-steer-1","timestamp":"2026-11-19T22:50:08.000Z","data":{"messageId":"m-steer-1","content":"Shipped with logout coverage.","toolRequests":[]}}
+{"type":"assistant.turn_end","id":"te-steer-0","timestamp":"2026-11-19T22:50:09.000Z","data":{"turnId":"0"}}
+{"type":"session.task_complete","id":"tc-steer-1","timestamp":"2026-11-19T22:50:10.000Z","data":{"success":true,"summary":"Feature + logout edge case done"}}

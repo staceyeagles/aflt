@@ -257,6 +257,78 @@ describe('interactive turn capture', () => {
     assert.equal(turns.readTurns(session.id).length, 1);
   });
 
+  it('pairs orphan task_complete with the preceding user.message prompt', () => {
+    const turns = loadTurns(home);
+    const chatId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0005';
+    writeCopilotFixture(chatId, 'task-complete-orphan.jsonl');
+    const session = { id: 'orphan-tc-1', title: 'Orphan TC', engine: 'copilot', chatId };
+
+    const out = turns.syncCopilotSession(session, { env: process.env, apply: true, fullScan: true });
+    assert.equal(out.written, 1);
+    const rows = turns.readTurns(session.id);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].prompt, 'Please finish the auth refactor');
+    assert.equal(rows[0].promptSource, 'events-user-message');
+    assert.equal(rows[0].reply, 'Auth refactor complete');
+    assert.equal(rows[0].engineEventId, 'tc-orphan-1');
+    assert.equal(rows[0].replySource, 'task-complete-summary');
+  });
+
+  it('joins mid-turn steering user.message into the same turn prompt', () => {
+    const turns = loadTurns(home);
+    const chatId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0006';
+    writeCopilotFixture(chatId, 'mid-turn-steer.jsonl');
+    const session = { id: 'steer-1', title: 'Steer', engine: 'copilot', chatId };
+
+    const out = turns.syncCopilotSession(session, { env: process.env, apply: true, fullScan: true });
+    assert.equal(out.written, 1);
+    const rows = turns.readTurns(session.id);
+    assert.equal(rows.length, 1);
+    assert.match(rows[0].prompt, /Ship the feature with tests/);
+    assert.match(rows[0].prompt, /Also cover the logout edge case/);
+    assert.equal(rows[0].reply, 'Shipped with logout coverage.');
+    assert.equal(rows[0].engineEventId, 'a-steer-1');
+  });
+
+  it('backfill updates existing turns.jsonl rows that lack a prompt (no duplicates)', () => {
+    const turns = loadTurns(home);
+    const chatId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0007';
+    writeCopilotFixture(chatId, 'task-complete-orphan.jsonl');
+    const session = { id: 'patch-prompt-1', title: 'Patch', engine: 'copilot', chatId };
+
+    // Simulate a legacy row: task_complete reply with no prompt.
+    turns.appendTurn({
+      sessionId: session.id,
+      chatId,
+      engine: 'copilot',
+      engineEventId: 'tc-orphan-1',
+      at: '2026-11-19T22:40:10.000Z',
+      prompt: null,
+      reply: 'Auth refactor complete',
+      promptSource: 'unknown',
+      replySource: 'task-complete-summary',
+      source: 'copilot-events-backfill',
+    });
+    assert.equal(turns.readTurns(session.id).length, 1);
+    assert.equal(turns.readTurns(session.id)[0].prompt, null);
+
+    const out = turns.syncCopilotSession(session, { env: process.env, apply: true, fullScan: true });
+    assert.equal(out.written, 0);
+    assert.equal(out.updated, 1);
+    const rows = turns.readTurns(session.id);
+    assert.equal(rows.length, 1, 'no duplicate rows');
+    assert.equal(rows[0].prompt, 'Please finish the auth refactor');
+    assert.equal(rows[0].promptSource, 'events-user-message');
+    assert.equal(rows[0].reply, 'Auth refactor complete');
+    assert.equal(rows[0].engineEventId, 'tc-orphan-1');
+
+    const again = turns.syncCopilotSession(session, { env: process.env, apply: true, fullScan: true });
+    assert.equal(again.written, 0);
+    assert.equal(again.updated, 0);
+    assert.equal(again.skipped, 1);
+    assert.equal(turns.readTurns(session.id).length, 1);
+  });
+
   it('emitTurnCaptured queues for batch (no immediate DM); invokes configured handler', () => {
     const turns = loadTurns(home);
     const agentDocs = require('../lib/agent-docs');
