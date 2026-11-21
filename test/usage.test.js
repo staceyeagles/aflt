@@ -199,6 +199,46 @@ describe('usage normalization', () => {
     assert.equal(u.inputTokens, null);
   });
 
+  it('project rollup stays reported when compacting all-reported sessions', () => {
+    const reported = usage.normalizeCursorUsage({
+      inputTokens: 6208,
+      outputTokens: 41,
+      cacheReadTokens: 3968,
+      cacheWriteTokens: 0,
+      reasoningTokens: 40,
+    });
+    const session = usage.summarizeSessionUsage([{ usage: reported }]);
+    assert.equal(session.accuracy, 'reported');
+    assert.equal(session.turnCount, 1);
+    const compact = usage.compactUsageSummary(session);
+    assert.equal(compact.accuracy, 'reported');
+    assert.equal(compact.reportedTurns, 1);
+    // Dashboard project nodes merge already-compacted session.usage values.
+    const project = usage.compactUsageSummary(usage.mergeUsageSummaries([compact]));
+    assert.equal(project.accuracy, 'reported');
+    assert.equal(project.turnCount, 1);
+    assert.equal(project.totalTokens, session.totalTokens);
+    // Legacy compact payloads without reportedTurns still roll up correctly.
+    const legacy = { ...compact };
+    delete legacy.reportedTurns;
+    delete legacy.estimatedTurns;
+    delete legacy.partialTurns;
+    const fromLegacy = usage.mergeUsageSummaries([legacy]);
+    assert.equal(fromLegacy.accuracy, 'reported');
+    assert.equal(fromLegacy.reportedTurns, 1);
+    const estimated = usage.estimateUsageFromText({
+      prompt: 'hello',
+      reply: 'world',
+      cli: 'cursor',
+    });
+    const mixed = usage.mergeUsageSummaries([
+      compact,
+      usage.compactUsageSummary(usage.summarizeSessionUsage([{ usage: estimated }])),
+    ]);
+    assert.equal(mixed.accuracy, 'partial');
+    assert.equal(mixed.turnCount, 2);
+  });
+
   it('deltaCopilotModelMetrics subtracts checkpoints', () => {
     const before = {
       'claude-haiku-4.5': {
