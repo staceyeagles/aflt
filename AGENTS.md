@@ -8,6 +8,8 @@ Prefer **`aflt help`** (or `aflt` with no args) for the full usage text. **`aflt
 
 Human overview: [README.md](README.md) (dashboard screenshots in `docs/images/`; regenerate with `npm run screenshots` against a running `aflt dashboard --serve`). Release notes: [CHANGELOG.md](CHANGELOG.md).
 
+**Tutorial for humans (and agents helping them):** [docs/tutorial/README.md](docs/tutorial/README.md) — beginner → advanced; create a throwaway `aflt space create tutorial` first so you never touch the real default home.
+
 ## What's new (2026-11-21)
 
 - **`aflt eval measure` coverage (Node 24)** — `node --test --experimental-test-coverage` + path-based `scripts/eval/ndjson-reporter.js`; nested spawns clear `NODE_TEST_CONTEXT` so coverage is not skipped. Best-effort if unsupported.
