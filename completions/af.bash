@@ -42,7 +42,7 @@ _af() {
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  cmds="version new add import ls list timeline projects dashboard memory sync run log spawn master docs children result wait tail send stop resume pick adopt cursor copilot opencode engine rename cwd set-cwd done rm remove purge orphans note export import-file which-backend setup herdr-templates herdr-app doctor msg inbox thread mcp help turns archive unarchive loop notify service eval"
+  cmds="version new add import ls list timeline projects dashboard memory sync run log spawn master docs children result wait tail send stop resume pick adopt cursor copilot opencode engine rename cwd set-cwd done rm remove purge orphans note export import-file which-backend setup herdr-templates herdr-app doctor msg inbox thread mcp help turns archive unarchive loop notify service space eval"
 
   if [[ ${COMP_CWORD} -eq 1 ]]; then
     COMPREPLY=( $(compgen -W "${cmds}" -- "${cur}") )
@@ -225,7 +225,7 @@ _af() {
       fi
       ;;
     ls|list)
-      COMPREPLY=( $(compgen -W "--status --tag --project --all --json" -- "${cur}") )
+      COMPREPLY=( $(compgen -W "--status --tag --project --all --json --archived --space" -- "${cur}") )
       ;;
     timeline)
       COMPREPLY=( $(compgen -W "--all --json --since --project" -- "${cur}") )
@@ -234,7 +234,7 @@ _af() {
       COMPREPLY=( $(compgen -W "--json --project" -- "${cur}") )
       ;;
     dashboard)
-      COMPREPLY=( $(compgen -W "--serve --port --host --snapshot --json" -- "${cur}") )
+      COMPREPLY=( $(compgen -W "--serve --port --host --snapshot --json --capture-completions --space" -- "${cur}") )
       ;;
     memory)
       if [[ ${COMP_CWORD} -eq 2 ]]; then
@@ -275,7 +275,16 @@ _af() {
       if [[ ${COMP_CWORD} -eq 2 ]]; then
         COMPREPLY=( $(compgen -W "install uninstall status" -- "${cur}") )
       else
-        COMPREPLY=( $(compgen -W "--port --host --print --json install uninstall status" -- "${cur}") )
+        COMPREPLY=( $(compgen -W "--port --host --print --json --space install uninstall status" -- "${cur}") )
+      fi
+      ;;
+    space)
+      if [[ ${COMP_CWORD} -eq 2 ]]; then
+        COMPREPLY=( $(compgen -W "list create current remove" -- "${cur}") )
+      elif [[ "${COMP_WORDS[2]}" == "create" || "${COMP_WORDS[2]}" == "remove" ]]; then
+        COMPREPLY=( $(compgen -W "--json --force --space" -- "${cur}") )
+      else
+        COMPREPLY=( $(compgen -W "list create current remove --json --force --space" -- "${cur}") )
       fi
       ;;
     notify)

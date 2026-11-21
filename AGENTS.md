@@ -10,6 +10,7 @@ Human overview: [README.md](README.md) (dashboard screenshots in `docs/images/`;
 
 ## What's new (2026-11-21)
 
+- **Named spaces** — `--space NAME` / `AFLT_SPACE` isolate a fleet under `$HOME/.agentfleet/spaces/<name>` when `AGENTFLEET_HOME` is unset (`aflt space list|create|current|remove`). Explicit `AGENTFLEET_HOME` still wins. New spaces get a unique dashboard port, notify off, isolated memory, and LaunchAgent `dev.aflt.dashboard.<space>` (default label unchanged).
 - **`aflt eval` self-improve (E3)** — `examples/loops/self-improve.json`: measure → score + baseline → plan-next (one small fix) → build → `aflt eval gate --improve` (suite green + score ≥ baseline + RUBRIC GUARD); stop via `aflt eval plateau` (plateau or max rounds, default 3). Autonomous profile: `plannedPhaseGate: "none"`, `allow.*` false (opt in commit/merge via allow + onPass). Helpers: `scripts/eval/improve.js`.
 - **`aflt eval measure` (E1)** — hermetic self-measurement (`scripts/eval/`): suite summary + flake rerun, best-effort coverage, sandboxed CLI smoke, dashboard `/api` contracts; writes `eval/results/<timestamp>.json` (`--json` / `--out DIR`). Never touches real `~/.agentfleet`, live engines, or Herdr.
 - **`aflt eval score` / `report` / `gate` (E2)** — deterministic 0–100 score from measure JSON + human-owned `eval/RUBRIC.md`; appends `eval/history.jsonl`; `report` shows latest + trend; `gate` (RUBRIC GUARD) fails if rubric/scoring impl paths change. Qualitative opt-in only; skipped in tests; never calls live engines by default.
@@ -431,7 +432,9 @@ Definition keys: `name`, `project`, `cwd`, `engine`, `allow`, `budget` (`maxRuns
 
 **Dashboard UI (M3):** Loops view (with History / Graph) lists loops with live status via the existing SSE refresh; phase + step pipeline; eval output tails; links into History for the phase session; start from a path under the allowed loops dirs; define/edit form (server validates with `validateDefinition`, writes only under the definitions dir — no arbitrary path writes). Approval checkpoints: phase `gate: "approve"` sets `status=waiting` and emits `loop.gate.waiting`; `POST /api/loops/:name/approve` / `aflt loop approve` releases it (`loop.gate.approved`). Also: `POST /api/loops` (save), `GET /api/loops/definitions`, `POST /api/loops/start`, `GET|POST /api/loops/:name/definition`.
 
-**Service:** `aflt service install|uninstall|status [--port N] [--host H] [--print] [--json]` — macOS LaunchAgent `~/Library/LaunchAgents/dev.aflt.dashboard.plist` runs `aflt dashboard --serve` with KeepAlive; logs under `$AGENTFLEET_HOME/logs`. `--print` shows the plist without writing. Non-macOS prints a clear unsupported message (exit 1). Never call real `launchctl` from tests (inject a fake).
+**Service:** `aflt service install|uninstall|status [--port N] [--host H] [--print] [--json]` — macOS LaunchAgent `~/Library/LaunchAgents/dev.aflt.dashboard.plist` runs `aflt dashboard --serve` with KeepAlive; logs under `$AGENTFLEET_HOME/logs`. Named space uses `dev.aflt.dashboard.<space>.plist` (never overwrites the default). Default `--port` from space `config.json` when set. `--print` shows the plist without writing. Non-macOS prints a clear unsupported message (exit 1). Never call real `launchctl` from tests (inject a fake).
+
+**Named spaces:** global `--space NAME` (any position) or `AFLT_SPACE`; flag wins. When selected and `AGENTFLEET_HOME` is unset → `$HOME/.agentfleet/spaces/NAME`. Explicit `AGENTFLEET_HOME` wins for the directory. `aflt space list|create|current|remove` (`remove` refuses non-empty without `--force`; never removes the default home). New spaces: next free dashboard port (8788+), notify off, isolated `memoryRepo`, recorded LaunchAgent label.
 
 Opt-in notify events (same `notify` / `AFLT_NOTIFY_*` config): `loop.started`, `loop.phase.started`, `loop.phase.passed`, `loop.phase.failed`, `loop.completed`, `loop.failed`, `loop.stopped`, `loop.gate.waiting`, `loop.gate.approved`, and opt-in `loop.heartbeat` — payload fields: `event`, `sessionId`, `title`, `project`, `engine`, `cwd` (redacted), `exitStatus`, `timestamp`, `summary` (redacted), `loop`, `phaseId`, `attempt`. Heartbeat interval: `config.json` `loop.heartbeatSeconds` (or `notify.loopHeartbeatSeconds`) / `AFLT_LOOP_HEARTBEAT_SECONDS` (default off / 0). To wake a Grok Bot on loop progress, point `notify.url` / `AFLT_NOTIFY_URL` at that bot’s webhook/routine ingest URL (optional `notify.key` / `AFLT_NOTIFY_KEY`); the loop never needs the bot to continue. Memory: appends `<project>/_aflt/loop-timeline.jsonl` and writes a status note per phase result when `memoryRepo` is configured; no-op otherwise.
 
@@ -823,7 +826,8 @@ Set by the caller or the environment:
 
 | Variable | Purpose |
 |----------|---------|
-| `AGENTFLEET_HOME` | Registry dir (default `~/.agentfleet`) |
+| `AGENTFLEET_HOME` | Registry dir (default `~/.agentfleet`, or `~/.agentfleet/spaces/<name>` when a space is selected and this is unset). Explicit value always wins. |
+| `AFLT_SPACE` | Named space (overridden by global `--space`). Opt-in isolation so a test space cannot alert/write into the default home. |
 | `AGENTFLEET_REGISTRY` | Override `sessions.json` path |
 | `AGENTFLEET_ENGINE` | Default engine for **new** sessions |
 | `AFLT_PROJECT` | Default project name for **new** sessions (after `--project` / parent; before `.agentfleet.json` / config.json / basename). Projects need no git. Also set on launch when `agentDocs` is enabled. |

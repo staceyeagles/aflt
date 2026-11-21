@@ -1647,24 +1647,47 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       return Math.floor(m / 60) + 'h ago';
     }
 
+    function spacePrefix() {
+      return state && state.space ? 'space ' + state.space + ' · ' : '';
+    }
+
+    function applySpaceBrand() {
+      // Tests run dashboard.js in a minimal vm document without querySelector.
+      if (typeof document.querySelector !== 'function') return;
+      const brandEl = document.querySelector('.brand');
+      if (!brandEl) return;
+      if (state && state.space) {
+        brandEl.textContent = 'aflt live · ' + state.space;
+        if (typeof document.title === 'string' || 'title' in document) {
+          document.title = 'aflt live · ' + state.space;
+        }
+      } else {
+        brandEl.textContent = 'aflt live';
+        if (!snapshotData && (typeof document.title === 'string' || 'title' in document)) {
+          document.title = 'aflt live';
+        }
+      }
+    }
+
     function tickMeta() {
       if (!state) {
         metaEl.textContent = 'local · connecting…';
         return;
       }
+      applySpaceBrand();
       if (snapshotData) {
-        metaEl.textContent = 'snapshot · ' + state.generatedAt;
+        metaEl.textContent = spacePrefix() + 'snapshot · ' + state.generatedAt;
         return;
       }
       if (state.error) {
-        metaEl.textContent = 'dashboard error · ' + state.error;
+        metaEl.textContent = spacePrefix() + 'dashboard error · ' + state.error;
         return;
       }
       if (state.completions && state.completions.errors.length) {
-        metaEl.textContent = 'completion error · ' + state.completions.errors.join('; ');
+        metaEl.textContent = spacePrefix() + 'completion error · ' + state.completions.errors.join('; ');
         return;
       }
-      metaEl.textContent = 'local · updated ' + ago(Date.now() - lastUpdatedAt) +
+      metaEl.textContent = spacePrefix() + 'local · updated ' + ago(Date.now() - lastUpdatedAt) +
         (state.completions && state.completions.captureEnabled ? ' · completion capture on' : '');
     }
     setInterval(tickMeta, 1000);
