@@ -249,6 +249,97 @@ describe('aflt eval measure (E1)', () => {
     assert.equal(result.coverage.available, true);
   });
 
+  it('measureSuite: reporter/runner error → suite.ok false (not pass=0 fail=0 green)', async () => {
+    const suite = require('../scripts/eval/suite');
+    const runNodeTest = async () => ({
+      code: 7,
+      stdout: '',
+      stderr:
+        "Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'json' imported from /tmp/",
+      events: [],
+      coverageSummary: null,
+      coverageError: null,
+    });
+    const result = await suite.measureSuite({
+      repoRoot,
+      runNodeTest,
+      skipCoverage: true,
+      skipFlakeRerun: true,
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.pass, 0);
+    assert.equal(result.fail, 0);
+    assert.equal(result.exitCode, 7);
+    assert.match(String(result.error || ''), /exited 7|ERR_MODULE_NOT_FOUND|0 tests/i);
+  });
+
+  it('measureSuite: 0 tests ran → suite.ok false', async () => {
+    const suite = require('../scripts/eval/suite');
+    const runNodeTest = async () => ({
+      code: 0,
+      stdout: '',
+      stderr: '',
+      events: [],
+      coverageSummary: null,
+      coverageError: null,
+    });
+    const result = await suite.measureSuite({
+      repoRoot,
+      runNodeTest,
+      skipCoverage: true,
+      skipFlakeRerun: true,
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.pass, 0);
+    assert.equal(result.fail, 0);
+    assert.match(String(result.error || ''), /0 tests|missing test reporter/i);
+  });
+
+  it('measureSuite: nonzero exit with no test failures → suite.ok false', async () => {
+    const suite = require('../scripts/eval/suite');
+    const runNodeTest = async () => ({
+      code: 1,
+      stdout: '',
+      stderr: 'fatal: unexpected runner crash',
+      events: [
+        {
+          type: 'test:pass',
+          data: {
+            name: 'looks fine',
+            file: '/tmp/ok.test.js',
+            details: { duration_ms: 1 },
+          },
+        },
+      ],
+      coverageSummary: null,
+      coverageError: null,
+    });
+    const result = await suite.measureSuite({
+      repoRoot,
+      runNodeTest,
+      skipCoverage: true,
+      skipFlakeRerun: true,
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.pass, 1);
+    assert.equal(result.fail, 0);
+    assert.equal(result.exitCode, 1);
+    assert.match(String(result.error || ''), /exited 1|runner crash/i);
+  });
+
+  it('runNodeTest uses programmatic child (not --test-reporter=json)', () => {
+    const suite = require('../scripts/eval/suite');
+    assert.ok(suite.RUN_NODE_TEST_CHILD);
+    assert.match(suite.RUN_NODE_TEST_CHILD, /run-node-test-child\.js$/);
+    assert.ok(fs.existsSync(suite.RUN_NODE_TEST_CHILD));
+    const childSrc = fs.readFileSync(suite.RUN_NODE_TEST_CHILD, 'utf8');
+    assert.match(childSrc, /require\(['"]node:test['"]\)/);
+    assert.match(childSrc, /\brun\s*\(/);
+    const suiteSrc = fs.readFileSync(require.resolve('../scripts/eval/suite'), 'utf8');
+    assert.doesNotMatch(suiteSrc, /--test-reporter=/);
+    assert.match(suiteSrc, /run-node-test-child/);
+  });
+
   it('dashboard API contract against in-process server', async () => {
     const api = require('../scripts/eval/dashboard-api');
     const checked = await api.runDashboardApiChecks({

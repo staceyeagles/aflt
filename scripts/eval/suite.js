@@ -2,13 +2,21 @@
 
 /**
  * Hermetic test-suite measurement for `aflt eval measure`.
- * Spawns node:test with JSON reporter; reruns failed files once for flake detection.
- * Coverage via --experimental-test-coverage when the runtime supports it.
+ * Spawns a child that runs node:test via the programmatic `run()` API and
+ * prints NDJSON events (same shape as a JSON reporter). Reruns failed files
+ * once for flake detection. Coverage via --experimental-test-coverage when
+ * the runtime supports it.
+ *
+ * Avoids the named "json" test reporter, which Node 24.7 resolves as a package
+ * name (ERR_MODULE_NOT_FOUND) and yields a false-green empty suite.
  */
 
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+
+/** Child script that streams NDJSON test events via node:test run(). */
+const RUN_NODE_TEST_CHILD = path.join(__dirname, 'run-node-test-child.js');
 
 /**
  * @param {string} repoRoot
@@ -34,11 +42,13 @@ function listTestFiles(repoRoot) {
  * @param {boolean} [opts.coverage]
  * @param {NodeJS.ProcessEnv} [opts.env]
  * @param {number} [opts.timeoutMs]
+ * @param {string} [opts.childScript] override child entry (tests)
  */
 function runNodeTest(opts) {
   const repoRoot = opts.repoRoot;
   const testFiles =
     opts.testFiles && opts.testFiles.length ? opts.testFiles : listTestFiles(repoRoot);
+  const childScript = opts.childScript || RUN_NODE_TEST_CHILD;
 
   const args = [];
   if (opts.coverage) {
@@ -47,9 +57,7 @@ function runNodeTest(opts) {
   args.push(
     '--import',
     path.join(repoRoot, 'test', '_setup.js'),
-    '--test',
-    '--test-concurrency=1',
-    '--test-reporter=json',
+    childScript,
     ...testFiles
   );
 
@@ -118,7 +126,7 @@ function runNodeTest(opts) {
 }
 
 /**
- * Parse node --test-reporter=json NDJSON (and tolerate trailing garbage).
+ * Parse node test-reporter NDJSON (and tolerate trailing garbage).
  * @param {string} text
  */
 function parseTestReporterOutput(text) {
@@ -186,6 +194,7 @@ function summarizeEvents(events) {
   let fail = 0;
   let skip = 0;
   let durationMs = 0;
+  let hasSummary = false;
   /** @type {Map<string, { file: string, durationMs: number, pass: number, fail: number, skip: number, failedNames: string[] }>} */
   const byFile = new Map();
 
@@ -248,6 +257,7 @@ function summarizeEvents(events) {
 
   for (const ev of events) {
     if (ev.type === 'test:summary' && ev.data && typeof ev.data.counts === 'object') {
+      hasSummary = true;
       const c = ev.data.counts;
       if (c.pass != null) pass = Number(c.pass) || pass;
       if (c.fail != null) fail = Number(c.fail) || fail;
@@ -259,7 +269,76 @@ function summarizeEvents(events) {
   }
 
   const files = [...byFile.values()].sort((a, b) => a.file.localeCompare(b.file));
-  return { pass, fail, skip, durationMs, files };
+  const testsRan = pass + fail + skip > 0;
+  return { pass, fail, skip, durationMs, files, hasSummary, testsRan };
+}
+
+/**
+ * Decide whether the suite measurement is green, and an error string when not.
+ * Nonzero exit / 0 tests ran / missing usable summary must not look like suite.ok.
+ * Flake recovery may leave first.code !== 0 while final fail===0 — that stays ok.
+ *
+ * @param {object} opts
+ * @param {ReturnType<typeof summarizeEvents>} opts.summary
+ * @param {number|null} opts.exitCode
+ * @param {string} [opts.stderr]
+ * @param {number} [opts.eventCount]
+ * @param {{ file: string, name: string }[]} opts.hardFails
+ * @param {{ file: string, name: string }[]} opts.flakes
+ */
+function evaluateSuiteOk(opts) {
+  const summary = opts.summary || {
+    pass: 0,
+    fail: 0,
+    skip: 0,
+    testsRan: false,
+    hasSummary: false,
+  };
+  const hardFails = opts.hardFails || [];
+  const flakes = opts.flakes || [];
+  const exitCode = opts.exitCode;
+  const stderr = opts.stderr || '';
+  const eventCount = Number(opts.eventCount) || 0;
+  const testsRan = Boolean(summary.testsRan);
+  const fail = Number(summary.fail) || 0;
+  const stderrBit = stderr ? `: ${excerpt(stderr, 240)}` : '';
+
+  // No leaf tests and no test:summary counts → missing/unusable summary.
+  if (!testsRan) {
+    if (exitCode && exitCode !== 0) {
+      return {
+        ok: false,
+        error: `test runner exited ${exitCode} with 0 tests run${stderrBit}`,
+      };
+    }
+    if (eventCount === 0) {
+      return {
+        ok: false,
+        error: `missing test reporter summary (0 events)${stderrBit}`,
+      };
+    }
+    return {
+      ok: false,
+      error: '0 tests ran (empty suite or reporter produced no pass/fail/skip)',
+    };
+  }
+
+  if (hardFails.length > 0 || fail > 0) {
+    return {
+      ok: false,
+      error: `suite failures fail=${fail} hardFails=${hardFails.length}`,
+    };
+  }
+
+  // Nonzero exit with no recorded test failures and no flake recovery → runner error
+  if (exitCode && exitCode !== 0 && flakes.length === 0) {
+    return {
+      ok: false,
+      error: `test runner exited ${exitCode}${stderrBit}`,
+    };
+  }
+
+  return { ok: true, error: null };
 }
 
 /**
@@ -282,6 +361,7 @@ async function measureSuite(opts = {}) {
       coverage: false,
       env: opts.env,
       timeoutMs: opts.timeoutMs,
+      childScript: opts.childScript,
     });
     if (opts.coverageFixture) {
       coverage = parseCoverageFixture(opts.coverageFixture);
@@ -295,6 +375,7 @@ async function measureSuite(opts = {}) {
       coverage: true,
       env: opts.env,
       timeoutMs: opts.timeoutMs,
+      childScript: opts.childScript,
     });
     if (first.coverageSummary) {
       coverage = { available: true, reason: null, totals: first.coverageSummary };
@@ -310,10 +391,18 @@ async function measureSuite(opts = {}) {
         coverage: false,
         env: opts.env,
         timeoutMs: opts.timeoutMs,
+        childScript: opts.childScript,
       });
       coverage = {
         available: false,
         reason: 'node --experimental-test-coverage unsupported on this runtime',
+        totals: null,
+        stderrExcerpt: excerpt(first.stderr, 240),
+      };
+    } else if (first.events.length === 0) {
+      coverage = {
+        available: false,
+        reason: 'suite runner produced no events (coverage not collected)',
         totals: null,
         stderrExcerpt: excerpt(first.stderr, 240),
       };
@@ -341,6 +430,7 @@ async function measureSuite(opts = {}) {
       coverage: false,
       env: opts.env,
       timeoutMs: opts.timeoutMs,
+      childScript: opts.childScript,
     });
     const secondSummary = summarizeEvents(second.events);
     const stillFail = new Set(
@@ -374,9 +464,21 @@ async function measureSuite(opts = {}) {
     }
   }
 
-  const ok = hardFails.length === 0 && summary.fail === 0;
+  // Recompute testsRan after flake bookkeeping (pass/fail may have shifted).
+  summary.testsRan = summary.pass + summary.fail + summary.skip > 0;
+
+  const verdict = evaluateSuiteOk({
+    summary,
+    exitCode: first.code,
+    stderr: first.stderr,
+    eventCount: (first.events && first.events.length) || 0,
+    hardFails,
+    flakes,
+  });
+
   return {
-    ok,
+    ok: verdict.ok,
+    error: verdict.error,
     pass: summary.pass,
     fail: summary.fail,
     skip: summary.skip,
@@ -421,7 +523,9 @@ module.exports = {
   runNodeTest,
   parseTestReporterOutput,
   summarizeEvents,
+  evaluateSuiteOk,
   measureSuite,
   parseCoverageFixture,
   normalizeCoverageSummary,
+  RUN_NODE_TEST_CHILD,
 };
