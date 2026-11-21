@@ -165,6 +165,19 @@ Usage:
                             Regenerate root DASHBOARD.md only (no per-project _aflt/ writes).
                             Same dry-run / json / redact / active-days semantics as sync.
                             Preserves <!-- doc-bot:summary --> block verbatim when present.
+  aflt memory config [--apply] [--json] [--no-redact] [--active-days N] [--commit] [--push]
+                            Refresh aflt-template-managed memory-repo root files
+                            (DOC-AGENT.md, DOCUMENTATION-PROCESS.md) against package
+                            templates. Dry-run by default (reports up-to-date /
+                            would-update / missing + short diff). --apply writes the
+                            template version (keeps DOC-AGENT.md.bak /
+                            DOCUMENTATION-PROCESS.md.bak only when the existing file
+                            had local edits). Then regenerates root DASHBOARD.md like
+                            memory dashboard (preserves doc-bot summary block). Never
+                            touches per-project README / status-notes. Never commits
+                            unless --commit (requires --apply; refuses dirty index;
+                            stages DASHBOARD.md + managed roots only). --push requires
+                            --commit.
   aflt memory doc [--engine cursor|copilot] [--dry-run] [--json] [--force]
                             Launch a portable Doc Bot session (\`doc-bot\`) in the memory
                             repo with DOC-AGENT.md as the prompt (Cursor CLI or Copilot CLI
@@ -384,7 +397,9 @@ Usage:
   aflt herdr-app status       Report linked/copied/missing for the panel + layout
   aflt doctor [--json]
                             Read-only environment checks (hc, engines, home,
-                            notify status — never prints the notify key)
+                            notify status, memory DOC-AGENT freshness — never
+                            prints the notify key; outdated DOC-AGENT hints
+                            \`aflt memory config\`)
   aflt notify test [--json]
                             Send a sample notify webhook event (requires
                             config.json notify.url or AFLT_NOTIFY_URL)
@@ -1478,7 +1493,16 @@ function cmdTurns(argv) {
  */
 async function cmdMemory(argv) {
   const { args: rawArgs, flags } = parseArgs(argv);
-  const MEMORY_SUBS = new Set(['where', 'init', 'sync', 'dashboard', 'doc', 'status']);
+  const MEMORY_SUBS = new Set([
+    'where',
+    'init',
+    'sync',
+    'dashboard',
+    'config',
+    'refresh',
+    'doc',
+    'status',
+  ]);
   const args = rawArgs.slice();
   // Take subcommand first so --json/--force before a path do not reorder it
   // (e.g. `memory init --json /path` → flags.json="/path", args=["init"]).
@@ -1748,6 +1772,152 @@ async function cmdMemory(argv) {
     return;
   }
 
+  if (sub === 'config' || sub === 'refresh') {
+    const apply = recoverBoolFlag(flags, 'apply', restArgs);
+    const noRedact = recoverBoolFlag(flags, 'no-redact', restArgs);
+    const includeAdhoc = recoverBoolFlag(flags, 'include-adhoc', restArgs);
+    const doCommit = recoverBoolFlag(flags, 'commit', restArgs);
+    const doPush = recoverBoolFlag(flags, 'push', restArgs);
+    const activeDays = parseActiveDaysFlag();
+
+    if (doPush && !doCommit) {
+      fail('--push requires --commit', { json: asJson });
+    }
+    if (doCommit && !apply) {
+      fail('--commit requires --apply', { json: asJson });
+    }
+
+    const sessions = registry.list({ includeDone: true });
+    try {
+      const result = memory.configMemory(sessions, {
+        apply,
+        redact: !noRedact,
+        includeAdhoc,
+        activeDays,
+        cwd: process.cwd(),
+      });
+
+      let commitInfo = null;
+      if (doCommit) {
+        commitInfo = memory.commitGenerated(result.repo, {
+          push: doPush,
+          mode: 'config',
+        });
+      }
+
+      const commitJson = commitInfo
+        ? {
+            committed: commitInfo.committed,
+            hash: commitInfo.hash,
+            files: commitInfo.files,
+            message: commitInfo.message,
+            reason: commitInfo.reason,
+          }
+        : undefined;
+      const pushJson =
+        commitInfo && commitInfo.push
+          ? {
+              pushed: commitInfo.push.pushed,
+              upstream: commitInfo.push.upstream,
+              reason: commitInfo.push.reason,
+            }
+          : undefined;
+
+      const pushFailed =
+        Boolean(doPush) &&
+        commitInfo &&
+        commitInfo.push &&
+        commitInfo.push.pushed === false &&
+        commitInfo.push.reason !== 'nothing to push';
+
+      if (asJson) {
+        const payload = {
+          ok: !pushFailed,
+          repo: result.repo,
+          source: result.source,
+          apply: result.apply,
+          dryRun: result.dryRun,
+          needsUpdate: result.needsUpdate,
+          files: result.files.map((f) => ({
+            path: f.path,
+            status: f.status,
+            diff: f.diff,
+            backedUp: f.backedUp,
+            bak: f.bak,
+            written: f.written,
+          })),
+          dashboard: dashboardJson(result.dashboard),
+        };
+        if (commitJson) payload.commit = commitJson;
+        if (pushJson) payload.push = pushJson;
+        emitJson(payload);
+        if (pushFailed) process.exit(1);
+        return;
+      }
+
+      for (const f of result.files) {
+        const bakNote = f.backedUp && f.bak ? ` (backup ${f.bak})` : '';
+        process.stdout.write(`[${f.status}] ${f.path}: ${f.diff}${bakNote}\n`);
+      }
+      if (result.dashboard) {
+        const d = result.dashboard;
+        if (result.dryRun) {
+          const mark = d.changed ? 'write' : 'skip';
+          process.stdout.write(
+            `[${mark}] ${d.path}` +
+              `${d.bytes != null ? ` (${d.bytes} bytes)` : ''}` +
+              ` (active ${d.active}, dormant ${d.dormant}, ${d.activeDays}d)\n`
+          );
+        } else {
+          process.stdout.write(
+            `memory dashboard: ${d.path}` +
+              `${d.changed ? ' updated' : ' unchanged'}` +
+              ` (active ${d.active}, dormant ${d.dormant}, ${d.activeDays}d) → ${result.repo}\n`
+          );
+        }
+      }
+      if (result.dryRun && result.needsUpdate) {
+        process.stdout.write('hint: re-run with --apply to write template files\n');
+      }
+      if (commitInfo) {
+        if (commitInfo.committed) {
+          process.stdout.write(
+            `memory commit: ${commitInfo.hash} (${commitInfo.files} file(s)) "${commitInfo.message}"\n`
+          );
+        } else {
+          process.stdout.write(`memory commit: no changes\n`);
+        }
+        if (commitInfo.push) {
+          if (commitInfo.push.pushed) {
+            process.stdout.write(`memory push: ok (${commitInfo.push.upstream})\n`);
+          } else if (commitInfo.push.reason === 'nothing to push') {
+            process.stdout.write(`memory push: nothing to push\n`);
+          } else if (commitInfo.push.reason === 'no upstream') {
+            process.stderr.write(
+              `memory push: failed (no upstream)` +
+                (commitInfo.committed && commitInfo.hash
+                  ? `; commit ${commitInfo.hash} kept`
+                  : '') +
+                '\n'
+            );
+          } else {
+            process.stderr.write(
+              `memory push: failed (${commitInfo.push.reason})` +
+                (commitInfo.committed && commitInfo.hash
+                  ? `; commit ${commitInfo.hash} kept`
+                  : '') +
+                '\n'
+            );
+          }
+        }
+      }
+      if (pushFailed) process.exit(1);
+    } catch (err) {
+      fail(err.message || String(err), { json: asJson });
+    }
+    return;
+  }
+
   if (sub === 'doc') {
     const dryRun = recoverBoolFlag(flags, 'dry-run', restArgs);
     const force = recoverBoolFlag(flags, 'force', restArgs);
@@ -1826,7 +1996,7 @@ async function cmdMemory(argv) {
   }
 
   fail(
-    `unknown memory subcommand: ${sub}\nusage: aflt memory [where|init|sync|dashboard|doc|status] …`,
+    `unknown memory subcommand: ${sub}\nusage: aflt memory [where|init|sync|dashboard|config|doc|status] …`,
     { json: asJson }
   );
 }
@@ -6879,6 +7049,12 @@ function cmdDoctor(argv) {
   } catch (err) {
     add('notify', true, `status unavailable: ${err.message}`);
   }
+  try {
+    const st = memory.doctorDocAgentStatus(process.env);
+    add(st.name, st.ok, st.detail);
+  } catch (err) {
+    add('memory_doc_agent', true, `status unavailable: ${err.message}`);
+  }
   // copilot/hc optional for plain-only workflows — warn on old herdr-core but do not fail exit
   const ok = checks
     .filter(
@@ -6893,6 +7069,7 @@ function cmdDoctor(argv) {
           'mcp_cursor',
           'mcp_wiring',
           'notify',
+          'memory_doc_agent',
         ].includes(c.name)
     )
     .every((c) => c.ok);

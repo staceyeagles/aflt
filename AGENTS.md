@@ -17,6 +17,7 @@ Human overview: [README.md](README.md) (dashboard screenshots in `docs/images/`;
 - **Turns → Doc Bot** — `emitTurnCaptured` DMs `doc-bot` when both sides have messaging enabled (else no-op).
 - **Notify webhook** — opt-in `config.json` `notify` or `AFLT_NOTIFY_URL`/`KEY`/`HEADER`; events `run.completed` / `run.failed` / `turn.captured`; `aflt notify test`; flushed before `aflt run` exits.
 - **Dashboard UX** — Graph zoom/pan/Fit/Spread; History Gantt presets (24h/7d/30d/all), zoom/scroll, marker stacking and count badges (`aflt dashboard --serve`).
+- **`aflt memory config`** — refresh template-managed memory root files (`DOC-AGENT.md`, `DOCUMENTATION-PROCESS.md`) after upgrades (dry-run default; `--apply`; optional `--commit`/`--push`); `aflt doctor` hints when `DOC-AGENT.md` is outdated.
 
 ---
 
@@ -61,7 +62,7 @@ aflt setup --apply --herdr
 aflt setup --apply --memory ~/aflt-memory
 aflt setup --json
 
-aflt doctor               # read-only: node, home, hc, engines, MCP hints, notify status
+aflt doctor               # read-only: node, home, hc, engines, MCP hints, notify, DOC-AGENT freshness
 aflt doctor --json
 aflt notify test          # sample webhook POST (requires notify.url / AFLT_NOTIFY_URL)
 ```
@@ -112,6 +113,7 @@ aflt dashboard --serve          # live local activity UI (default http://127.0.0
 aflt dashboard --snapshot /tmp/aflt.svg  # read-only SVG/HTML snapshot (≠ memory dashboard)
 aflt memory sync                # opt-in: write cwd project timeline + root DASHBOARD.md
 aflt memory dashboard           # regenerate root DASHBOARD.md only
+aflt memory config [--apply]    # refresh DOC-AGENT.md / DOCUMENTATION-PROCESS.md (dry-run default)
 aflt memory doc [--engine cursor|copilot]  # Doc Bot session (DOC-AGENT.md)
 aflt memory sync --all --commit --push  # nightly: sync + commit generated + push
 aflt children --json            # workers of this master, or a summary of masters
@@ -263,6 +265,16 @@ aflt memory dashboard [--dry-run] [--json] [--no-redact] [--active-days N]
 # Regenerate root DASHBOARD.md only (no per-project _aflt/ writes). Same dry-run /
 # json / redact / active-days semantics as sync.
 
+aflt memory config [--apply] [--json] [--no-redact] [--active-days N] [--commit] [--push]
+# Refresh template-managed memory-repo root files (DOC-AGENT.md,
+# DOCUMENTATION-PROCESS.md) against package templates. Dry-run by default
+# (up-to-date / would-update / missing + short diff). --apply writes the template
+# (keeps *.bak only when the existing file had local edits). Then regenerates
+# root DASHBOARD.md like memory dashboard (doc-bot summary block preserved).
+# Never touches per-project README / status-notes. --commit requires --apply
+# (refuses dirty index; stages DASHBOARD.md + managed roots only); --push
+# requires --commit. Never commits unless asked.
+
 aflt memory doc [--engine cursor|copilot] [--dry-run] [--json] [--force]
 # Launch a portable Doc Bot `aflt run` session (title doc-bot) in the memory
 # repo using DOC-AGENT.md as the prompt. Works with Cursor CLI or Copilot CLI.
@@ -314,7 +326,7 @@ It also recognizes legacy `memory-doc` sessions to avoid duplicates; use
 `aflt rename memory-doc doc-bot` to rename an existing session without changing
 its ID or chat history. If both names exist, `doc-bot` takes precedence.
 
-`aflt memory` is opt-in and never auto-syncs. Resolution: `AFLT_MEMORY_REPO` → `config.json` `memoryRepo`. Optional `--commit` / `--push` on `sync` stages root `DASHBOARD.md` and `*/_aflt/**` (human files stay unstaged). Layout: root `DASHBOARD.md` is generated (Active/Dormant; default 14-day ET window via `--active-days` / `memoryActiveDays`; doc-bot summary markers preserved verbatim); `<repo>/<project>/_aflt/` is generated (never hand-edit); `<project>/README.md`, `dashboard.md`, `status-notes/` are human/Doc Bot files that aflt creates only if missing and never commits (never write `DASHBOARD.md` inside a project folder — that name is root-only). Redaction (default on) covers generated files only: home → `~`, private IPs, `*.local`, emails, token-like strings, long hex/base64 (not the preserved doc-bot block). `adhoc` (home/tmp one-offs) is excluded from `--all` unless `--include-adhoc`. Nightly flow on the Mini: `aflt memory sync --all --commit --push` (commits `memory: sync YYYY-MM-DD` only when something changed; exits non-zero if push fails or there is no upstream), then optionally `aflt memory doc` to update the Doc Bot summary in `DASHBOARD.md` (separate commit, only when instructed). `DOC-AGENT.md` in the memory repo is the portable documentarian prompt; `aflt memory init` writes it when missing. `aflt memory doc --engine copilot` is the same role on a work laptop that has Copilot CLI instead of Cursor.
+`aflt memory` is opt-in and never auto-syncs. Resolution: `AFLT_MEMORY_REPO` → `config.json` `memoryRepo`. Optional `--commit` / `--push` on `sync` stages root `DASHBOARD.md` and `*/_aflt/**` (human files stay unstaged). Layout: root `DASHBOARD.md` is generated (Active/Dormant; default 14-day ET window via `--active-days` / `memoryActiveDays`; doc-bot summary markers preserved verbatim); `<repo>/<project>/_aflt/` is generated (never hand-edit); `<project>/README.md`, `dashboard.md`, `status-notes/` are human/Doc Bot files that aflt creates only if missing and never commits (never write `DASHBOARD.md` inside a project folder — that name is root-only). Redaction (default on) covers generated files only: home → `~`, private IPs, `*.local`, emails, token-like strings, long hex/base64 (not the preserved doc-bot block). `adhoc` (home/tmp one-offs) is excluded from `--all` unless `--include-adhoc`. Nightly flow on the Mini: `aflt memory sync --all --commit --push` (commits `memory: sync YYYY-MM-DD` only when something changed; exits non-zero if push fails or there is no upstream), then optionally `aflt memory doc` to update the Doc Bot summary in `DASHBOARD.md` (separate commit, only when instructed). `DOC-AGENT.md` in the memory repo is the portable documentarian prompt; `aflt memory init` writes it (and `DOCUMENTATION-PROCESS.md`) when missing; refresh after upgrades with `aflt memory config` / `--apply` (`aflt doctor` hints when outdated). `aflt memory doc --engine copilot` is the same role on a work laptop that has Copilot CLI instead of Cursor.
 
 With a configured memory repo, the live dashboard's **Project status & docs**
 selector shows each project's Doc Bot progress/blockers and opens its README,
@@ -565,7 +577,7 @@ aflt docs --status --json
 ```bash
 aflt setup [--apply] [--json] [--herdr] [--memory <path>] [--force]
 # Machine setup preview (default) or apply; never edits shell rc / sessions
-aflt doctor [--json]                 # read-only environment checks (notify status; never prints key)
+aflt doctor [--json]                 # read-only environment checks (notify + DOC-AGENT freshness; never prints key)
 aflt notify test [--json]            # sample notify webhook POST (requires url config/env)
 aflt which-backend                   # auto-detected resume --all backend
 aflt herdr-templates [--force] [--dry-run]
