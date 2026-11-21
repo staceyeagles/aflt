@@ -1,9 +1,13 @@
 # Changelog
 
 All notable changes to **aflt** / AgentFleet are documented here.
+Versions follow [Semantic Versioning](https://semver.org/); see [RELEASING.md](RELEASING.md).
 
-## 2026-11-20
+## Unreleased
 
+## 1.4.0 (2026-11-20)
+
+- **Release process** — semver policy and release steps in `RELEASING.md`; `aflt doctor` now reports the aflt version.
 - **OpenCode engine** — third engine alongside Cursor and Copilot (`--engine opencode` on `new` / `run` / `resume` / `spawn` / `master` / `docs` / `memory doc`; `aflt opencode` / `aflt engine opencode`). Headless uses `opencode run` (session via `--session`, output captured like other engines). Interactive resume uses `--session <ses_…>`. Session ids are created via a short-lived `opencode serve` + `POST /session` and stored as `chatId`. `aflt doctor` soft-checks `opencode` on PATH (`AGENTFLEET_OPENCODE_BIN` / `AGENTFLEET_OPENCODE_HOME`). Turn capture / `aflt turns backfill` reads `opencode.db` **read-only** via `node:sqlite` when available (graceful skip otherwise); never touches the real OpenCode home from tests.
 - **Direct messaging** — opt-in `aflt msg` / `aflt inbox` / `aflt thread` and MCP `read_inbox` / `post_message` / `list_team` (enable with `aflt msg enable`, `--messaging`, or `.agentfleet.json` `{"messaging": true}`). Cross-session DMs use `messages/dm__<idA>__<idB>.jsonl`.
 - **Project↔repo metadata** — portable mappings in `<memoryRepo>/<project>/.agentfleet.json` plus local `config.json` `repositories`; inspect with `aflt projects [--json]` (see `docs/PROJECT-REPO-METADATA.md`).

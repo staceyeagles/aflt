@@ -788,6 +788,13 @@ Injected on launch (do not overwrite casually inside a session):
 
 ---
 
+## Versioning and releases
+
+- Semver: patch = fixes, minor = backward-compatible features, major = breaking changes (CLI flags, registry/config formats, removed commands).
+- Every merged change adds a line under `## Unreleased` in CHANGELOG.md. Do not bump `package.json` in feature branches.
+- Releases are cut deliberately by the maintainer following RELEASING.md (`npm version`, tag `vX.Y.Z`, GitHub release).
+- `aflt --version` / `aflt doctor` report the installed version.
+
 ## Further reading
 
 - [README.md](README.md) — product overview and command summary

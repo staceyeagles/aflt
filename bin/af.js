@@ -7143,6 +7143,7 @@ function cmdDoctor(argv) {
   function add(name, ok, detail) {
     checks.push({ name, ok: Boolean(ok), detail: detail || null });
   }
+  add('aflt', true, PKG_VERSION);
   add('node', true, process.version);
   add('agentfleet_home', true, fleetDir());
   add('registry', true, fs.existsSync(registryPath()) ? registryPath() : `${registryPath()} (will create on first write)`);
