@@ -68,6 +68,32 @@ describe('cursor wrapper with stub', () => {
     assert.ok(cmd.includes('deadbeef-0000-4000-8000-ffffffffffff'));
   });
 
+  it('parseCursorPrintOutput extracts result text + usage from json', () => {
+    const cursor = require('../lib/cursor');
+    const stdout = JSON.stringify({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      duration_ms: 2133,
+      result: 'OK',
+      session_id: '574d45da-05fd-4c13-ac3a-fe96ae685aac',
+      request_id: 'f417c52c-2819-40f5-90d6-d2d39cdd8ef8',
+      usage: {
+        inputTokens: 6187,
+        outputTokens: 40,
+        cacheReadTokens: 3968,
+        cacheWriteTokens: 0,
+        reasoningTokens: 39,
+      },
+    });
+    const parsed = cursor.parseCursorPrintOutput(stdout, { format: 'json' });
+    assert.equal(parsed.result, 'OK');
+    assert.equal(parsed.usage.totalInput, 10155);
+    assert.equal(parsed.usage.outputTokens, 40);
+    assert.equal(parsed.usage.reasoningTokens, 39);
+    assert.equal(parsed.requestId, 'f417c52c-2819-40f5-90d6-d2d39cdd8ef8');
+  });
+
   it('buildResumeArgs omits saved session.prompt unless opts.prompt is set', () => {
     const cursor = require('../lib/cursor');
     const session = {

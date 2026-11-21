@@ -43,6 +43,7 @@ Regenerate with `npm run screenshots` (needs Google Chrome, Node ≥18, and a da
 
 ## What's new (2026-11-21)
 
+- **Token usage** — per-turn `usage` on `runs/<id>/turns.jsonl` + `usage-summary.json`; headless Cursor/OpenCode capture tokens when `--output-format` is omitted (stdout stays text); dashboard History shows compact counts + chart; memory timeline includes a rollup. Never invents USD from tokens.
 - **Named spaces** — opt-in `--space NAME` / `AFLT_SPACE` isolate a fleet under `~/.agentfleet/spaces/<name>` when `AGENTFLEET_HOME` is unset. `aflt space list|create|current|remove`; new spaces get a unique dashboard port, notify off, isolated memory, and LaunchAgent `dev.aflt.dashboard.<space>` (default unchanged).
 - **`aflt eval` self-improve (milestone E3)** — `examples/loops/self-improve.json`: measure → score + baseline → plan-next one fix → build → `aflt eval gate --improve`; stop on plateau / max rounds (`aflt eval plateau`). Autonomous profile keeps approval gates and allow.commit/merge/push off.
 - **`aflt eval measure` (milestone E1)** — hermetic self-measurement: suite summary + flake rerun, best-effort coverage, sandboxed CLI smoke, dashboard `/api` contracts; writes `eval/results/<timestamp>.json`.
@@ -181,7 +182,7 @@ Home directory: **`$AGENTFLEET_HOME`** (default `~/.agentfleet`, or `~/.agentfle
 |------|------|
 | `sessions.json` | Atomic registry (temp + rename; cross-process `.lock` for RMW) |
 | `config.json` | Fleet defaults (`defaultEngine`, optional `memoryRepo`, `project`, `notify`, `repositories`) |
-| `runs/<id>/` | Captured headless stdout + interactive `turns.jsonl` / `turns-index.json` |
+| `runs/<id>/` | Captured headless stdout + interactive `turns.jsonl` / `turns-index.json` / `usage-summary.json` |
 | `results/` | Worker/master handoffs (`$AGENTFLEET_RESULT`) |
 | `plans/` | Master plans (`$AGENTFLEET_PLAN`) |
 | `messages/<masterId>.jsonl` | Team message log |
@@ -321,9 +322,11 @@ whose last assistant message has no pending `toolRequests`). Mid-turn steering
 text wins; the summary is kept as `taskCompleteSummary`) and always pair with
 the most recent preceding `user.message` so History hover is not `(no prompt)`.
 Re-running backfill patches existing `turns.jsonl` rows that lack a prompt
-(idempotent; no duplicates). Incremental sync persists offsets / in-progress
-loop state so partial loops are not recorded early. This is separate from
-`--capture-completions` memory notes.
+(idempotent; no duplicates) and refreshes `usage-summary.json` from engine
+stores when token metrics are available (or chars/4 estimates otherwise).
+Incremental sync persists offsets / in-progress loop state so partial loops
+are not recorded early. This is separate from `--capture-completions` memory
+notes.
 
 ```bash
 # Preview what would be imported (default = dry-run)

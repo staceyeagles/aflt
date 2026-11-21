@@ -518,6 +518,101 @@ describe('interactive turn capture', () => {
     assert.equal(rows[0].source, 'cursor-transcript');
   });
 
+  it('suppresses cursor-transcript duplicate of a headless-run turn (wrapped <user_query>)', () => {
+    const turns = loadTurns(home);
+    const usage = require('../lib/usage');
+    const chatId = 'dddddddd-eeee-ffff-0000-111111111111';
+    const cursorHome = path.join(home, '.cursor');
+    process.env.AGENTFLEET_CURSOR_HOME = cursorHome;
+    const dir = path.join(cursorHome, 'projects', 'Users-test-proj', 'agent-transcripts', chatId);
+    fs.mkdirSync(dir, { recursive: true });
+
+    const barePrompt = 'Reply with the single word OK. Do not edit files.';
+    const reported = usage.normalizeCursorUsage({
+      inputTokens: 6187,
+      outputTokens: 40,
+      cacheReadTokens: 3968,
+      cacheWriteTokens: 0,
+      reasoningTokens: 39,
+    });
+    const session = { id: 'cur-headless-dup', title: 'Dup', engine: 'cursor', chatId };
+
+    // Simulate aflt run capturing the headless turn first (reported usage).
+    const written = turns.appendTurn({
+      sessionId: session.id,
+      chatId,
+      engine: 'cursor',
+      source: 'headless-run',
+      at: '2026-11-21T18:13:07.552Z',
+      prompt: barePrompt,
+      reply: 'OK',
+      promptSource: 'headless-prompt',
+      replySource: 'headless-stdout',
+      engineEventId: `headless:${session.id}:run-1`,
+      usage: reported,
+    });
+    assert.equal(written.written, true);
+    assert.equal(written.turn.usage.accuracy, 'reported');
+
+    // Cursor agent-transcript wraps the same prompt; at is ~13s later (mtime-ish).
+    const wrappedPrompt =
+      '<timestamp>Saturday, Nov 21, 2026, 1:13 PM (UTC-5)</timestamp>\n' +
+      '<user_query>\n' +
+      barePrompt +
+      '\n</user_query>';
+    fs.writeFileSync(
+      path.join(dir, `${chatId}.jsonl`),
+      [
+        JSON.stringify({
+          role: 'user',
+          id: 'u-wrapped',
+          timestamp: '2026-11-21T18:13:20.402Z',
+          message: { content: [{ type: 'text', text: wrappedPrompt }] },
+        }),
+        JSON.stringify({
+          role: 'assistant',
+          id: 'a-wrapped',
+          timestamp: '2026-11-21T18:13:20.402Z',
+          message: { content: [{ type: 'text', text: 'OK' }] },
+        }),
+      ].join('\n') + '\n'
+    );
+
+    assert.equal(
+      turns.normalizeCursorTranscriptPrompt(wrappedPrompt),
+      barePrompt
+    );
+
+    const sync = turns.syncCursorSession(session, {
+      env: process.env,
+      apply: true,
+      fullScan: true,
+    });
+    assert.equal(sync.written, 0, 'must not insert a second turn');
+    assert.ok(sync.skipped >= 1);
+
+    const rows = turns.readTurns(session.id);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].source, 'headless-run');
+    assert.equal(rows[0].usage.accuracy, 'reported');
+    assert.equal(rows[0].usage.totalInput, 10155);
+
+    const summary = turns.readUsageSummary(session.id);
+    assert.equal(summary.turnCount, 1);
+    assert.equal(summary.accuracy, 'reported');
+    assert.equal(summary.reportedTurns, 1);
+
+    // Re-sync must stay idempotent (cursorFiles advanced).
+    const again = turns.syncCursorSession(session, {
+      env: process.env,
+      apply: true,
+      fullScan: false,
+    });
+    assert.equal(again.written, 0);
+    assert.equal(again.scanned, 0);
+    assert.equal(turns.readTurns(session.id).length, 1);
+  });
+
   it('OSC candidate never invents prompt/reply text', () => {
     const turns = loadTurns(home);
     const session = { id: 'osc-1', engine: 'copilot', chatId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' };
@@ -578,5 +673,99 @@ describe('interactive turn capture', () => {
     const turns = loadTurns(home);
     const sess = registry.findExact('cli-session');
     assert.ok(turns.readTurns(sess.id).length >= 1);
+  });
+
+  it('stores usage on turns and writes usage-summary.json', () => {
+    const turns = loadTurns(home);
+    const usage = require('../lib/usage');
+    const sessionId = 'sess-usage-1';
+    const u = usage.normalizeCursorUsage({
+      inputTokens: 6187,
+      outputTokens: 40,
+      cacheReadTokens: 3968,
+      cacheWriteTokens: 0,
+      reasoningTokens: 39,
+    });
+    const written = turns.appendTurn({
+      sessionId,
+      engine: 'cursor',
+      source: 'headless-run',
+      prompt: 'ping',
+      reply: 'pong',
+      usage: u,
+    });
+    assert.equal(written.written, true);
+    assert.equal(written.turn.usage.totalInput, 10155);
+    const summary = turns.readUsageSummary(sessionId);
+    assert.equal(summary.turnCount, 1);
+    assert.equal(summary.totalTokens, 10195);
+    assert.ok(fs.existsSync(turns.usageSummaryPath(sessionId)));
+
+    // Estimated must not overwrite reported.
+    const estimated = usage.estimateUsageFromText({
+      prompt: 'ping',
+      reply: 'pong',
+      cli: 'cursor',
+    });
+    const patched = turns.patchTurnUsageIfMissing(sessionId, written.turn, estimated);
+    assert.equal(patched.updated, false);
+  });
+
+  it('attaches Copilot usage_record inside a turn window', () => {
+    const turns = loadTurns(home);
+    const chatId = 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff';
+    writeCopilotEvents(chatId, [
+      userMsg('count tokens', '2026-11-21T12:00:00.000Z'),
+      JSON.stringify({
+        id: 'asst-1',
+        type: 'assistant.message',
+        timestamp: '2026-11-21T12:00:01.000Z',
+        data: { content: 'done' },
+      }),
+      JSON.stringify({
+        id: 'usage-1',
+        type: 'session.usage_record',
+        timestamp: '2026-11-21T12:00:02.000Z',
+        data: {
+          usage: {
+            model: 'claude-haiku-4.5',
+            inputTokens: 16130,
+            outputTokens: 56,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 16120,
+            reasoningTokens: 49,
+            cost: 0.33,
+            duration: 1008,
+          },
+          accounting: { sourceSessionId: chatId, sequence: 1 },
+        },
+      }),
+      JSON.stringify({
+        id: 'end-1',
+        type: 'assistant.turn_end',
+        timestamp: '2026-11-21T12:00:03.000Z',
+        data: {},
+      }),
+    ]);
+    const session = {
+      id: 'sess-copilot-usage',
+      title: 'Usage',
+      engine: 'copilot',
+      chatId,
+    };
+    const sync = turns.syncCopilotSession(session, {
+      env: process.env,
+      apply: true,
+      fullScan: true,
+    });
+    assert.equal(sync.written, 1);
+    const rows = turns.readTurns(session.id);
+    assert.equal(rows.length, 1);
+    assert.ok(rows[0].usage);
+    assert.equal(rows[0].usage.inputTokens, 10);
+    assert.equal(rows[0].usage.totalInput, 16130);
+    assert.equal(rows[0].usage.premiumRequests, 0.33);
+    assert.equal(rows[0].usage.cost, null);
+    assert.equal(rows[0].usage.source, 'copilot-usage-record');
   });
 });
