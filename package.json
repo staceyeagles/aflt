@@ -1,6 +1,6 @@
 {
   "name": "aflt",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Track, resume, and headlessly run Cursor, Copilot, and OpenCode CLI sessions",
   "bin": {
     "agentfleet": "bin/af.js",
