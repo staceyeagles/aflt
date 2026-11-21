@@ -43,6 +43,7 @@ Regenerate with `npm run screenshots` (needs Google Chrome, Node ≥18, and a da
 
 ## What's new (2026-11-21)
 
+- **`aflt eval` self-improve (milestone E3)** — `examples/loops/self-improve.json`: measure → score + baseline → plan-next one fix → build → `aflt eval gate --improve`; stop on plateau / max rounds (`aflt eval plateau`). Autonomous profile keeps approval gates and allow.commit/merge/push off.
 - **`aflt eval measure` (milestone E1)** — hermetic self-measurement: suite summary + flake rerun, best-effort coverage, sandboxed CLI smoke, dashboard `/api` contracts; writes `eval/results/<timestamp>.json`.
 - **`aflt eval score` / `report` / `gate` (milestone E2)** — deterministic 0–100 score from measure JSON + `eval/RUBRIC.md`; history in `eval/history.jsonl`; human report + trend; RUBRIC GUARD blocks improvement-loop edits to the rubric/scoring impl.
 - **`aflt loop` (milestone 4)** — multi-phase projects: `type: "plan-next"` planner appends phases (or `done: true`); `budget.maxPhases`; loop `goal` / `acceptance` / `plannedPhaseGate`; acceptance summary note. Example: `examples/loops/plan-next.json`.
@@ -77,14 +78,14 @@ CLI coding agents are powerful but ephemeral: chat IDs live in engine-local stor
 | **Herdr** | `hc` terminals + desktop app spaces/tabs + bundled `af-sessions` panel; shell-only reboot recovery via in-tab relaunch |
 | **Orchestration** | `aflt master`, `aflt spawn [--detach]`, `children`, `wait`, `result [--require-fresh]`, `tail`, `send`, `stop`, `rm --children` |
 | **Loop** | `aflt loop` multi-phase eval/fix runner (JSON definition; state under `loops/`; opt-in notify + memory) |
-| **Eval** | `aflt eval measure` / `score` / `report` / `gate` — hermetic measure → deterministic rubric score → history/report; RUBRIC GUARD |
+| **Eval** | `aflt eval measure` / `score` / `report` / `gate` / `plateau` — hermetic measure → rubric score → improve gate + self-improve loop example |
 | **Projects** | Optional `session.project` + `aflt ls --project` / `aflt timeline` / `aflt projects` (repo mappings + validation) |
 | **Live dashboard** | `aflt dashboard --serve` / `--snapshot` — local history-first activity UI (tree + Gantt; optional star graph; not `aflt memory dashboard`) |
 | **Memory** | Opt-in `aflt memory` repo: sync per-project timelines + root `DASHBOARD.md` into a local git working tree; `memory config` refreshes template-managed root docs; optional `--commit`/`--push` for generated `_aflt/` + root `DASHBOARD.md` |
 | **Messaging** | Opt-in `aflt msg` / `inbox` / `thread` + stdio MCP (`aflt mcp`) for Copilot & Cursor |
 | **Documentarian** | Opt-in `aflt docs`; auto once after headless master / `aflt wait --docs` |
 | **Agent docs** | Opt-in `agentDocs`: shared process + `AGENT-DOCS.md`, launch paths, safe-boundary checkpoints, note ack, retry/backoff, batched Doc Bot notify, archive labeling |
-| **Ops** | `aflt setup`, `aflt import`, `aflt doctor`, `aflt notify test`, `aflt loop`, `aflt eval measure|score|report|gate`, `aflt purge` / `aflt orphans`, `aflt turns backfill`, `--json` / `--dry-run` on mutating paths |
+| **Ops** | `aflt setup`, `aflt import`, `aflt doctor`, `aflt notify test`, `aflt loop`, `aflt eval measure|score|report|gate|plateau`, `aflt purge` / `aflt orphans`, `aflt turns backfill`, `--json` / `--dry-run` on mutating paths |
 
 ## Architecture
 
@@ -399,22 +400,29 @@ aflt rm --children <master> [--with-master] …
 - **Handoffs:** workers write `$AGENTFLEET_RESULT` (default `$AGENTFLEET_HOME/results/<id>.md`). Headless success with missing/stale file → **af-fallback** from stdout. Freshness uses `runStartedAt` / `resultMtimeAtStart`; `aflt result --require-fresh` exits 1 if stale. HANDOFF column: `yes` / `af` / `stale` / `no`.
 - **Env on launch:** `AGENTFLEET_ID` always; workers `AGENTFLEET_PARENT` / `AGENTFLEET_RESULT`; masters `AGENTFLEET_ROLE=master` / `AGENTFLEET_PLAN` / `AGENTFLEET_RESULT`. Messaging also sets `AGENTFLEET_SESSION` (= id) and `AGENTFLEET_MASTER` when known. Opt-in `agentDocs` also sets `AFLT_PROJECT` / `AFLT_MEMORY_REPO` / `AFLT_DOCS_PROCESS` / `AFLT_AGENT_DOCS` / `AFLT_AGENTS_MD` / `AFLT_MEMORY_PROJECT` (and `AFLT_MEMORY_MISSING=1` when memory is required but unset).
 
-## Self-eval measure + score (milestones E1–E2)
+## Self-eval measure + score + improve (milestones E1–E3)
 
-Opt-in hermetic measurement and deterministic scoring. Never touches the real `~/.agentfleet`, live engines, or Herdr.
+Opt-in hermetic measurement, deterministic scoring, and a self-improve loop. Never touches the real `~/.agentfleet`, live engines, or Herdr from measure/score/gate/plateau.
 
 ```bash
 aflt eval measure                  # writes eval/results/<timestamp>.json
 aflt eval measure --json --out /tmp/aflt-eval
 aflt eval score                    # score latest results vs eval/RUBRIC.md; append eval/history.jsonl
+aflt eval score --write-baseline   # also record eval/improve-baseline.json (maxRounds default 3)
 aflt eval score path/to/results.json --json --history /tmp/aflt-history.jsonl
 aflt eval report [--json]          # latest score + trend from history
 aflt eval gate [--json]            # RUBRIC GUARD: fail if rubric/scoring paths changed
+aflt eval gate --improve --json    # suite green + score >= baseline + RUBRIC GUARD
+aflt eval plateau [--json]         # stop=true on plateau or max rounds
+aflt loop validate examples/loops/self-improve.json
+aflt loop run examples/loops/self-improve.json --dry-run
 ```
 
 **Measure (E1):** suite pass/fail/skip + per-file duration, flake vs hard-fail (failures rerun once), best-effort coverage (`node --experimental-test-coverage`; unavailable → recorded, not a measure failure), sandboxed CLI smoke (read-only / `--dry-run` only), and dashboard `/api` contract checks (`/api/state`, `/api/loops`, …) with reliable server shutdown.
 
-**Score (E2):** reads measure JSON + repo files against human-owned [`eval/RUBRIC.md`](eval/RUBRIC.md) (weights sum to 100 → overall 0–100). Qualitative grading is opt-in (`--qualitative`) and always skipped under `AGENTFLEET_TEST` / `AFLT_EVAL_SKIP_QUALITATIVE` — default path never calls engines. `aflt eval gate` exits non-zero if protected paths (`eval/RUBRIC.md`, `scripts/eval/score.js`, `scripts/eval/rubric.js`) change; improvement loops must fail this gate. Implementation: `scripts/eval/`. Generated `eval/results/` and `eval/history.jsonl` are gitignored.
+**Score (E2):** reads measure JSON + repo files against human-owned [`eval/RUBRIC.md`](eval/RUBRIC.md) (weights sum to 100 → overall 0–100). Qualitative grading is opt-in (`--qualitative`) and always skipped under `AGENTFLEET_TEST` / `AFLT_EVAL_SKIP_QUALITATIVE` — default path never calls engines. `aflt eval gate` exits non-zero if protected paths (`eval/RUBRIC.md`, `scripts/eval/score.js`, `scripts/eval/rubric.js`) change; improvement loops must fail this gate.
+
+**Improve (E3):** [`examples/loops/self-improve.json`](examples/loops/self-improve.json) runs measure → score + baseline → `plan-next` (one highest-value small fix with tests; must not touch the rubric/scorer) → build → remasure/score → `aflt eval gate --improve`. Stops after max rounds (default 3) or when `aflt eval plateau` reports a non-improving score. Autonomous profile: `plannedPhaseGate: "none"` and `allow.commit/merge/push: false` (set allow flags + phase `onPass` to opt into commit/merge). Reuses existing loop notify + memory timeline/status notes. Helpers: `scripts/eval/improve.js`. Generated `eval/results/`, `eval/history.jsonl`, and `eval/improve-baseline.json` are gitignored.
 
 ## Loop runner (milestones 1–4)
 
@@ -438,7 +446,7 @@ aflt service status
 aflt service uninstall
 ```
 
-- **Definition (JSON):** `name`, `project`, `cwd`, `engine`, `allow` (`commit`/`merge`/`push`, default false), `budget` (`maxRuns`/`maxHours`/`maxPhases`), optional `goal`, `acceptance` (or `acceptanceCriteria`), `acceptanceEval`, `plannedPhaseGate` (`approve`|`none`, default `approve` for phases inserted by plan-next), `phases[]` with `id`, optional `type` (`run`|`plan-next`), `engine`, `session`, `prompt` or `promptFile`, `eval` (`command` string or argv array, `passRegex` and/or `exitCode`), `maxFixAttempts` (default 3), `onPass` (`none`|`commit`|`merge`|`push`), optional `gate: "approve"`. UI-saved files: `$AGENTFLEET_HOME/loops/definitions/<name>.json` (or `config.json` `loop.definitionsDir` / `loopsDir`). Examples: `examples/loops/hello-eval.json`, `examples/loops/plan-next.json`.
+- **Definition (JSON):** `name`, `project`, `cwd`, `engine`, `allow` (`commit`/`merge`/`push`, default false), `budget` (`maxRuns`/`maxHours`/`maxPhases`), optional `goal`, `acceptance` (or `acceptanceCriteria`), `acceptanceEval`, `plannedPhaseGate` (`approve`|`none`, default `approve` for phases inserted by plan-next), `phases[]` with `id`, optional `type` (`run`|`plan-next`), `engine`, `session`, `prompt` or `promptFile`, `eval` (`command` string or argv array, `passRegex` and/or `exitCode`), `maxFixAttempts` (default 3), `onPass` (`none`|`commit`|`merge`|`push`), optional `gate: "approve"`. UI-saved files: `$AGENTFLEET_HOME/loops/definitions/<name>.json` (or `config.json` `loop.definitionsDir` / `loopsDir`). Examples: `examples/loops/hello-eval.json`, `examples/loops/plan-next.json`, `examples/loops/self-improve.json`.
 - **Semantics:** run phase prompt → run eval → on fail send failing output back to the same session as a fix prompt (up to `maxFixAttempts`) → mark phase passed/failed. With `gate: "approve"`, the runner pauses (`status=waiting`) before the phase work until approve. Prompts are argv data (no shell interpolation).
 - **Plan-next (M4):** `type: "plan-next"` gives the configured engine the goal, history, and status notes and requires JSON at `$AGENTFLEET_HOME/loops/<name>/plan-next.json`. `{ "done": true }` ends planning (then optional `acceptanceEval` + completion); `{ "phases": [ … ] }` validates and inserts phases before the plan-next sentinel (default gate from `plannedPhaseGate`). Cap with `budget.maxPhases`. When `goal`/`acceptance` are set, completion writes an acceptance-summary status note.
 - **State:** `$AGENTFLEET_HOME/loops/<name>/state.json` (atomic writes) + `runner.lock`. `active` marks the loop for the dashboard scheduler. Crash/restart resumes via `aflt loop resume` or the scheduler on `dashboard --serve` start.
@@ -682,9 +690,10 @@ Optional `"notify"` enables fire-and-forget webhook POSTs when a headless `aflt 
 | `aflt notify test` | Send a sample notify webhook event |
 | `aflt loop` | Multi-phase eval/fix runner (`validate` / `run` / `status` / `stop` / `resume`) |
 | `aflt eval measure` | Hermetic self-measurement → `eval/results/<timestamp>.json` |
-| `aflt eval score` | Deterministic 0–100 score vs `eval/RUBRIC.md`; appends `eval/history.jsonl` |
+| `aflt eval score` | Deterministic 0–100 score vs `eval/RUBRIC.md`; appends `eval/history.jsonl`; optional `--write-baseline` |
 | `aflt eval report` | Latest score + trend from history (`--json`) |
-| `aflt eval gate` | RUBRIC GUARD — fail if rubric/scoring paths changed |
+| `aflt eval gate` | RUBRIC GUARD; `--improve` adds suite green + score ≥ baseline |
+| `aflt eval plateau` | Improve-loop stop check (plateau / max rounds) |
 | `aflt help` | This usage text |
 
 Exit codes (global): `0` ok · `1` error · `2` wait timeout · `3` waiting · `75` critical registry write after run.

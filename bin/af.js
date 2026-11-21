@@ -455,21 +455,31 @@ Usage:
                             --out DIR). Never touches real ~/.agentfleet, live
                             engines, or Herdr. Opt-in; does not mutate the repo.
   aflt eval score [results-file] [--json] [--history PATH] [--qualitative]
-                  [--results-dir DIR]
+                  [--results-dir DIR] [--write-baseline PATH] [--max-rounds N]
                             Deterministic score (0–100) from a measure JSON +
                             repo rubric (eval/RUBRIC.md). Appends one line to
-                            eval/history.jsonl (or --history). Qualitative
-                            evaluator is opt-in (--qualitative) and skipped
-                            under AGENTFLEET_TEST / AFLT_EVAL_SKIP_QUALITATIVE;
+                            eval/history.jsonl (or --history). Optional
+                            --write-baseline records the improve-loop baseline
+                            (default path when flag is bare: eval/improve-baseline.json).
+                            Qualitative evaluator is opt-in (--qualitative) and
+                            skipped under AGENTFLEET_TEST / AFLT_EVAL_SKIP_QUALITATIVE;
                             default path never calls live engines.
   aflt eval report [--json] [--history PATH] [--limit N]
                             Human-readable summary of the latest score + trend
                             from history.jsonl.
   aflt eval gate [--json] [--base REF] [--paths a,b]
+                 [--improve] [--baseline PATH] [--results PATH]
+                 [--results-dir DIR] [--history PATH] [--score N]
                             RUBRIC GUARD: exit non-zero if protected paths
                             (eval/RUBRIC.md, scripts/eval/score.js,
                             scripts/eval/rubric.js) changed vs --base (default
-                            HEAD). Improvement loops must fail this gate.
+                            HEAD). With --improve: also require suite green and
+                            score >= baseline (self-improve loop gate).
+  aflt eval plateau [--json] [--baseline PATH] [--history PATH]
+                    [--max-rounds N] [--rounds N]
+                            Exit 0 with stop=true when the improve loop should
+                            halt (score plateau vs previous round/baseline, or
+                            max rounds). Default max rounds: 3.
   aflt help
                             Exit: 0 ok, 1 error, 2 wait timeout, 3 waiting,
                             75 critical registry write failed after a run
@@ -7755,11 +7765,12 @@ async function cmdEval(argv) {
   const sub = args[0];
   const asJson = Boolean(flags.json);
   const usage =
-    'usage: aflt eval measure|score|report|gate [--json] …\n' +
+    'usage: aflt eval measure|score|report|gate|plateau [--json] …\n' +
     '  aflt eval measure [--json] [--out DIR]\n' +
-    '  aflt eval score [results-file] [--json] [--history PATH] [--qualitative] [--results-dir DIR]\n' +
+    '  aflt eval score [results-file] [--json] [--history PATH] [--qualitative] [--results-dir DIR] [--write-baseline PATH] [--max-rounds N]\n' +
     '  aflt eval report [--json] [--history PATH] [--limit N]\n' +
-    '  aflt eval gate [--json] [--base REF] [--paths a,b]';
+    '  aflt eval gate [--json] [--base REF] [--paths a,b] [--improve] [--baseline PATH] [--results PATH] [--results-dir DIR] [--history PATH] [--score N]\n' +
+    '  aflt eval plateau [--json] [--baseline PATH] [--history PATH] [--max-rounds N] [--rounds N]';
   if (!sub || sub === 'help' || sub === '-h' || sub === '--help') {
     fail(usage);
   }
@@ -7845,6 +7856,7 @@ async function cmdEval(argv) {
 
   if (sub === 'score') {
     const evalScore = require('../scripts/eval/score');
+    const evalImprove = require('../scripts/eval/improve');
     const resultsFile = args[1];
     const historyPath =
       flags.history != null && flags.history !== true
@@ -7855,6 +7867,11 @@ async function cmdEval(argv) {
         ? String(flags['results-dir'])
         : undefined;
     const qualitative = Boolean(flags.qualitative);
+    const writeBaselineFlag = flags['write-baseline'];
+    const maxRounds =
+      flags['max-rounds'] != null && flags['max-rounds'] !== true
+        ? Number(flags['max-rounds'])
+        : undefined;
 
     let result;
     try {
@@ -7869,6 +7886,23 @@ async function cmdEval(argv) {
       fail(err.message || String(err), { json: asJson });
     }
 
+    let baseline = null;
+    if (writeBaselineFlag != null) {
+      try {
+        const baselinePath =
+          writeBaselineFlag === true
+            ? evalImprove.defaultBaselinePath()
+            : String(writeBaselineFlag);
+        baseline = evalImprove.recordBaseline({
+          baselinePath,
+          score: result,
+          maxRounds,
+        });
+      } catch (err) {
+        fail(err.message || String(err), { json: asJson });
+      }
+    }
+
     if (asJson) {
       emitJson({
         ok: Boolean(result.ok),
@@ -7879,6 +7913,13 @@ async function cmdEval(argv) {
         scoredAt: result.scoredAt,
         resultsPath: result.resultsPath,
         rubricVersion: result.rubricVersion,
+        baseline: baseline
+          ? {
+              path: baseline.path,
+              overall: baseline.overall,
+              maxRounds: baseline.maxRounds,
+            }
+          : null,
       });
     } else {
       process.stdout.write(
@@ -7899,6 +7940,12 @@ async function cmdEval(argv) {
       if (result.qualitative && result.qualitative.skipped) {
         process.stdout.write(
           `  qualitative: skipped (${result.qualitative.reason || 'n/a'})\n`
+        );
+      }
+      if (baseline) {
+        process.stdout.write(
+          `  baseline: ${baseline.path} overall=${baseline.overall}` +
+            ` maxRounds=${baseline.maxRounds}\n`
         );
       }
     }
@@ -7940,6 +7987,7 @@ async function cmdEval(argv) {
 
   if (sub === 'gate') {
     const evalGate = require('../scripts/eval/gate');
+    const evalImprove = require('../scripts/eval/improve');
     const base =
       flags.base != null && flags.base !== true ? String(flags.base) : 'HEAD';
     let protectedPaths;
@@ -7949,6 +7997,69 @@ async function cmdEval(argv) {
         .map((s) => s.trim())
         .filter(Boolean);
     }
+    const improve = Boolean(flags.improve);
+
+    if (improve) {
+      const baselinePath =
+        flags.baseline != null && flags.baseline !== true
+          ? String(flags.baseline)
+          : undefined;
+      const resultsPath =
+        flags.results != null && flags.results !== true
+          ? String(flags.results)
+          : args[1] || undefined;
+      const resultsDir =
+        flags['results-dir'] != null && flags['results-dir'] !== true
+          ? String(flags['results-dir'])
+          : undefined;
+      const historyPath =
+        flags.history != null && flags.history !== true
+          ? String(flags.history)
+          : undefined;
+      const overall =
+        flags.score != null && flags.score !== true
+          ? Number(flags.score)
+          : undefined;
+      const result = evalImprove.improveGate({
+        base,
+        protectedPaths,
+        baselinePath,
+        resultsPath,
+        resultsDir,
+        historyPath,
+        overall: Number.isFinite(overall) ? overall : undefined,
+      });
+      if (asJson) {
+        emitJson({
+          ok: Boolean(result.ok),
+          improve: true,
+          failures: result.failures,
+          checks: result.checks,
+          baseline: result.baseline,
+          resultsPath: result.resultsPath,
+          violations: result.rubric && result.rubric.violations,
+          protectedPaths: result.rubric && result.rubric.protectedPaths,
+          changedFiles: result.rubric && result.rubric.changedFiles,
+        });
+      } else if (result.ok) {
+        process.stdout.write('eval gate --improve ok\n');
+        for (const c of result.checks || []) {
+          process.stdout.write(`  ${c.id}: ${c.ok ? 'ok' : 'FAIL'} — ${c.detail}\n`);
+        }
+      } else {
+        process.stderr.write(
+          `eval gate --improve FAILED (${(result.failures || []).join(', ')})\n`
+        );
+        for (const c of result.checks || []) {
+          process.stderr.write(
+            `  ${c.id}: ${c.ok ? 'ok' : 'FAIL'} — ${c.detail}\n`
+          );
+        }
+      }
+      process.exitCode = result.ok ? 0 : 1;
+      return;
+    }
+
     const result = evalGate.gate({
       base,
       protectedPaths,
@@ -7972,6 +8083,52 @@ async function cmdEval(argv) {
       );
     }
     process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
+
+  if (sub === 'plateau') {
+    const evalImprove = require('../scripts/eval/improve');
+    const baselinePath =
+      flags.baseline != null && flags.baseline !== true
+        ? String(flags.baseline)
+        : undefined;
+    const historyPath =
+      flags.history != null && flags.history !== true
+        ? String(flags.history)
+        : undefined;
+    const maxRounds =
+      flags['max-rounds'] != null && flags['max-rounds'] !== true
+        ? Number(flags['max-rounds'])
+        : undefined;
+    const rounds =
+      flags.rounds != null && flags.rounds !== true
+        ? Number(flags.rounds)
+        : undefined;
+    let result;
+    try {
+      result = evalImprove.shouldStopImprove({
+        baselinePath,
+        historyPath,
+        maxRounds: Number.isFinite(maxRounds) ? maxRounds : undefined,
+        rounds: Number.isFinite(rounds) ? rounds : undefined,
+      });
+    } catch (err) {
+      fail(err.message || String(err), { json: asJson });
+    }
+    if (asJson) {
+      emitJson({ ok: true, ...result });
+    } else {
+      process.stdout.write(
+        `eval plateau: stop=${result.stop}` +
+          (result.reason ? ` reason=${result.reason}` : '') +
+          ` rounds=${result.rounds}/${result.maxRounds}` +
+          (result.latest != null ? ` latest=${result.latest}` : '') +
+          `\n  ${result.detail}\n`
+      );
+    }
+    // Exit 0 always when the check ran; callers inspect stop=true (or use
+    // passRegex). Non-zero only on hard errors above.
+    process.exitCode = 0;
     return;
   }
 

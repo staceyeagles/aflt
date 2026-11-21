@@ -80,8 +80,9 @@ function buildSmokePlan(opts = {}) {
     { id: 'herdr-templates-dry', argv: ['herdr-templates', '--dry-run'], mode: 'dry-run' },
     { id: 'docs-status', argv: ['docs', '--status', '--json'], mode: 'run' },
     { id: 'purge-dry', argv: ['purge', 'missing-eval-id', '--json'], mode: 'run', reason: 'dry-run default (no --apply)' },
-    // Eval report is cheap + empty-history safe; measure/score/gate skipped
+    // Eval report/plateau are cheap + empty-history safe; measure/score/gate skipped
     { id: 'eval-report', argv: ['eval', 'report', '--json'], mode: 'run' },
+    { id: 'eval-plateau', argv: ['eval', 'plateau', '--json'], mode: 'run' },
     {
       id: 'eval-gate',
       argv: ['eval', 'gate', '--json'],

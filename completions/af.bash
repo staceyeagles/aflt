@@ -283,20 +283,23 @@ _af() {
       ;;
     eval)
       if [[ ${COMP_CWORD} -eq 2 ]]; then
-        COMPREPLY=( $(compgen -W "measure score report gate" -- "${cur}") )
+        COMPREPLY=( $(compgen -W "measure score report gate plateau" -- "${cur}") )
       else
         case "${COMP_WORDS[2]}" in
           measure)
             COMPREPLY=( $(compgen -W "--json --out" -- "${cur}") )
             ;;
           score)
-            COMPREPLY=( $(compgen -W "--json --history --qualitative --results-dir" -- "${cur}") )
+            COMPREPLY=( $(compgen -W "--json --history --qualitative --results-dir --write-baseline --max-rounds" -- "${cur}") )
             ;;
           report)
             COMPREPLY=( $(compgen -W "--json --history --limit" -- "${cur}") )
             ;;
           gate)
-            COMPREPLY=( $(compgen -W "--json --base --paths" -- "${cur}") )
+            COMPREPLY=( $(compgen -W "--json --base --paths --improve --baseline --results --results-dir --history --score" -- "${cur}") )
+            ;;
+          plateau)
+            COMPREPLY=( $(compgen -W "--json --baseline --history --max-rounds --rounds" -- "${cur}") )
             ;;
           *)
             COMPREPLY=( $(compgen -W "--json" -- "${cur}") )
