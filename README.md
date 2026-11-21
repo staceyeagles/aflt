@@ -16,6 +16,8 @@
 
 **For AI agents:** [AGENTS.md](AGENTS.md) — install, commands, engines, and how to delegate or orchestrate work from Cursor, Copilot, or OpenCode CLI.
 
+**New to aflt?** Start with the [tutorial](docs/tutorial/README.md) (throwaway `--space tutorial`, beginner → advanced).
+
 Zero npm runtime dependencies beyond **Node ≥18**. Install the CLI (`npm install -g aflt`, or `npm install -g github:wwlib/aflt` before the first registry publish), then optionally run `aflt setup` for machine config. Engine × mode behavior (liveness, completion, handoffs, `aflt wait`): [docs/CAPABILITIES.md](docs/CAPABILITIES.md). Setup deep-dive: [docs/SETUP.md](docs/SETUP.md). Full history: [CHANGELOG.md](CHANGELOG.md).
 
 ## Screenshots
@@ -103,6 +105,8 @@ CLI coding agents are powerful but ephemeral: chat IDs live in engine-local stor
 
 ## Install
 
+Step-by-step walkthrough (spaces, doctor, first run, dashboard, …): [docs/tutorial/README.md](docs/tutorial/README.md).
+
 **Install** the CLI, then optionally run **machine setup**. Project onboarding (`.agentfleet.json`, `aflt memory`, …) and day-to-day workflows stay separate.
 
 ```bash
@@ -146,6 +150,8 @@ aflt notify test     # sample webhook POST (requires notify.url / AFLT_NOTIFY_UR
 ```
 
 ## Quick start
+
+Prefer a throwaway space while learning: see the [tutorial](docs/tutorial/README.md) (`aflt space create tutorial`).
 
 ```bash
 # Interactive tracked session (create-chat / mint UUID → register → launch)
@@ -723,6 +729,7 @@ See `af --help` / `aflt help` for the authoritative flag list. Long-form help co
 
 ## More docs
 
+- [docs/tutorial/README.md](docs/tutorial/README.md) — **tutorial** (beginner → advanced; use a throwaway space)
 - [AGENTS.md](AGENTS.md) — guide for AI coding agents (Copilot CLI, Cursor, orchestrators)
 - [CHANGELOG.md](CHANGELOG.md) — release notes
 - [docs/CAPABILITIES.md](docs/CAPABILITIES.md) — engine × mode capability matrix and `aflt wait` outcomes

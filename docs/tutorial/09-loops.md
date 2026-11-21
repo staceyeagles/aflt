@@ -1,0 +1,85 @@
+# 09 — Loops
+
+**Goals**
+
+- Validate and dry-run loop definitions without launching unattended work against a real fleet
+- Know CLI vs dashboard scheduler / Loops UI at a high level
+- Recognize approval gates and plan-next
+- Inspect the shipped examples under `examples/loops/`
+
+## Commands
+
+```bash
+aflt --space tutorial loop validate <file.json> [--json]
+aflt --space tutorial loop run <file.json> [--dry-run] [--json]
+aflt --space tutorial loop start <file.json> [--json]    # register active for dashboard scheduler
+aflt --space tutorial loop pause <name> [--json]
+aflt --space tutorial loop status [name] [--json]
+aflt --space tutorial loop stop <name> [--json]
+aflt --space tutorial loop resume <name> [--json]        # runs in this process from saved state
+aflt --space tutorial loop approve <name> [--json]       # release gate: "approve"
+```
+
+State lives under `$AGENTFLEET_HOME/loops/<name>/` (`state.json` + runner lock). Definitions you save from the UI go only under `$AGENTFLEET_HOME/loops/definitions` (or configured loops dir).
+
+## Examples in the repo
+
+| File | Role |
+|------|------|
+| `examples/loops/hello-eval.json` | Single phase: write HELLO.txt, grep eval |
+| `examples/loops/plan-next.json` | Seed phases + `type: "plan-next"` planner |
+| `examples/loops/self-improve.json` | Eval measure → score/baseline → plan-next → gate `--improve` |
+
+Validate (safe; no engines):
+
+```bash
+aflt --space tutorial loop validate examples/loops/hello-eval.json --json
+aflt --space tutorial loop validate examples/loops/plan-next.json --json
+aflt --space tutorial loop validate examples/loops/self-improve.json --json
+```
+
+Success text shape:
+
+```text
+ok: loop "hello-eval" (1 phase(s))
+```
+
+JSON includes `ok`, `path`, `errors`, `warnings`, and `definition` when valid.
+
+Dry-run (plan only; no lock / no phases executed):
+
+```bash
+aflt --space tutorial loop run examples/loops/hello-eval.json --dry-run --json
+```
+
+Text dry-run:
+
+```text
+dry-run: loop "hello-eval" — 1 phase(s) in …
+  - write-greeting engine=cursor session=loop-hello-eval maxFix=3 onPass=none
+```
+
+## Approval gates and plan-next
+
+- Phase `gate: "approve"` → runner `status=waiting`, notify `loop.gate.waiting`; release with `aflt loop approve` or dashboard `POST /api/loops/:name/approve`
+- `type: "plan-next"`: planner must write `$AGENTFLEET_HOME/loops/<name>/plan-next.json` as `{ "done": true }` or `{ "phases": [ … ] }`
+- Newly planned phases get `gate: "approve"` unless the phase sets `gate` or the loop sets `plannedPhaseGate: "none"`
+- Cap growth with `budget.maxPhases`
+- `onPass` (`none`|`commit`|`merge`|`push`) only runs when loop-level `allow` flags permit (default all false)
+
+## Dashboard scheduler / Loops UI
+
+`aflt loop start` registers a loop as `active` without running phases in that process. `aflt dashboard --serve` hosts an in-process scheduler (one runner per name; lock respected). Loops view: list, phase pipeline, eval tails, History links, start/pause/resume/stop/approve, define/edit form.
+
+This tutorial stops at **validate / dry-run / status**. Do not start an unattended loop against a production fleet from these pages.
+
+## Try it
+
+```bash
+aflt space create tutorial   # if needed
+aflt --space tutorial loop validate examples/loops/hello-eval.json
+aflt --space tutorial loop run examples/loops/hello-eval.json --dry-run
+aflt --space tutorial loop status --json
+```
+
+Confirm validate exits 0 and dry-run does not create a runner lock under a real default home (you are on `--space tutorial`).
