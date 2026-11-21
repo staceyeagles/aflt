@@ -1,0 +1,30 @@
+{
+  "name": "hello-eval",
+  "project": "demo",
+  "cwd": ".",
+  "engine": "cursor",
+  "allow": {
+    "commit": false,
+    "merge": false,
+    "push": false
+  },
+  "budget": {
+    "maxRuns": 20,
+    "maxHours": 2
+  },
+  "phases": [
+    {
+      "id": "write-greeting",
+      "engine": "cursor",
+      "session": "loop-hello-eval",
+      "prompt": "Create a file named HELLO.txt in the working directory containing exactly the line: hello from aflt loop\nDo not switch to plan mode. Do not commit.",
+      "eval": {
+        "command": ["grep", "-x", "hello from aflt loop", "HELLO.txt"],
+        "exitCode": 0
+      },
+      "maxFixAttempts": 3,
+      "onPass": "none",
+      "force": true
+    }
+  ]
+}

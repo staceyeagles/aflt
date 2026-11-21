@@ -33,6 +33,7 @@ const archiveLib = require('../lib/archive');
 const purgeLib = require('../lib/purge');
 const turns = require('../lib/turns');
 const notify = require('../lib/notify');
+const loopLib = require('../lib/loop');
 const {
   parseArgs,
   resolveCwd,
@@ -412,6 +413,19 @@ Usage:
   aflt notify test [--json]
                             Send a sample notify webhook event (requires
                             config.json notify.url or AFLT_NOTIFY_URL)
+  aflt loop validate <file> [--json]
+                            Validate a loop definition JSON file (schema,
+                            phases, eval, allow/onPass). Exit 1 on errors.
+  aflt loop run <file> [--dry-run] [--json]
+                            Run a multi-phase loop (plan→develop→eval→fix).
+                            Persists state under $AGENTFLEET_HOME/loops/<name>/.
+                            --dry-run prints the plan without locking or running.
+  aflt loop status [name] [--json]
+                            Show one loop's state, or list all loops.
+  aflt loop stop <name> [--json]
+                            Request stop (sets stopRequested; signals live runner).
+  aflt loop resume <name> [--json]
+                            Resume a stopped/running loop from saved state.
   aflt help
                             Exit: 0 ok, 1 error, 2 wait timeout, 3 waiting,
                             75 critical registry write failed after a run
@@ -636,6 +650,9 @@ async function main() {
       break;
     case 'notify':
       await cmdNotify(rest);
+      break;
+    case 'loop':
+      await cmdLoop(rest);
       break;
     default:
       fail(`unknown command: ${cmd}\n\n${USAGE}`);
@@ -7277,6 +7294,228 @@ function cmdDoctor(argv) {
     );
   }
   process.exitCode = ok ? 0 : 1;
+}
+
+async function cmdLoop(argv) {
+  const { args, flags } = parseArgs(argv || []);
+  const sub = args[0];
+  const asJson = Boolean(flags.json);
+  const usage =
+    'usage: aflt loop validate <file> | run <file> [--dry-run] | status [name] | stop <name> | resume <name> [--json]';
+  if (!sub || sub === 'help' || sub === '-h' || sub === '--help') {
+    fail(usage);
+  }
+
+  if (sub === 'validate') {
+    const file = args[1];
+    if (!file) fail('usage: aflt loop validate <file> [--json]');
+    let result;
+    try {
+      result = loopLib.validateFile(file);
+    } catch (err) {
+      fail(err.message, { json: asJson });
+    }
+    if (asJson) {
+      emitJson({
+        ok: result.ok,
+        path: result.path,
+        errors: result.errors || [],
+        warnings: result.warnings || [],
+        definition: result.ok ? result.definition : null,
+      });
+    } else if (result.ok) {
+      process.stdout.write(
+        `ok: loop "${result.definition.name}" (${result.definition.phases.length} phase(s))` +
+          (result.warnings && result.warnings.length
+            ? `; ${result.warnings.length} warning(s)`
+            : '') +
+          '\n'
+      );
+      for (const w of result.warnings || []) {
+        process.stderr.write(`WARNING: ${w}\n`);
+      }
+    } else {
+      for (const e of result.errors || []) process.stderr.write(`error: ${e}\n`);
+      for (const w of result.warnings || []) process.stderr.write(`WARNING: ${w}\n`);
+    }
+    process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
+
+  if (sub === 'run') {
+    const file = args[1];
+    if (!file) fail('usage: aflt loop run <file> [--dry-run] [--json]');
+    const dryRun = Boolean(flags['dry-run']);
+    let result;
+    try {
+      result = await loopLib.runFromFile(file, { dryRun });
+    } catch (err) {
+      fail(err.message, { json: asJson });
+    }
+    if (asJson) {
+      emitJson({
+        ok: Boolean(result.ok),
+        dryRun: Boolean(result.dryRun),
+        status: result.status || null,
+        path: result.path || null,
+        name: result.state ? result.state.name : result.name || null,
+        error: result.error || (result.errors && result.errors.join('; ')) || null,
+        errors: result.errors || null,
+        warnings: result.warnings || null,
+        plan: result.dryRun ? result : null,
+        state: result.state
+          ? {
+              name: result.state.name,
+              status: result.state.status,
+              phaseId: result.state.phaseId,
+              phaseIndex: result.state.phaseIndex,
+              attempt: result.state.attempt,
+              step: result.state.step,
+              runsUsed: result.state.runsUsed,
+            }
+          : null,
+      });
+    } else if (result.dryRun) {
+      process.stdout.write(
+        `dry-run: loop "${result.name}" — ${result.phases.length} phase(s) in ${result.cwd}\n`
+      );
+      for (const p of result.phases) {
+        process.stdout.write(
+          `  - ${p.id} engine=${p.engine} session=${p.session} maxFix=${p.maxFixAttempts} onPass=${p.onPass}\n`
+        );
+      }
+    } else if (result.errors) {
+      for (const e of result.errors) process.stderr.write(`error: ${e}\n`);
+    } else if (result.ok) {
+      process.stdout.write(
+        `loop "${result.state.name}" ${result.status}` +
+          (result.message ? ` (${result.message})` : '') +
+          '\n'
+      );
+    } else {
+      process.stderr.write(
+        `loop failed: ${result.error || result.status || 'unknown'}\n`
+      );
+    }
+    await notify.flushPendingNotifies();
+    process.exitCode = result.ok || result.dryRun ? 0 : 1;
+    return;
+  }
+
+  if (sub === 'status') {
+    const name = args[1] || null;
+    let result;
+    try {
+      result = loopLib.statusReport(name);
+    } catch (err) {
+      fail(err.message, { json: asJson });
+    }
+    if (!result.ok) fail(result.error || 'loop status failed', { json: asJson });
+    if (asJson) {
+      emitJson(result);
+    } else if (result.loops) {
+      if (!result.loops.length) {
+        process.stdout.write('(no loops)\n');
+      } else {
+        for (const row of result.loops) {
+          process.stdout.write(
+            `${pad(row.name, 24)} ${pad(row.status, 10)} phase=${row.phaseId || '-'} updated=${row.updatedAt || '-'}\n`
+          );
+        }
+      }
+    } else {
+      process.stdout.write(
+        [
+          `name: ${result.name}`,
+          `status: ${result.status}`,
+          `phase: ${result.phaseId || '-'} (index ${result.phaseIndex}) attempt=${result.attempt} step=${result.step}`,
+          `runsUsed: ${result.runsUsed}`,
+          `cwd: ${result.cwd || '-'}`,
+          `project: ${result.project || '-'}`,
+          `stopRequested: ${result.stopRequested}`,
+          result.lastError ? `lastError: ${result.lastError}` : null,
+          result.lock
+            ? `lock: pid=${result.lock.pid} alive=${result.lock.alive}`
+            : 'lock: none',
+        ]
+          .filter(Boolean)
+          .join('\n') + '\n'
+      );
+    }
+    return;
+  }
+
+  if (sub === 'stop') {
+    const name = args[1];
+    if (!name) fail('usage: aflt loop stop <name> [--json]');
+    let result;
+    try {
+      result = loopLib.requestStop(name);
+    } catch (err) {
+      fail(err.message, { json: asJson });
+    }
+    if (!result.ok) fail(result.error || 'loop stop failed', { json: asJson });
+    if (asJson) {
+      emitJson({
+        ok: true,
+        name: result.state && result.state.name,
+        status: result.status,
+        stopRequested: result.stopRequested,
+        signaled: result.signaled,
+      });
+    } else {
+      process.stdout.write(
+        `loop "${result.state.name}" stop requested (status=${result.status}` +
+          (result.signaled ? ', signaled runner' : '') +
+          ')\n'
+      );
+    }
+    return;
+  }
+
+  if (sub === 'resume') {
+    const name = args[1];
+    if (!name) fail('usage: aflt loop resume <name> [--json]');
+    let result;
+    try {
+      result = await loopLib.resumeLoop(name, { force: Boolean(flags.force) });
+    } catch (err) {
+      if (err && err.code === 'LOOP_BUSY') fail(err.message, { json: asJson });
+      fail(err.message, { json: asJson });
+    }
+    if (asJson) {
+      emitJson({
+        ok: Boolean(result.ok),
+        status: result.status || null,
+        error: result.error || null,
+        message: result.message || null,
+        state: result.state
+          ? {
+              name: result.state.name,
+              status: result.state.status,
+              phaseId: result.state.phaseId,
+              phaseIndex: result.state.phaseIndex,
+              attempt: result.state.attempt,
+              step: result.state.step,
+              runsUsed: result.state.runsUsed,
+            }
+          : null,
+      });
+    } else if (result.ok) {
+      process.stdout.write(
+        `loop "${result.state ? result.state.name : name}" ${result.status}` +
+          (result.message ? ` (${result.message})` : '') +
+          '\n'
+      );
+    } else {
+      process.stderr.write(`loop resume failed: ${result.error || result.status}\n`);
+    }
+    await notify.flushPendingNotifies();
+    process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
+
+  fail(`unknown loop subcommand: ${sub}\n${usage}`);
 }
 
 async function cmdNotify(argv) {
