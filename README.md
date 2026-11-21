@@ -41,6 +41,10 @@ Install the panel and layout with `aflt setup --apply --herdr` (or `aflt herdr-a
 
 Regenerate with `npm run screenshots` (needs Google Chrome, Node ≥18, and a dashboard running at `DASHBOARD_URL`, default `http://127.0.0.1:8787/`; output in `OUT_DIR`, default `docs/images`).
 
+## What's new (2026-11-21)
+
+- **`aflt loop` (milestone 1)** — multi-phase plan→develop→eval→fix runner (`validate` / `run` / `status` / `stop` / `resume`). JSON definitions, persisted state + runner lock under `$AGENTFLEET_HOME/loops/`, opt-in `loop.*` notify events, memory timeline/status notes when configured. Example: `examples/loops/hello-eval.json`.
+
 ## What's new (2026-11-20)
 
 - **OpenCode engine** — `--engine opencode` for `aflt new` / `run` / `resume` / `spawn` / `memory doc` (and related); headless `opencode run`; resume via `--session`; turn capture from `~/.local/share/opencode/opencode.db` (read-only; `node:sqlite` when available); soft check in `aflt doctor`.
@@ -50,7 +54,7 @@ Regenerate with `npm run screenshots` (needs Google Chrome, Node ≥18, and a da
 - **`aflt purge` / `aflt orphans`** — full delete (dry-run unless `--apply`) and orphan/stale scan (`orphans --purge --ids … [--apply]`).
 - **Agent docs lifecycle (issue #3)** — checkpoint cadence at safe boundaries, note acknowledgement, bounded retry/backoff, batched Doc Bot notify after notes are written (`aflt docs notify …`); archive convention labeled/ignored in reporting.
 - **Turns → Doc Bot** — `emitTurnCaptured` enqueues turns for batched Doc Bot notify (one message per batch after a dated note; messaging optional).
-- **Notify webhook** — opt-in `config.json` `notify` or `AFLT_NOTIFY_URL`/`KEY`/`HEADER`; events `run.completed` / `run.failed` / `turn.captured`; `aflt notify test`; flushed before `aflt run` exits.
+- **Notify webhook** — opt-in `config.json` `notify` or `AFLT_NOTIFY_URL`/`KEY`/`HEADER`; events `run.completed` / `run.failed` / `turn.captured` / `loop.*`; `aflt notify test`; flushed before `aflt run` / `aflt loop` exits.
 - **Dashboard UX** — Graph zoom/pan/Fit/Spread; History Gantt presets (24h/7d/30d/all), zoom/scroll, marker stacking and count badges (`aflt dashboard --serve`).
 - **`aflt memory config`** — refresh template-managed memory root files (`DOC-AGENT.md`, `DOCUMENTATION-PROCESS.md`) after upgrades (dry-run default; `--apply`; optional `--commit`/`--push`); `aflt doctor` hints when `DOC-AGENT.md` is outdated.
 
@@ -67,13 +71,14 @@ CLI coding agents are powerful but ephemeral: chat IDs live in engine-local stor
 | **Modes** | Interactive TUI (Herdr by default when `hc` is on PATH) vs headless `aflt run` / spawn |
 | **Herdr** | `hc` terminals + desktop app spaces/tabs + bundled `af-sessions` panel; shell-only reboot recovery via in-tab relaunch |
 | **Orchestration** | `aflt master`, `aflt spawn [--detach]`, `children`, `wait`, `result [--require-fresh]`, `tail`, `send`, `stop`, `rm --children` |
+| **Loop** | `aflt loop` multi-phase eval/fix runner (JSON definition; state under `loops/`; opt-in notify + memory) |
 | **Projects** | Optional `session.project` + `aflt ls --project` / `aflt timeline` / `aflt projects` (repo mappings + validation) |
 | **Live dashboard** | `aflt dashboard --serve` / `--snapshot` — local history-first activity UI (tree + Gantt; optional star graph; not `aflt memory dashboard`) |
 | **Memory** | Opt-in `aflt memory` repo: sync per-project timelines + root `DASHBOARD.md` into a local git working tree; `memory config` refreshes template-managed root docs; optional `--commit`/`--push` for generated `_aflt/` + root `DASHBOARD.md` |
 | **Messaging** | Opt-in `aflt msg` / `inbox` / `thread` + stdio MCP (`aflt mcp`) for Copilot & Cursor |
 | **Documentarian** | Opt-in `aflt docs`; auto once after headless master / `aflt wait --docs` |
 | **Agent docs** | Opt-in `agentDocs`: shared process + `AGENT-DOCS.md`, launch paths, safe-boundary checkpoints, note ack, retry/backoff, batched Doc Bot notify, archive labeling |
-| **Ops** | `aflt setup`, `aflt import`, `aflt doctor`, `aflt notify test`, `aflt purge` / `aflt orphans`, `aflt turns backfill`, `--json` / `--dry-run` on mutating paths |
+| **Ops** | `aflt setup`, `aflt import`, `aflt doctor`, `aflt notify test`, `aflt loop`, `aflt purge` / `aflt orphans`, `aflt turns backfill`, `--json` / `--dry-run` on mutating paths |
 
 ## Architecture
 
@@ -388,6 +393,25 @@ aflt rm --children <master> [--with-master] …
 - **Handoffs:** workers write `$AGENTFLEET_RESULT` (default `$AGENTFLEET_HOME/results/<id>.md`). Headless success with missing/stale file → **af-fallback** from stdout. Freshness uses `runStartedAt` / `resultMtimeAtStart`; `aflt result --require-fresh` exits 1 if stale. HANDOFF column: `yes` / `af` / `stale` / `no`.
 - **Env on launch:** `AGENTFLEET_ID` always; workers `AGENTFLEET_PARENT` / `AGENTFLEET_RESULT`; masters `AGENTFLEET_ROLE=master` / `AGENTFLEET_PLAN` / `AGENTFLEET_RESULT`. Messaging also sets `AGENTFLEET_SESSION` (= id) and `AGENTFLEET_MASTER` when known. Opt-in `agentDocs` also sets `AFLT_PROJECT` / `AFLT_MEMORY_REPO` / `AFLT_DOCS_PROCESS` / `AFLT_AGENT_DOCS` / `AFLT_AGENTS_MD` / `AFLT_MEMORY_PROJECT` (and `AFLT_MEMORY_MISSING=1` when memory is required but unset).
 
+## Loop runner (milestone 1)
+
+`aflt` can drive long-running agent work itself (plan → develop → eval → revise → next phase) without a bot waking it. Each phase hands off to a Cursor / Copilot / OpenCode session via the existing engines, with an explicit eval and exit criteria. Progress is recorded to aflt-memory when configured and reported through opt-in notify webhooks (`loop.*` events) so bots can wake — but the loop never needs a bot to continue.
+
+```bash
+aflt loop validate examples/loops/hello-eval.json
+aflt loop run examples/loops/hello-eval.json --dry-run
+aflt loop run my-loop.json --json
+aflt loop status [name] [--json]
+aflt loop stop <name>
+aflt loop resume <name>
+```
+
+- **Definition (JSON):** `name`, `project`, `cwd`, `engine`, `allow` (`commit`/`merge`/`push`, default false), `budget` (`maxRuns`/`maxHours`), `phases[]` with `id`, `engine`, `session`, `prompt` or `promptFile`, `eval` (`command` string or argv array, `passRegex` and/or `exitCode`), `maxFixAttempts` (default 3), `onPass` (`none`|`commit`|`merge`|`push`).
+- **Semantics:** run phase prompt → run eval → on fail send failing output back to the same session as a fix prompt (up to `maxFixAttempts`) → mark phase passed/failed. Prompts are argv data (no shell interpolation).
+- **State:** `$AGENTFLEET_HOME/loops/<name>/state.json` (atomic writes) + `runner.lock`. Crash/restart resumes at the right step via `aflt loop resume`.
+- **Notify (opt-in):** `loop.started`, `loop.phase.started`, `loop.phase.passed`, `loop.phase.failed`, `loop.completed`, `loop.failed`, `loop.stopped`.
+- **Memory (opt-in):** appends `<project>/_aflt/loop-timeline.jsonl` and a status note per phase result; no-op when no `memoryRepo`.
+
 ## Agent documentation (opt-in)
 
 **Off by default.** Enable with `.agentfleet.json` `{"agentDocs": true}` (optional `docCheckpointHours`, default 4 — overdue labeling only; elapsed time is **not** progress). Fleet knobs in `$AGENTFLEET_HOME/config.json`:
@@ -547,7 +571,7 @@ aflt projects my-app --json
 
 Optional `"project"` is a create-time default for non-repo agent groups (after `AFLT_PROJECT`, before mapping inference / basename/`adhoc`). Optional `"memoryRepo"` is set by `aflt memory init` (override with `AFLT_MEMORY_REPO`). Optional `"memoryActiveDays"` sets the Active/Dormant threshold for root `DASHBOARD.md` (overridden by `--active-days`; default 14). Optional `"repositories"` maps normalized remote identities → local checkout paths (per machine; never commit these into the memory repo).
 
-Optional `"notify"` enables fire-and-forget webhook POSTs when a headless `aflt run` finishes or fails (`run.completed` / `run.failed`) and when an interactive turn is captured (`turn.captured`). Off unless `notify.url` or `AFLT_NOTIFY_URL` is set. Optional `key` is sent as a header (`header` name defaults to `Authorization` with value `Bearer <key>`; custom header names get the raw key). Env overrides config (`AFLT_NOTIFY_URL` / `AFLT_NOTIFY_KEY` / `AFLT_NOTIFY_HEADER`). Bodies are small JSON (event, session id, title, project, engine, redacted cwd, exit status, timestamp, short redacted summary). Failures are logged and never break the run. Headless `aflt run` awaits the webhook before exit; pending `turn.captured` posts are flushed on CLI shutdown. Probe with `aflt notify test`; `aflt doctor` shows status without printing the key.
+Optional `"notify"` enables fire-and-forget webhook POSTs when a headless `aflt run` finishes or fails (`run.completed` / `run.failed`), when an interactive turn is captured (`turn.captured`), and for `aflt loop` lifecycle (`loop.started` / `loop.phase.*` / `loop.completed` / `loop.failed` / `loop.stopped`). Off unless `notify.url` or `AFLT_NOTIFY_URL` is set. Optional `key` is sent as a header (`header` name defaults to `Authorization` with value `Bearer <key>`; custom header names get the raw key). Env overrides config (`AFLT_NOTIFY_URL` / `AFLT_NOTIFY_KEY` / `AFLT_NOTIFY_HEADER`). Bodies are small JSON (event, session id, title, project, engine, redacted cwd, exit status, timestamp, short redacted summary). Failures are logged and never break the run. Headless `aflt run` awaits the webhook before exit; pending `turn.captured` posts are flushed on CLI shutdown. Probe with `aflt notify test`; `aflt doctor` shows status without printing the key.
 
 ### Environment
 
@@ -620,6 +644,7 @@ Optional `"notify"` enables fire-and-forget webhook POSTs when a headless `aflt 
 | `aflt herdr-app install` / `status` | Install/report af-sessions panel + layout |
 | `aflt doctor` | Read-only environment checks (includes notify status; never prints the key) |
 | `aflt notify test` | Send a sample notify webhook event |
+| `aflt loop` | Multi-phase eval/fix runner (`validate` / `run` / `status` / `stop` / `resume`) |
 | `aflt help` | This usage text |
 
 Exit codes (global): `0` ok · `1` error · `2` wait timeout · `3` waiting · `75` critical registry write after run.

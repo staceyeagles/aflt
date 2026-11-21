@@ -8,6 +8,10 @@ Prefer **`aflt help`** (or `aflt` with no args) for the full usage text. **`aflt
 
 Human overview: [README.md](README.md) (dashboard screenshots in `docs/images/`; regenerate with `npm run screenshots` against a running `aflt dashboard --serve`). Release notes: [CHANGELOG.md](CHANGELOG.md).
 
+## What's new (2026-11-21)
+
+- **`aflt loop` (M1)** — multi-phase plan→develop→eval→fix runner (`validate` / `run [--dry-run]` / `status` / `stop` / `resume`). Definition JSON under `examples/loops/`; state in `$AGENTFLEET_HOME/loops/<name>/`; opt-in `loop.*` notify events; memory timeline + status notes when `memoryRepo` is set.
+
 ## What's new (2026-11-20)
 
 - **OpenCode engine** — `--engine opencode` for `new` / `run` / `resume` / `spawn` / `memory doc` etc.; headless `opencode run`; resume with `--session`; turn capture from `opencode.db` (read-only); soft `aflt doctor` check.
@@ -17,7 +21,7 @@ Human overview: [README.md](README.md) (dashboard screenshots in `docs/images/`;
 - **`aflt purge` / `aflt orphans`** — full delete (dry-run unless `--apply`) and orphan/stale scan (`orphans --purge --ids … [--apply]`).
 - **Agent docs lifecycle (issue #3)** — safe-boundary checkpoints, note ack, retry/backoff, batched Doc Bot notify after notes (`aflt docs notify …`); archive convention in reporting.
 - **Turns → Doc Bot** — `emitTurnCaptured` enqueues turns for batched Doc Bot notify (messaging optional).
-- **Notify webhook** — opt-in `config.json` `notify` or `AFLT_NOTIFY_URL`/`KEY`/`HEADER`; events `run.completed` / `run.failed` / `turn.captured`; `aflt notify test`; flushed before `aflt run` exits.
+- **Notify webhook** — opt-in `config.json` `notify` or `AFLT_NOTIFY_URL`/`KEY`/`HEADER`; events `run.completed` / `run.failed` / `turn.captured` / `loop.*`; `aflt notify test`; flushed before `aflt run` / `aflt loop` exits.
 - **Dashboard UX** — Graph zoom/pan/Fit/Spread; History Gantt presets (24h/7d/30d/all), zoom/scroll, marker stacking and count badges (`aflt dashboard --serve`).
 - **`aflt memory config`** — refresh template-managed memory root files (`DOC-AGENT.md`, `DOCUMENTATION-PROCESS.md`) after upgrades (dry-run default; `--apply`; optional `--commit`/`--push`); `aflt doctor` hints when `DOC-AGENT.md` is outdated.
 
@@ -347,10 +351,10 @@ included, and document read errors are surfaced without hiding session activity.
 
 ```bash
 aflt run "<title>" --prompt "..." [--cwd DIR] [--model X] [--engine cursor|copilot|opencode]
-                   [--project NAME] [--mode ask|plan] [--force]
-                   [--output-format text|json] [--timeout SEC]
-                   [--messaging|--no-messaging] [--no-docs]
-                   [--dry-run] [--json]
+ [--project NAME] [--mode ask|plan] [--force]
+ [--output-format text|json] [--timeout SEC]
+ [--messaging|--no-messaging] [--no-docs]
+ [--dry-run] [--json]
 # Create or resume, capture output, exit. --mode is Cursor-only.
 # If the session is role=master and exits 0, may trigger aflt docs (skip with --no-docs).
 
@@ -358,6 +362,22 @@ aflt log <title|id> [--path]
 ```
 
 Timeout on a headless run exits **124**.
+
+### Loop runner (milestone 1)
+
+Long-running phases without a bot waking aflt: each phase runs a prompt in a Cursor/Copilot/OpenCode session, then an eval command; on failure the eval output is sent back as a fix prompt (up to `maxFixAttempts`). State is atomic under `$AGENTFLEET_HOME/loops/<name>/state.json`; a runner lock prevents two runners on one loop. Prompts are always argv data (no shell interpolation). `onPass` (`none`|`commit`|`merge`|`push`) only runs when loop-level `allow` flags permit (default all false).
+
+```bash
+aflt loop validate <file.json> [--json]
+aflt loop run <file.json> [--dry-run] [--json]
+aflt loop status [name] [--json]
+aflt loop stop <name> [--json]
+aflt loop resume <name> [--json]
+```
+
+Definition keys: `name`, `project`, `cwd`, `engine`, `allow`, `budget` (`maxRuns` / `maxHours`), `phases[]` (`id`, `engine`, `session`, `prompt`|`promptFile`, `eval.command` string|argv, `eval.passRegex` / `eval.exitCode`, `maxFixAttempts`, `onPass`). Example: `examples/loops/hello-eval.json`.
+
+Opt-in notify events (same `notify` / `AFLT_NOTIFY_*` config): `loop.started`, `loop.phase.started`, `loop.phase.passed`, `loop.phase.failed`, `loop.completed`, `loop.failed`, `loop.stopped` — payload includes loop name, phase id, attempt, summary, redacted cwd. Memory: appends `<project>/_aflt/loop-timeline.jsonl` and writes a status note per phase result when `memoryRepo` is configured; no-op otherwise.
 
 ### Master / worker orchestration
 
@@ -640,6 +660,7 @@ Home: **`$AGENTFLEET_HOME`** (default `~/.agentfleet`). Override the registry fi
 | `docs/<hash>.json` | Documentarian since-tracking (`lastCommit`) |
 | `doc-checkpoints/<project>.json` | Opt-in agentDocs checkpoint request/complete state |
 | `doc-bot-pending.json` | Batched Doc Bot pending items + batch ack records |
+| `loops/<name>/` | `aflt loop` state (`state.json`) + `runner.lock` (+ definition snapshot) |
 
 Each session stores identity (`id`, `title`, `chatId`, `cwd`, `branch`, `model`, `engine`), optional `project`, lifecycle `status` (`active` | `paused` | `done`), `tags` / `notes` / `prompt`, optional `herdr` evidence from `aflt sync`, and orchestration fields (`parent`, `role`, `task`, `result`, `workerStatus`, run pid metadata, `messaging`, …).
 
@@ -723,7 +744,7 @@ Portable mappings (many-to-many projects↔repos). Template: `templates/project-
 
 Optional `"project"` is a create-time default when `--project` / `AFLT_PROJECT` / source `.agentfleet.json` are unset (useful for non-repo agent groups). Optional `"memoryRepo"` comes from `aflt memory init` (override with `AFLT_MEMORY_REPO`). Optional `"memoryActiveDays"` sets the Active/Dormant threshold for root `DASHBOARD.md` (positive integer; overridden by `--active-days`; default 14). Optional `"repositories"` maps normalized remotes → machine-local checkout paths (not portable; inspect with `aflt projects`). Optional `"agentDocs"` configures checkpoint cadence / note ack / retry / Doc Bot batching for projects that opt in via `.agentfleet.json` `{"agentDocs": true}` (`aflt doctor` reports the resolved knobs + pending queue).
 
-Optional `"notify"` (or `AFLT_NOTIFY_URL` / `AFLT_NOTIFY_KEY` / `AFLT_NOTIFY_HEADER`) enables fire-and-forget webhook POSTs on headless run completion/failure (`run.completed` / `run.failed`) and interactive turn capture (`turn.captured` via `emitTurnCaptured`). Off unless a URL is set. Default auth header is `Authorization: Bearer <key>`; a custom `header` / `AFLT_NOTIFY_HEADER` sends the raw key. Bodies include event, session id, title, project, engine, redacted cwd, exit status, timestamp, and a short redacted summary (reuses `memory.redactSensitive`; never include secrets). Short timeout; failures log to stderr and never break the run. Headless `aflt run` awaits the webhook before exit; pending `turn.captured` posts are flushed on CLI shutdown. `aflt notify test` sends a sample event; `aflt doctor` reports notify status without printing the key.
+Optional `"notify"` (or `AFLT_NOTIFY_URL` / `AFLT_NOTIFY_KEY` / `AFLT_NOTIFY_HEADER`) enables fire-and-forget webhook POSTs on headless run completion/failure (`run.completed` / `run.failed`), interactive turn capture (`turn.captured` via `emitTurnCaptured`), and `aflt loop` lifecycle (`loop.started` / `loop.phase.started` / `loop.phase.passed` / `loop.phase.failed` / `loop.completed` / `loop.failed` / `loop.stopped`). Off unless a URL is set. Default auth header is `Authorization: Bearer <key>`; a custom `header` / `AFLT_NOTIFY_HEADER` sends the raw key. Bodies include event, session id, title, project, engine, redacted cwd, exit status, timestamp, and a short redacted summary (reuses `memory.redactSensitive`; never include secrets). Short timeout; failures log to stderr and never break the run. Headless `aflt run` awaits the webhook before exit; pending `turn.captured` posts are flushed on CLI shutdown. `aflt notify test` sends a sample event; `aflt doctor` reports notify status without printing the key.
 
 ---
 
