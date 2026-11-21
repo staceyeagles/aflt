@@ -35,6 +35,7 @@ const turns = require('../lib/turns');
 const notify = require('../lib/notify');
 const loopLib = require('../lib/loop');
 const serviceLib = require('../lib/service');
+const spaceLib = require('../lib/space');
 const evalMeasure = require('../scripts/eval/measure');
 const {
   parseArgs,
@@ -49,6 +50,9 @@ const {
   registryPath,
   sleep,
   slugify,
+  stripSpaceFlag,
+  applySpaceSelection,
+  currentSpaceName,
 } = require('../lib/util');
 
 /** Resolve + attach `project` for a new session row (stores derived name). */
@@ -444,8 +448,21 @@ Usage:
   aflt service install|uninstall|status [--port N] [--host H] [--print] [--json]
                             macOS LaunchAgent for \`aflt dashboard --serve\`
                             (KeepAlive; logs under $AGENTFLEET_HOME/logs).
-                            --print shows the plist without writing. Unsupported
-                            on non-macOS.
+                            Default label/plist: dev.aflt.dashboard; named space
+                            uses dev.aflt.dashboard.<space>. --print shows the
+                            plist without writing. Unsupported on non-macOS.
+                            Default --port comes from the space config when set.
+  aflt space list [--json]  List named spaces under ~/.agentfleet/spaces/ plus
+                            the default (no-space) home; marks current.
+  aflt space create <name> [--json]
+                            Create ~/.agentfleet/spaces/<name> with a space-local
+                            config.json (unique dashboard port, notify off,
+                            isolated memoryRepo, LaunchAgent label).
+  aflt space current [--json]
+                            Print the current space name, or (default).
+  aflt space remove <name> [--force] [--json]
+                            Remove a named space directory. Refuses non-empty
+                            without --force. Never removes the default home.
   aflt eval measure [--json] [--out DIR]
                             Hermetic self-measurement: suite summary (pass/fail/
                             skip, per-file duration, flake rerun), best-effort
@@ -484,8 +501,18 @@ Usage:
                             Exit: 0 ok, 1 error, 2 wait timeout, 3 waiting,
                             75 critical registry write failed after a run
 
+Global flags:
+  --space NAME            Select a named space (any position). Resolves
+                            AGENTFLEET_HOME to ~/.agentfleet/spaces/NAME when
+                            AGENTFLEET_HOME is unset. Wins over AFLT_SPACE.
+                            Names: [A-Za-z0-9][A-Za-z0-9._-]*
+
 Environment:
-  AGENTFLEET_HOME         Registry dir (default: ~/.agentfleet)
+  AGENTFLEET_HOME         Registry dir (default: ~/.agentfleet, or
+                            ~/.agentfleet/spaces/<name> when a space is selected
+                            and this is unset). Explicit value always wins.
+  AFLT_SPACE              Named space (overridden by --space). Opt-in isolation
+                            so a test space cannot alert/write into the default.
   AGENTFLEET_REGISTRY     Override sessions.json path
   AGENTFLEET_ENGINE       Default engine for NEW sessions (cursor|copilot|opencode);
                             after --engine flag, before config.json / builtin
@@ -539,7 +566,27 @@ function cmdVersion(rest) {
 }
 
 async function main() {
-  const argv = process.argv.slice(2);
+  const rawArgv = process.argv.slice(2);
+  const stripped = stripSpaceFlag(rawArgv);
+  if (stripped.sawSpace) {
+    try {
+      applySpaceSelection({
+        sawSpace: true,
+        spaceFlag: stripped.space,
+        env: process.env,
+      });
+    } catch (err) {
+      fail(err.message || String(err));
+    }
+  } else if (require('../lib/util').envNonEmpty(process.env, 'AFLT_SPACE')) {
+    try {
+      applySpaceSelection({ sawSpace: false, env: process.env });
+    } catch (err) {
+      fail(err.message || String(err));
+    }
+  }
+
+  const argv = stripped.argv;
   if (argv.length === 0 || argv[0] === '-h' || argv[0] === '--help' || argv[0] === 'help') {
     process.stdout.write(USAGE);
     return;
@@ -712,6 +759,9 @@ async function main() {
       break;
     case 'service':
       cmdService(rest);
+      break;
+    case 'space':
+      cmdSpace(rest);
       break;
     case 'eval':
       await cmdEval(rest);
@@ -1242,7 +1292,9 @@ function cmdLs(argv) {
       (s) => projectLib.resolveProjectName(s, { cache: projectCache }) === projectFilter
     );
   }
+  const activeSpace = currentSpaceName();
   if (sessions.length === 0 && !flags.json) {
+    if (activeSpace) process.stdout.write(`space: ${activeSpace}\n`);
     process.stdout.write('(no sessions)\n');
     return;
   }
@@ -1312,10 +1364,16 @@ function cmdLs(argv) {
         })(),
       };
     });
-    emitJson({ sessions: rows, queryOk: Boolean(fetchResult.ok) });
+    emitJson({
+      space: activeSpace || null,
+      home: fleetDir(),
+      sessions: rows,
+      queryOk: Boolean(fetchResult.ok),
+    });
     return;
   }
 
+  if (activeSpace) process.stdout.write(`space: ${activeSpace}\n`);
   // Text table stays unchanged (already wide; project is in --json).
   process.stdout.write(
     `${pad('TITLE', 24)} ${pad('ID', ID_COL)} ${pad('CHAT', 10)} ${pad('ENGINE', 8)} ${pad('FOLDER', 24)} ${pad('BRANCH', 12)} ${pad('STATUS', 8)} ${pad('HERDR', 8)} LAST USED\n`
@@ -1474,12 +1532,13 @@ async function cmdDashboard(argv) {
   if (flags.host != null && flags.host !== true) {
     host = String(flags.host);
   }
-  let port = dashboard.DEFAULT_PORT;
-  if (flags.port != null && flags.port !== true) {
-    port = parseInt(String(flags.port), 10);
-    if (!Number.isInteger(port) || port < 0 || port > 65535) {
-      fail('--port must be an integer 0–65535', { json: asJson });
-    }
+  let port;
+  try {
+    port = spaceLib.resolveDashboardPort({
+      port: flags.port != null && flags.port !== true ? flags.port : undefined,
+    });
+  } catch (err) {
+    fail(err.message || String(err), { json: asJson });
   }
 
   try {
@@ -7224,6 +7283,8 @@ function cmdDoctor(argv) {
   }
   add('aflt', true, PKG_VERSION);
   add('node', true, process.version);
+  const spaceName = currentSpaceName();
+  add('space', true, spaceName || '(default)');
   add('agentfleet_home', true, fleetDir());
   add('registry', true, fs.existsSync(registryPath()) ? registryPath() : `${registryPath()} (will create on first write)`);
   try {
@@ -7685,6 +7746,93 @@ async function cmdLoop(argv) {
   fail(`unknown loop subcommand: ${sub}\n${usage}`);
 }
 
+function cmdSpace(argv) {
+  const { args, flags } = parseArgs(argv || []);
+  const sub = args[0];
+  const asJson = Boolean(flags.json);
+  const usage =
+    'usage: aflt space list|create|current|remove [--json]\n' +
+    '  aflt space list [--json]\n' +
+    '  aflt space create <name> [--json]\n' +
+    '  aflt space current [--json]\n' +
+    '  aflt space remove <name> [--force] [--json]';
+  if (!sub || sub === 'help' || sub === '-h' || sub === '--help') {
+    fail(usage);
+  }
+
+  if (sub === 'list') {
+    const result = spaceLib.listSpaces();
+    if (asJson) {
+      emitJson(result);
+      return;
+    }
+    const cur = result.current ? result.current : '(default)';
+    process.stdout.write(`current: ${cur}\n`);
+    process.stdout.write(
+      `${result.default.current ? '* ' : '  '}(default)  ${result.default.path}  port=${result.default.port}  label=${result.default.serviceLabel}\n`
+    );
+    for (const s of result.spaces) {
+      process.stdout.write(
+        `${s.current ? '* ' : '  '}${s.name}  ${s.path}  port=${s.port != null ? s.port : '-'}  label=${s.serviceLabel}\n`
+      );
+    }
+    return;
+  }
+
+  if (sub === 'current') {
+    const info = spaceLib.currentSpaceInfo();
+    if (asJson) {
+      emitJson(info);
+      return;
+    }
+    process.stdout.write(info.space ? `${info.space}\n` : '(default)\n');
+    return;
+  }
+
+  if (sub === 'create') {
+    const name = args[1];
+    if (!name) fail('usage: aflt space create <name> [--json]', { json: asJson });
+    let result;
+    try {
+      result = spaceLib.createSpace(name);
+    } catch (err) {
+      fail(err.message || String(err), { json: asJson });
+    }
+    if (asJson) {
+      emitJson(result);
+      return;
+    }
+    process.stdout.write(
+      `created space ${result.name}\n` +
+        `  path: ${result.path}\n` +
+        `  port: ${result.port}\n` +
+        `  memoryRepo: ${result.memoryRepo}\n` +
+        `  service: ${result.serviceLabel}\n` +
+        `  notify: off\n`
+    );
+    return;
+  }
+
+  if (sub === 'remove') {
+    const name = args[1];
+    if (!name) fail('usage: aflt space remove <name> [--force] [--json]', { json: asJson });
+    let result;
+    try {
+      result = spaceLib.removeSpace(name, { force: Boolean(flags.force) });
+    } catch (err) {
+      fail(err.message || String(err), { json: asJson });
+    }
+    if (asJson) {
+      emitJson(result);
+      return;
+    }
+    process.stdout.write(`removed space ${result.name}\n`);
+    return;
+  }
+
+  fail(`unknown space subcommand: ${sub}\n${usage}`, { json: asJson });
+}
+
 function cmdService(argv) {
   const { args, flags } = parseArgs(argv || []);
   const sub = args[0];
@@ -7695,11 +7843,23 @@ function cmdService(argv) {
     fail(usage);
   }
 
+  let port;
+  if (flags.port != null && flags.port !== true) {
+    port = Number(flags.port);
+  } else {
+    try {
+      port = spaceLib.resolveDashboardPort({});
+    } catch (err) {
+      fail(err.message || String(err), { json: asJson });
+    }
+  }
+
   const common = {
     print: Boolean(flags.print),
     host: flags.host,
-    port: flags.port != null ? Number(flags.port) : undefined,
+    port,
     env: process.env,
+    space: currentSpaceName(),
   };
 
   let result;

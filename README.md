@@ -43,6 +43,7 @@ Regenerate with `npm run screenshots` (needs Google Chrome, Node ≥18, and a da
 
 ## What's new (2026-11-21)
 
+- **Named spaces** — opt-in `--space NAME` / `AFLT_SPACE` isolate a fleet under `~/.agentfleet/spaces/<name>` when `AGENTFLEET_HOME` is unset. `aflt space list|create|current|remove`; new spaces get a unique dashboard port, notify off, isolated memory, and LaunchAgent `dev.aflt.dashboard.<space>` (default unchanged).
 - **`aflt eval` self-improve (milestone E3)** — `examples/loops/self-improve.json`: measure → score + baseline → plan-next one fix → build → `aflt eval gate --improve`; stop on plateau / max rounds (`aflt eval plateau`). Autonomous profile keeps approval gates and allow.commit/merge/push off.
 - **`aflt eval measure` (milestone E1)** — hermetic self-measurement: suite summary + flake rerun, best-effort coverage, sandboxed CLI smoke, dashboard `/api` contracts; writes `eval/results/<timestamp>.json`.
 - **`aflt eval score` / `report` / `gate` (milestone E2)** — deterministic 0–100 score from measure JSON + `eval/RUBRIC.md`; history in `eval/history.jsonl`; human report + trend; RUBRIC GUARD blocks improvement-loop edits to the rubric/scoring impl.
@@ -174,7 +175,7 @@ aflt result <worker-id>
 
 ## Sessions & registry
 
-Home directory: **`$AGENTFLEET_HOME`** (default `~/.agentfleet`). Override registry file with **`AGENTFLEET_REGISTRY`**.
+Home directory: **`$AGENTFLEET_HOME`** (default `~/.agentfleet`, or `~/.agentfleet/spaces/<name>` when `--space` / `AFLT_SPACE` is set and `AGENTFLEET_HOME` is unset). An explicit `AGENTFLEET_HOME` always wins. Override registry file with **`AGENTFLEET_REGISTRY`**.
 
 | Path | Role |
 |------|------|
@@ -444,6 +445,14 @@ aflt dashboard --serve
 aflt service install --port 8787            # macOS LaunchAgent (KeepAlive)
 aflt service status
 aflt service uninstall
+
+# Named spaces (opt-in isolation)
+aflt space create lab
+aflt --space lab ls
+aflt space list
+aflt space current
+AFLT_SPACE=lab aflt doctor
+aflt space remove lab --force
 ```
 
 - **Definition (JSON):** `name`, `project`, `cwd`, `engine`, `allow` (`commit`/`merge`/`push`, default false), `budget` (`maxRuns`/`maxHours`/`maxPhases`), optional `goal`, `acceptance` (or `acceptanceCriteria`), `acceptanceEval`, `plannedPhaseGate` (`approve`|`none`, default `approve` for phases inserted by plan-next), `phases[]` with `id`, optional `type` (`run`|`plan-next`), `engine`, `session`, `prompt` or `promptFile`, `eval` (`command` string or argv array, `passRegex` and/or `exitCode`), `maxFixAttempts` (default 3), `onPass` (`none`|`commit`|`merge`|`push`), optional `gate: "approve"`. UI-saved files: `$AGENTFLEET_HOME/loops/definitions/<name>.json` (or `config.json` `loop.definitionsDir` / `loopsDir`). Examples: `examples/loops/hello-eval.json`, `examples/loops/plan-next.json`, `examples/loops/self-improve.json`.
@@ -452,7 +461,8 @@ aflt service uninstall
 - **State:** `$AGENTFLEET_HOME/loops/<name>/state.json` (atomic writes) + `runner.lock`. `active` marks the loop for the dashboard scheduler. Crash/restart resumes via `aflt loop resume` or the scheduler on `dashboard --serve` start.
 - **Unattended (M2):** `start` registers without running; `dashboard --serve` runs active loops in-process (one per name, lock respected). API: `GET /api/loops`, `GET /api/loops/:name`, `POST /api/loops/:name/{pause,resume,stop}`.
 - **Dashboard UI (M3):** Loops view lists status / phase / attempt / elapsed / budget, step pipeline, eval tails, History session links; start / pause / resume / stop / approve; define/edit form (server-side `validateDefinition`; writes only under the allowed loops/definitions dirs). Also `POST /api/loops`, `GET /api/loops/definitions`, `POST /api/loops/start`, `POST /api/loops/:name/approve`, `GET|POST /api/loops/:name/definition`.
-- **Service:** `aflt service install|uninstall|status` — macOS LaunchAgent `dev.aflt.dashboard` for the dashboard server; logs under `$AGENTFLEET_HOME/logs`; `--print` shows the plist without writing.
+- **Service:** `aflt service install|uninstall|status` — macOS LaunchAgent `dev.aflt.dashboard` for the dashboard server (named space: `dev.aflt.dashboard.<space>`); logs under `$AGENTFLEET_HOME/logs`; `--print` shows the plist without writing. Default `--port` comes from the space `config.json` when set.
+- **Named spaces:** `aflt space list|create|current|remove` — isolated homes under `~/.agentfleet/spaces/<name>` via `--space` / `AFLT_SPACE` (explicit `AGENTFLEET_HOME` still wins). New spaces: unique dashboard port, notify off, own `memoryRepo`, never overwrite the default LaunchAgent plist.
 - **Notify (opt-in):** events `loop.started`, `loop.phase.started`, `loop.phase.passed`, `loop.phase.failed`, `loop.completed`, `loop.failed`, `loop.stopped`, `loop.gate.waiting`, `loop.gate.approved`, and opt-in `loop.heartbeat` (`loop.heartbeatSeconds` / `AFLT_LOOP_HEARTBEAT_SECONDS`, default off). Payload fields: `event`, `sessionId`, `title`, `project`, `engine`, `cwd` (redacted), `exitStatus`, `timestamp`, `summary` (redacted), `loop`, `phaseId`, `attempt`. Point `notify.url` / `AFLT_NOTIFY_URL` at a Grok Bot routine webhook to wake the bot on progress; the loop itself never waits on the bot.
 - **Memory (opt-in):** appends `<project>/_aflt/loop-timeline.jsonl` and a status note per phase result (plus acceptance summary on complete when goal/acceptance set); no-op when no `memoryRepo`.
 
@@ -621,7 +631,8 @@ Optional `"notify"` enables fire-and-forget webhook POSTs when a headless `aflt 
 
 | Variable | Purpose |
 |----------|---------|
-| `AGENTFLEET_HOME` | Registry dir (default `~/.agentfleet`) |
+| `AGENTFLEET_HOME` | Registry dir (default `~/.agentfleet`, or `~/.agentfleet/spaces/<name>` when a space is selected and this is unset) |
+| `AFLT_SPACE` | Named space (overridden by `--space`); opt-in isolation from the default home |
 | `AGENTFLEET_REGISTRY` | Override `sessions.json` path |
 | `AGENTFLEET_ENGINE` | Default engine for **new** sessions |
 | `AFLT_PROJECT` | Default project for **new** sessions (after `--project` / parent; before `.agentfleet.json` / config / basename). No git required. |
