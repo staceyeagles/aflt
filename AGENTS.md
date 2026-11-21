@@ -11,6 +11,7 @@ Human overview: [README.md](README.md) (dashboard screenshots in `docs/images/`;
 ## What's new (2026-11-21)
 
 - **`aflt eval measure` (E1)** — hermetic self-measurement (`scripts/eval/`): suite summary + flake rerun, best-effort coverage, sandboxed CLI smoke, dashboard `/api` contracts; writes `eval/results/<timestamp>.json` (`--json` / `--out DIR`). Never touches real `~/.agentfleet`, live engines, or Herdr.
+- **`aflt eval score` / `report` / `gate` (E2)** — deterministic 0–100 score from measure JSON + human-owned `eval/RUBRIC.md`; appends `eval/history.jsonl`; `report` shows latest + trend; `gate` (RUBRIC GUARD) fails if rubric/scoring impl paths change. Qualitative opt-in only; skipped in tests; never calls live engines by default.
 - **`aflt loop` (M4)** — multi-phase projects: `type: "plan-next"` planner writes next phases (or `done: true`) to `$AGENTFLEET_HOME/loops/<name>/plan-next.json`; `budget.maxPhases`; loop `goal` / `acceptance` + optional `acceptanceEval`; `plannedPhaseGate` (default `approve` for planned phases). Example: `examples/loops/plan-next.json`.
 - **`aflt loop` (M3)** — Loops view in `aflt dashboard --serve` (list, phase pipeline, eval tails, History session links, start/pause/resume/stop/approve, define/edit form). Definitions save only under `$AGENTFLEET_HOME/loops/definitions` (or configured loops dir). Phase `gate: "approve"` → `loop.gate.waiting` + `POST /api/loops/:name/approve` / `aflt loop approve`.
 - **`aflt loop` (M2)** — unattended loops via dashboard scheduler (`start` / `pause` + API); `aflt service` macOS LaunchAgent for `dashboard --serve`; opt-in `loop.heartbeat` notify (default off).
@@ -367,16 +368,31 @@ aflt log <title|id> [--path]
 
 Timeout on a headless run exits **124**.
 
-### Eval measure (milestone E1)
+### Eval measure + score (milestones E1–E2)
 
-Hermetic self-measurement for later score/improve loops. Opt-in; never mutates the real registry or calls live engines.
+Hermetic self-measurement and deterministic scoring for later improve loops. Opt-in; never mutates the real registry or calls live engines.
 
 ```bash
 aflt eval measure [--json] [--out DIR]
 # Writes eval/results/<timestamp>.json (suite + flakes + coverage + CLI smoke + dashboard API).
 # Sandbox: throwaway AGENTFLEET_HOME. Coverage unavailable → recorded, measure still ok.
-# Implementation: scripts/eval/ (no new npm deps). Generated eval/results/ is gitignored.
+
+aflt eval score [results-file] [--json] [--history PATH] [--qualitative] [--results-dir DIR]
+# Score latest (or given) measure JSON against eval/RUBRIC.md (0–100).
+# Appends one JSON line to eval/history.jsonl (gitignore; override with --history).
+# --qualitative is opt-in and always skipped when AGENTFLEET_TEST=1 or
+# AFLT_EVAL_SKIP_QUALITATIVE=1; default path never spawns engines.
+
+aflt eval report [--json] [--history PATH] [--limit N]
+# Human-readable latest score + trend (delta) from history.jsonl.
+
+aflt eval gate [--json] [--base REF] [--paths a,b]
+# RUBRIC GUARD: exit 1 if protected paths changed vs --base (default HEAD).
+# Protected: eval/RUBRIC.md, scripts/eval/score.js, scripts/eval/rubric.js.
+# Improvement / eval-improve loops must fail this gate. Rubric is human-only.
 ```
+
+Implementation: `scripts/eval/` (no new npm deps). Generated `eval/results/` and `eval/history.jsonl` are gitignored. Hermetic tests: `test/eval-e1.test.js`, `test/eval-e2.test.js`.
 
 ### Loop runner (milestones 1–4)
 
