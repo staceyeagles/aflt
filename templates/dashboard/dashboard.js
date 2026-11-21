@@ -460,23 +460,34 @@ function clampTimelineWindow(start, end, fullStart, fullEnd) {
 /**
  * Resolve the visible timeline window from a preset and optional override.
  * fullRange/override use epoch ms: { start, end }.
+ *
+ * Duration presets (24h/7d/30d) anchor the right edge at max(now, dataEnd) and
+ * the left at end − duration (fixed span — not shrunk to the data range).
+ * 'all' fits [dataStart, max(dataEnd, now)]. An override (manual pan/zoom)
+ * wins until cleared; live callers pass null override to keep following now.
  */
 function resolveTimelineWindow(fullRange, preset, override, nowMs) {
   const now = Number.isFinite(nowMs) ? nowMs : Date.now();
   const fallbackSpan = TIMELINE_PRESET_MS['7d'];
-  const fullStart = fullRange && Number.isFinite(fullRange.start)
+  const dataStart = fullRange && Number.isFinite(fullRange.start)
     ? fullRange.start
     : now - fallbackSpan;
-  const fullEnd = fullRange && Number.isFinite(fullRange.end)
-    ? Math.max(fullRange.end, fullStart + 1)
+  const dataEnd = fullRange && Number.isFinite(fullRange.end)
+    ? Math.max(fullRange.end, dataStart + 1)
     : now;
+  // Visible domain always reaches "now" (or newer markers if clocks/data lead).
+  const fullStart = dataStart;
+  const fullEnd = Math.max(dataEnd, now);
   if (
     override &&
     Number.isFinite(override.start) &&
     Number.isFinite(override.end) &&
     override.end > override.start
   ) {
-    return clampTimelineWindow(override.start, override.end, fullStart, fullEnd);
+    // Pan/zoom domain: allow windows that extend a full 30d behind the right edge
+    // so duration presets are not clamped back onto a short data span.
+    const domainStart = Math.min(fullStart, fullEnd - TIMELINE_PRESET_MS['30d']);
+    return clampTimelineWindow(override.start, override.end, domainStart, fullEnd);
   }
   const key = preset && Object.prototype.hasOwnProperty.call(TIMELINE_PRESET_MS, preset)
     ? preset
@@ -486,8 +497,23 @@ function resolveTimelineWindow(fullRange, preset, override, nowMs) {
     return { start: fullStart, end: fullEnd };
   }
   const end = fullEnd;
-  const start = Math.max(fullStart, end - dur);
+  const start = end - dur;
   return { start: start, end: end };
+}
+
+/**
+ * Format a Gantt axis tick in local time (never UTC).
+ * Short windows (< 2d) → HH:MM; longer → M/D.
+ */
+function formatTimelineAxisLabel(ms, spanMs) {
+  const t = new Date(Number(ms));
+  if (!Number.isFinite(t.getTime())) return '';
+  const span = Number(spanMs);
+  const short = Number.isFinite(span) && span < 2 * 24 * 60 * 60 * 1000;
+  if (short) {
+    return String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
+  }
+  return (t.getMonth() + 1) + '/' + t.getDate();
 }
 
 /** factor > 1 zooms in (shorter span). anchorMs keeps that instant fixed. */
@@ -637,8 +663,8 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     DEFAULT_GRAPH_SPREAD, DEFAULT_TIMELINE_PRESET, TIMELINE_PRESET_MS, TIMELINE_MIN_SPAN_MS,
     GRAPH_ZOOM_MIN, GRAPH_ZOOM_MAX,
     clampGraphSpread, graphForceParams, clampGraphZoom, fitGraphView, zoomGraphView, panGraphView,
-    graphViewTransform, clampTimelineWindow, resolveTimelineWindow, zoomTimelineWindow,
-    panTimelineWindow, layoutTimelineMarkers, maxTimelineLaneCount,
+    graphViewTransform, clampTimelineWindow, resolveTimelineWindow, formatTimelineAxisLabel,
+    zoomTimelineWindow, panTimelineWindow, layoutTimelineMarkers, maxTimelineLaneCount,
   };
 } else {
   (function () {
@@ -865,9 +891,21 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       const end = range ? Date.parse(range.end) : NaN;
       const now = stateNowMs(state);
       if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
-        return { start: start, end: end };
+        // Always extend the right edge to now so presets/pan can follow wall clock
+        // even when the newest marker is hours earlier.
+        return { start: start, end: Math.max(end, now) };
       }
       return { start: now - TIMELINE_PRESET_MS['7d'], end: now };
+    }
+
+    /** Clamp domain for pan/zoom: data ∪ room for the largest duration preset. */
+    function timelineClampDomain(full) {
+      const end = full && Number.isFinite(full.end) ? full.end : stateNowMs(state);
+      const start = full && Number.isFinite(full.start) ? full.start : end - TIMELINE_PRESET_MS['7d'];
+      return {
+        start: Math.min(start, end - TIMELINE_PRESET_MS['30d']),
+        end: end,
+      };
     }
 
     function activeTimelineWindow() {
@@ -912,17 +950,17 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     }
 
     function adjustTimelineZoom(factor, anchorMs) {
-      const full = fullTimelineRange();
+      const domain = timelineClampDomain(fullTimelineRange());
       const win = activeTimelineWindow();
-      timelineOverride = zoomTimelineWindow(win, factor, anchorMs, full.start, full.end);
+      timelineOverride = zoomTimelineWindow(win, factor, anchorMs, domain.start, domain.end);
       persistTimelineView();
       renderHistoryTree();
     }
 
     function adjustTimelinePan(deltaMs) {
-      const full = fullTimelineRange();
+      const domain = timelineClampDomain(fullTimelineRange());
       const win = activeTimelineWindow();
-      timelineOverride = panTimelineWindow(win, deltaMs, full.start, full.end);
+      timelineOverride = panTimelineWindow(win, deltaMs, domain.start, domain.end);
       persistTimelineView();
       renderHistoryTree();
     }
@@ -2215,14 +2253,6 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       return list;
     }
 
-    function collectMarkers(node) {
-      let list = (node.markers || []).slice();
-      (node.children || []).forEach(function (c) {
-        list = list.concat(collectMarkers(c));
-      });
-      return list;
-    }
-
     function rangeBounds(range) {
       if (!range) return { start: NaN, end: NaN };
       const start = typeof range.start === 'number' ? range.start : Date.parse(range.start);
@@ -2321,13 +2351,9 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         ganttAxisEl.innerHTML = '';
         return;
       }
-      const short = span < 2 * 24 * 60 * 60 * 1000;
       let html = '';
       for (let i = 0; i <= 4; i++) {
-        const t = new Date(start + (span * i) / 4);
-        const label = short
-          ? String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0')
-          : (t.getMonth() + 1) + '/' + t.getDate();
+        const label = formatTimelineAxisLabel(start + (span * i) / 4, span);
         html += '<span style="left:' + (i * 25) + '%">' + esc(label) + '</span>';
       }
       if (ganttAxisEl.innerHTML !== html) ganttAxisEl.innerHTML = html;
@@ -2423,7 +2449,9 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       }
       const when = agoLabel(enriched.lastActivity);
       if (when) bits.push(when);
-      const markers = isGroup ? [] : isProject ? collectMarkers(enriched) : enriched.markers || [];
+      // Markers stay on the session that produced them — never roll up onto
+      // project / no-sessions group rows (including when those rows are collapsed).
+      const markers = isGroup || isProject ? [] : enriched.markers || [];
       const waiting = !isProject && !isGroup && filterKey === 'waiting';
       const working = !isProject && !isGroup && filterKey === 'working';
       const stateClass = (isGroup ? 'muted' : filterKey) +
@@ -3217,12 +3245,12 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       const span = timelinePanning.end - timelinePanning.start;
       const dx = ev.clientX - timelinePanning.x;
       const deltaMs = width > 0 ? (-dx / width) * span : 0;
-      const full = fullTimelineRange();
+      const domain = timelineClampDomain(fullTimelineRange());
       timelineOverride = panTimelineWindow(
         { start: timelinePanning.start, end: timelinePanning.end },
         deltaMs,
-        full.start,
-        full.end
+        domain.start,
+        domain.end
       );
       // Live-update axis/markers without clearing override mid-drag.
       renderHistoryTree();

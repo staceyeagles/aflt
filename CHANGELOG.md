@@ -5,6 +5,10 @@ Versions follow [Semantic Versioning](https://semver.org/); see [RELEASING.md](R
 
 ## Unreleased
 
+- **Dashboard History Gantt** — time presets (24h / 7d / 30d) now open with the right edge at `now` (or the newest marker if later) and a fixed preset span; `all` still fits the data range (extended to now). Switching or re-clicking a preset clears pan/zoom; live refresh keeps following now until the user pans. Axis ticks stay in local time. Hermetic coverage in `test/dashboard.test.js`.
+- **History Gantt markers** — finished-turn markers render only on the session row that produced them; project (group) rows no longer aggregate child markers (including when collapsed).
+- **Copilot turn prompts** — `session.task_complete` pairs with the most recent preceding `user.message` (mid-turn steering prompts join onto the open loop); `aflt turns backfill --apply` patches existing `turns.jsonl` rows that lack a prompt without duplicating.
+
 ## 1.4.0 (2026-11-20)
 
 - **Release process** — semver policy and release steps in `RELEASING.md`; `aflt doctor` now reports the aflt version.
