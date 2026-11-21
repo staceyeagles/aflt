@@ -1230,6 +1230,237 @@ describe('aflt memory', () => {
     });
   });
 
+  describe('aflt memory config', () => {
+    it('fails when no memory repo is configured', () => {
+      const r = af(['memory', 'config', '--json'], env({ AFLT_MEMORY_REPO: '' }));
+      assert.equal(r.status, 1, r.stderr + r.stdout);
+      assert.match(r.stderr + r.stdout, /no memory repo configured/);
+    });
+
+    it('dry-run by default reports up-to-date and writes nothing', () => {
+      assert.equal(af(['memory', 'init', memRepo], env()).status, 0);
+      const beforeDoc = fs.readFileSync(path.join(memRepo, 'DOC-AGENT.md'), 'utf8');
+      const beforeProc = fs.readFileSync(path.join(memRepo, 'DOCUMENTATION-PROCESS.md'), 'utf8');
+      const beforeEntries = fs.readdirSync(memRepo).sort();
+      const r = af(['memory', 'config', '--json'], env());
+      assert.equal(r.status, 0, r.stderr + r.stdout);
+      const j = JSON.parse(r.stdout);
+      assert.equal(j.ok, true);
+      assert.equal(j.dryRun, true);
+      assert.equal(j.apply, false);
+      assert.equal(j.needsUpdate, false);
+      const byPath = Object.fromEntries(j.files.map((f) => [f.path, f]));
+      assert.equal(byPath['DOC-AGENT.md'].status, 'up-to-date');
+      assert.equal(byPath['DOCUMENTATION-PROCESS.md'].status, 'up-to-date');
+      assert.equal(fs.readFileSync(path.join(memRepo, 'DOC-AGENT.md'), 'utf8'), beforeDoc);
+      assert.equal(
+        fs.readFileSync(path.join(memRepo, 'DOCUMENTATION-PROCESS.md'), 'utf8'),
+        beforeProc
+      );
+      assert.deepEqual(fs.readdirSync(memRepo).sort(), beforeEntries);
+      assert.ok(!fs.existsSync(path.join(memRepo, 'DOC-AGENT.md.bak')));
+    });
+
+    it('reports would-update / missing with short diff; --apply writes + .bak for edits', () => {
+      assert.equal(af(['memory', 'init', memRepo], env()).status, 0);
+      const docPath = path.join(memRepo, 'DOC-AGENT.md');
+      const procPath = path.join(memRepo, 'DOCUMENTATION-PROCESS.md');
+      const custom = '# local DOC-AGENT edits\nkeep me\n';
+      fs.writeFileSync(docPath, custom);
+      fs.rmSync(procPath);
+
+      const humanReadme = path.join(memRepo, 'alpha', 'README.md');
+      const humanNote = path.join(memRepo, 'alpha', 'status-notes', '2026-11-20.md');
+      fs.mkdirSync(path.dirname(humanNote), { recursive: true });
+      fs.writeFileSync(humanReadme, '# human readme\n');
+      fs.writeFileSync(humanNote, '# note\n');
+
+      const dry = af(['memory', 'config', '--json'], env());
+      assert.equal(dry.status, 0, dry.stderr + dry.stdout);
+      const dj = JSON.parse(dry.stdout);
+      assert.equal(dj.needsUpdate, true);
+      const dryBy = Object.fromEntries(dj.files.map((f) => [f.path, f]));
+      assert.equal(dryBy['DOC-AGENT.md'].status, 'would-update');
+      assert.match(dryBy['DOC-AGENT.md'].diff, /lines |first diff/);
+      assert.equal(dryBy['DOCUMENTATION-PROCESS.md'].status, 'missing');
+      assert.match(dryBy['DOCUMENTATION-PROCESS.md'].diff, /missing/);
+      assert.equal(fs.readFileSync(docPath, 'utf8'), custom);
+      assert.ok(!fs.existsSync(procPath));
+
+      const text = af(['memory', 'config'], env());
+      assert.equal(text.status, 0, text.stderr + text.stdout);
+      assert.match(text.stdout, /would-update/);
+      assert.match(text.stdout, /missing/);
+      assert.match(text.stdout, /--apply/);
+
+      const applied = af(['memory', 'config', '--apply', '--json'], env());
+      assert.equal(applied.status, 0, applied.stderr + applied.stdout);
+      const aj = JSON.parse(applied.stdout);
+      assert.equal(aj.apply, true);
+      assert.equal(aj.dryRun, false);
+      const by = Object.fromEntries(aj.files.map((f) => [f.path, f]));
+      assert.equal(by['DOC-AGENT.md'].status, 'updated');
+      assert.equal(by['DOC-AGENT.md'].backedUp, true);
+      assert.equal(by['DOC-AGENT.md'].bak, 'DOC-AGENT.md.bak');
+      assert.equal(by['DOCUMENTATION-PROCESS.md'].status, 'created');
+      assert.equal(by['DOCUMENTATION-PROCESS.md'].backedUp, false);
+
+      const mem = loadMemory(home);
+      const template = mem.readDocAgentTemplate();
+      assert.equal(fs.readFileSync(docPath, 'utf8'), template);
+      assert.equal(fs.readFileSync(path.join(memRepo, 'DOC-AGENT.md.bak'), 'utf8'), custom);
+      assert.ok(fs.existsSync(procPath));
+      assert.equal(fs.readFileSync(humanReadme, 'utf8'), '# human readme\n');
+      assert.equal(fs.readFileSync(humanNote, 'utf8'), '# note\n');
+      assert.ok(fs.existsSync(path.join(memRepo, 'DASHBOARD.md')));
+    });
+
+    it('--apply does not create .bak when file matches an older identical write path / missing', () => {
+      assert.equal(af(['memory', 'init', memRepo], env()).status, 0);
+      fs.rmSync(path.join(memRepo, 'DOC-AGENT.md'));
+      const r = af(['memory', 'config', '--apply', '--json'], env());
+      assert.equal(r.status, 0, r.stderr + r.stdout);
+      const j = JSON.parse(r.stdout);
+      const doc = j.files.find((f) => f.path === 'DOC-AGENT.md');
+      assert.equal(doc.status, 'created');
+      assert.equal(doc.backedUp, false);
+      assert.ok(!fs.existsSync(path.join(memRepo, 'DOC-AGENT.md.bak')));
+    });
+
+    it('preserves doc-bot summary block when regenerating DASHBOARD.md', () => {
+      assert.equal(af(['memory', 'init', memRepo], env()).status, 0);
+      seedSession(home, {
+        title: 'cfg',
+        project: 'cfg-proj',
+        cwd: home,
+        created: '2026-11-01T00:00:00.000Z',
+        lastUsed: '2026-11-20T00:00:00.000Z',
+        status: 'done',
+      });
+      assert.equal(af(['memory', 'dashboard', '--json'], env()).status, 0);
+      const mem = loadMemory(home);
+      const dashPath = path.join(memRepo, 'DASHBOARD.md');
+      let body = fs.readFileSync(dashPath, 'utf8');
+      const customInner = '\nConfig-preserve summary — keep@example.com\n\n';
+      body = body.replace(
+        /<!-- doc-bot:summary:start -->[\s\S]*?<!-- doc-bot:summary:end -->/,
+        `${mem.DOC_BOT_SUMMARY_START}${customInner}${mem.DOC_BOT_SUMMARY_END}`
+      );
+      fs.writeFileSync(dashPath, body);
+      fs.writeFileSync(path.join(memRepo, 'DOC-AGENT.md'), '# stale\n');
+
+      const r = af(['memory', 'config', '--apply', '--json'], env());
+      assert.equal(r.status, 0, r.stderr + r.stdout);
+      const after = fs.readFileSync(dashPath, 'utf8');
+      assert.equal(mem.extractDocBotSummaryInner(after), customInner);
+      assert.match(after, /keep@example\.com/);
+      assert.equal(
+        fs.readFileSync(path.join(memRepo, 'DOC-AGENT.md'), 'utf8'),
+        mem.readDocAgentTemplate()
+      );
+    });
+
+    it('--commit requires --apply; --push requires --commit', () => {
+      assert.equal(af(['memory', 'init', memRepo], env()).status, 0);
+      const noApply = af(['memory', 'config', '--commit'], env());
+      assert.equal(noApply.status, 1);
+      assert.match(noApply.stderr + noApply.stdout, /--commit requires --apply/);
+      const noCommit = af(['memory', 'config', '--push'], env());
+      assert.equal(noCommit.status, 1);
+      assert.match(noCommit.stderr + noCommit.stdout, /--push requires --commit/);
+    });
+
+    it('--apply --commit stages managed roots + DASHBOARD only; refuses dirty index', () => {
+      assert.equal(af(['memory', 'init', memRepo], env()).status, 0);
+      seedSession(home, {
+        title: 'cfg-commit',
+        project: 'cfg-commit',
+        cwd: home,
+        created: '2026-11-01T00:00:00.000Z',
+        lastUsed: '2026-11-20T00:00:00.000Z',
+        status: 'done',
+      });
+      fs.writeFileSync(path.join(memRepo, 'DOC-AGENT.md'), '# stale for commit\n');
+      // Initial commit so we have history; leave working tree dirty for config
+      const git = (args) =>
+        spawnSync('git', ['-C', memRepo, ...args], { encoding: 'utf8' });
+      assert.equal(git(['add', '-A']).status, 0);
+      assert.equal(git(['commit', '-m', 'seed']).status, 0);
+      fs.writeFileSync(path.join(memRepo, 'DOC-AGENT.md'), '# stale again\n');
+
+      const human = path.join(memRepo, 'cfg-commit', 'README.md');
+      fs.mkdirSync(path.dirname(human), { recursive: true });
+      fs.writeFileSync(human, '# leave me\n');
+
+      const r = af(['memory', 'config', '--apply', '--commit', '--json'], env());
+      assert.equal(r.status, 0, r.stderr + r.stdout);
+      const j = JSON.parse(r.stdout);
+      assert.equal(j.commit.committed, true);
+      assert.match(j.commit.message, /^memory: config \d{4}-\d{2}-\d{2}$/);
+      const show = git(['show', '--name-only', '--pretty=format:', 'HEAD']);
+      const committed = show.stdout
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean);
+      assert.ok(committed.includes('DOC-AGENT.md'));
+      assert.ok(committed.includes('DASHBOARD.md'));
+      assert.ok(!committed.some((p) => p.includes('status-notes')));
+      assert.ok(!committed.some((p) => p === 'cfg-commit/README.md'));
+      assert.ok(!committed.some((p) => p.endsWith('.bak')));
+      assert.equal(fs.readFileSync(human, 'utf8'), '# leave me\n');
+
+      // Dirty index refusal
+      git(['add', '--', 'cfg-commit/README.md']);
+      fs.writeFileSync(path.join(memRepo, 'DOC-AGENT.md'), '# again\n');
+      const refused = af(['memory', 'config', '--apply', '--commit', '--json'], env());
+      assert.equal(refused.status, 1, refused.stderr + refused.stdout);
+      assert.match(refused.stderr + refused.stdout, /staged changes|refusing to commit/);
+    });
+
+    it('doctor reports outdated DOC-AGENT.md with config hint (soft)', () => {
+      assert.equal(af(['memory', 'init', memRepo], env()).status, 0);
+      fs.writeFileSync(path.join(memRepo, 'DOC-AGENT.md'), '# outdated\n');
+      const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'af-mem-doctor-'));
+      try {
+        fs.writeFileSync(
+          path.join(stubDir, 'cursor-agent'),
+          '#!/usr/bin/env bash\necho ok\nexit 0\n',
+          { mode: 0o755 }
+        );
+        fs.writeFileSync(
+          path.join(stubDir, 'hc'),
+          `#!/usr/bin/env node
+const cmd = process.argv[2];
+if (cmd === '--version' || cmd === 'version') { process.stdout.write('herdr-core 0.1.20\\n'); process.exit(0); }
+if (cmd === 'server') { process.stdout.write('ok\\n'); process.exit(0); }
+if (cmd === 'ls') {
+  process.stdout.write(JSON.stringify({ terminals: [], hidden_finished: 0 }));
+  process.exit(0);
+}
+process.exit(0);
+`,
+          { mode: 0o755 }
+        );
+        const r = af(['doctor', '--json'], {
+          ...env(),
+          AGENTFLEET_CURSOR_BIN: path.join(stubDir, 'cursor-agent'),
+          AGENTFLEET_HC_BIN: path.join(stubDir, 'hc'),
+          PATH: `${stubDir}${path.delimiter}${process.env.PATH || ''}`,
+        });
+        assert.equal(r.status, 0, r.stderr + r.stdout);
+        const body = JSON.parse(r.stdout);
+        assert.equal(body.ok, true);
+        const row = body.checks.find((c) => c.name === 'memory_doc_agent');
+        assert.ok(row);
+        assert.equal(row.ok, false);
+        assert.match(row.detail, /outdated/);
+        assert.match(row.detail, /memory config/);
+      } finally {
+        fs.rmSync(stubDir, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe('aflt memory doc', () => {
     it('fails when no memory repo is configured', () => {
       const r = af(['memory', 'doc', '--dry-run', '--json'], env({ AFLT_MEMORY_REPO: '' }));

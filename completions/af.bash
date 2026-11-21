@@ -238,15 +238,21 @@ _af() {
       ;;
     memory)
       if [[ ${COMP_CWORD} -eq 2 ]]; then
-        COMPREPLY=( $(compgen -W "where init sync status" -- "${cur}") )
+        COMPREPLY=( $(compgen -W "where init sync dashboard config refresh doc status" -- "${cur}") )
       elif [[ "${COMP_WORDS[2]}" == "init" ]]; then
         COMPREPLY=( $(compgen -W "--force --json" -- "${cur}") )
       elif [[ "${COMP_WORDS[2]}" == "sync" ]]; then
-        COMPREPLY=( $(compgen -W "--all --include-adhoc --dry-run --json --no-redact --commit --push" -- "${cur}") )
+        COMPREPLY=( $(compgen -W "--all --include-adhoc --dry-run --json --no-redact --active-days --commit --push" -- "${cur}") )
+      elif [[ "${COMP_WORDS[2]}" == "dashboard" ]]; then
+        COMPREPLY=( $(compgen -W "--dry-run --json --no-redact --active-days --include-adhoc" -- "${cur}") )
+      elif [[ "${COMP_WORDS[2]}" == "config" || "${COMP_WORDS[2]}" == "refresh" ]]; then
+        COMPREPLY=( $(compgen -W "--apply --json --no-redact --active-days --commit --push" -- "${cur}") )
+      elif [[ "${COMP_WORDS[2]}" == "doc" ]]; then
+        COMPREPLY=( $(compgen -W "--engine --dry-run --json --force cursor copilot" -- "${cur}") )
       elif [[ "${COMP_WORDS[2]}" == "status" || "${COMP_WORDS[2]}" == "where" ]]; then
         COMPREPLY=( $(compgen -W "--json" -- "${cur}") )
       else
-        COMPREPLY=( $(compgen -W "where init sync status --json" -- "${cur}") )
+        COMPREPLY=( $(compgen -W "where init sync dashboard config refresh doc status --json" -- "${cur}") )
       fi
       ;;
     sync)
