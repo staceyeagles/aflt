@@ -100,6 +100,25 @@ describe('aflt eval measure (E1)', () => {
     assert.equal(cov.available, true);
     assert.equal(cov.totals.lines.percent, 50);
 
+    // Node 24 flat coverage totals shape
+    const flat = suite.normalizeCoverageSummary({
+      totals: {
+        totalLineCount: 100,
+        coveredLineCount: 80,
+        coveredLinePercent: 80,
+        totalFunctionCount: 50,
+        coveredFunctionCount: 40,
+        coveredFunctionPercent: 80,
+        totalBranchCount: 20,
+        coveredBranchCount: 10,
+        coveredBranchPercent: 50,
+      },
+    });
+    assert.equal(flat.lines.percent, 80);
+    assert.equal(flat.lines.covered, 80);
+    assert.equal(flat.functions.percent, 80);
+    assert.equal(flat.branches.percent, 50);
+
     const unavailable = suite.parseCoverageFixture({
       available: false,
       reason: 'fixture',
@@ -327,17 +346,104 @@ describe('aflt eval measure (E1)', () => {
     assert.match(String(result.error || ''), /exited 1|runner crash/i);
   });
 
-  it('runNodeTest uses programmatic child (not --test-reporter=json)', () => {
+  it('runNodeTest uses path NDJSON reporter (not named json)', () => {
     const suite = require('../scripts/eval/suite');
-    assert.ok(suite.RUN_NODE_TEST_CHILD);
-    assert.match(suite.RUN_NODE_TEST_CHILD, /run-node-test-child\.js$/);
-    assert.ok(fs.existsSync(suite.RUN_NODE_TEST_CHILD));
-    const childSrc = fs.readFileSync(suite.RUN_NODE_TEST_CHILD, 'utf8');
-    assert.match(childSrc, /require\(['"]node:test['"]\)/);
-    assert.match(childSrc, /\brun\s*\(/);
+    assert.ok(suite.NDJSON_REPORTER);
+    assert.match(suite.NDJSON_REPORTER, /ndjson-reporter\.js$/);
+    assert.ok(fs.existsSync(suite.NDJSON_REPORTER));
+    const reporterSrc = fs.readFileSync(suite.NDJSON_REPORTER, 'utf8');
+    assert.match(reporterSrc, /JSON\.stringify/);
     const suiteSrc = fs.readFileSync(require.resolve('../scripts/eval/suite'), 'utf8');
-    assert.doesNotMatch(suiteSrc, /--test-reporter=/);
-    assert.match(suiteSrc, /run-node-test-child/);
+    // Must not use the bare named reporter (Node 24 resolves "json" as a package).
+    assert.doesNotMatch(suiteSrc, /--test-reporter=json\b/);
+    assert.match(suiteSrc, /--test-reporter=\$/);
+    assert.match(suiteSrc, /--test'/);
+    assert.match(suiteSrc, /experimental-test-coverage/);
+    assert.match(suiteSrc, /AFLT_EVAL_COVERAGE\s*=\s*['"]1['"]/);
+  });
+
+  it('scrubEnvForNestedTestRunner clears NODE_TEST_CONTEXT and --test flags', () => {
+    const suite = require('../scripts/eval/suite');
+    const env = {
+      NODE_TEST_CONTEXT: 'child-v8',
+      NODE_OPTIONS: '--test --experimental-test-coverage --require ./x.js',
+    };
+    suite.scrubEnvForNestedTestRunner(env);
+    assert.equal(env.NODE_TEST_CONTEXT, undefined);
+    assert.equal(env.NODE_OPTIONS, '--require ./x.js');
+    const empty = {
+      NODE_TEST_CONTEXT: 'child',
+      NODE_OPTIONS: '--test --test-concurrency=1',
+    };
+    suite.scrubEnvForNestedTestRunner(empty);
+    assert.equal(empty.NODE_TEST_CONTEXT, undefined);
+    assert.equal(empty.NODE_OPTIONS, undefined);
+  });
+
+  it('runNodeTest returns coverageSummary when runtime supports coverage', async () => {
+    const suite = require('../scripts/eval/suite');
+    // Keep the test file under the repo cwd so V8 coverage instruments it;
+    // also require a small lib module for non-zero line totals.
+    const tmpDir = fs.mkdtempSync(path.join(repoRoot, 'test', '.tmp-cov-'));
+    const testFile = path.join(tmpDir, 'tiny.test.js');
+    const utilPath = path.join(repoRoot, 'lib', 'util.js').replace(/\\/g, '/');
+    fs.writeFileSync(
+      testFile,
+      `'use strict';\n` +
+        `const { describe, it } = require('node:test');\n` +
+        `const assert = require('node:assert/strict');\n` +
+        `require(${JSON.stringify(utilPath)});\n` +
+        `describe('tiny', () => {\n` +
+        `  it('ok', () => assert.equal(1, 1));\n` +
+        `});\n`
+    );
+
+    try {
+      const result = await suite.runNodeTest({
+        repoRoot,
+        testFiles: [testFile],
+        coverage: true,
+        timeoutMs: 30_000,
+        env: {
+          ...process.env,
+          HOME: home,
+          AGENTFLEET_HOME: path.join(home, '.agentfleet'),
+          AGENTFLEET_TEST: '1',
+        },
+      });
+
+      const unsupported =
+        /experimental-test-coverage|ERR_UNKNOWN|bad option|not support/i.test(
+          result.stderr || ''
+        ) && !result.coverageSummary;
+
+      if (unsupported) {
+        // Soft-assert: runtime genuinely lacks coverage support.
+        assert.equal(result.coverageSummary, null);
+        return;
+      }
+
+      assert.ok(
+        result.events.length > 0,
+        `expected test events; stderr=${(result.stderr || '').slice(0, 400)}`
+      );
+      assert.ok(
+        result.coverageSummary,
+        `expected coverageSummary; stderr=${(result.stderr || '').slice(0, 400)}`
+      );
+      assert.ok(result.coverageSummary.lines);
+      assert.equal(typeof result.coverageSummary.lines.percent, 'number');
+      assert.ok(
+        result.coverageSummary.lines.total > 0,
+        `expected instrumented lines; summary=${JSON.stringify(result.coverageSummary)}`
+      );
+    } finally {
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch (_) {
+        /* ignore */
+      }
+    }
   });
 
   it('dashboard API contract against in-process server', async () => {

@@ -18,6 +18,11 @@ eval/results/
 eval/history.jsonl
 eval/improve-baseline.json
 
+# Ephemeral dirs / leftover probes from hermetic eval coverage debugging
+test/.tmp-cov-*/
+test/_cov-probe.test.js
+scripts/eval/_cov-probe.js
+
 # Written by the Herdr app into mod folders (regenerated on every start)
 herdr/mods/*/gpui-kit.d.ts
 herdr/mods/*/jsconfig.json

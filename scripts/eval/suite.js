@@ -2,20 +2,24 @@
 
 /**
  * Hermetic test-suite measurement for `aflt eval measure`.
- * Spawns a child that runs node:test via the programmatic `run()` API and
- * prints NDJSON events (same shape as a JSON reporter). Reruns failed files
- * once for flake detection. Coverage via --experimental-test-coverage when
- * the runtime supports it.
+ * Spawns `node --test` with a path-based NDJSON reporter (not the named
+ * `json` reporter, which Node 24.7 resolves as a package → ERR_MODULE_NOT_FOUND).
+ * Reruns failed files once for flake detection. Coverage via
+ * `--experimental-test-coverage` when supported (`test:coverage` flows through
+ * the same reporter).
  *
- * Avoids the named "json" test reporter, which Node 24.7 resolves as a package
- * name (ERR_MODULE_NOT_FOUND) and yields a false-green empty suite.
+ * Avoids programmatic `run()` in a child: under Node 24 that path can warn
+ * "run() is being called recursively… skipping running files" and drop coverage.
  */
 
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 
-/** Child script that streams NDJSON test events via node:test run(). */
+/** Path-based reporter that writes NDJSON test events to stdout. */
+const NDJSON_REPORTER = path.join(__dirname, 'ndjson-reporter.js');
+
+/** @deprecated Legacy programmatic child; measure uses --test + NDJSON_REPORTER. */
 const RUN_NODE_TEST_CHILD = path.join(__dirname, 'run-node-test-child.js');
 
 /**
@@ -36,19 +40,47 @@ function listTestFiles(repoRoot) {
 }
 
 /**
+ * Make a nested measure spawn look like a top-level runner.
+ * Node sets `NODE_TEST_CONTEXT` while inside `--test`; inheriting it makes the
+ * child warn "run() is being called recursively… skipping running files" and
+ * drop all events/coverage. Also strip parent `--test` flags from NODE_OPTIONS.
+ * @param {NodeJS.ProcessEnv} env
+ */
+function scrubEnvForNestedTestRunner(env) {
+  if (!env || typeof env !== 'object') return;
+  delete env.NODE_TEST_CONTEXT;
+  if (env.NODE_OPTIONS == null || env.NODE_OPTIONS === '') return;
+  const scrubbed = String(env.NODE_OPTIONS)
+    .replace(/(^|\s)--experimental-test-coverage(?:=\S*)?(?=\s|$)/g, ' ')
+    .replace(/(^|\s)--test-reporter(?:=\S*)?(?=\s|$)/g, ' ')
+    .replace(/(^|\s)--test-concurrency(?:=\S*)?(?=\s|$)/g, ' ')
+    .replace(/(^|\s)--test(?:=\S*)?(?=\s|$)/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (scrubbed) env.NODE_OPTIONS = scrubbed;
+  else delete env.NODE_OPTIONS;
+}
+
+/** @deprecated Use scrubEnvForNestedTestRunner */
+function scrubNodeOptionsForNestedRunner(env) {
+  scrubEnvForNestedTestRunner(env);
+}
+
+/**
  * @param {object} opts
  * @param {string} opts.repoRoot
  * @param {string[]} [opts.testFiles]
  * @param {boolean} [opts.coverage]
  * @param {NodeJS.ProcessEnv} [opts.env]
  * @param {number} [opts.timeoutMs]
- * @param {string} [opts.childScript] override child entry (tests)
+ * @param {string} [opts.reporterPath] override NDJSON reporter path (tests)
+ * @param {string} [opts.childScript] ignored (legacy)
  */
 function runNodeTest(opts) {
   const repoRoot = opts.repoRoot;
   const testFiles =
     opts.testFiles && opts.testFiles.length ? opts.testFiles : listTestFiles(repoRoot);
-  const childScript = opts.childScript || RUN_NODE_TEST_CHILD;
+  const reporterPath = path.resolve(opts.reporterPath || NDJSON_REPORTER);
 
   const args = [];
   if (opts.coverage) {
@@ -57,7 +89,9 @@ function runNodeTest(opts) {
   args.push(
     '--import',
     path.join(repoRoot, 'test', '_setup.js'),
-    childScript,
+    '--test',
+    '--test-concurrency=1',
+    `--test-reporter=${reporterPath}`,
     ...testFiles
   );
 
@@ -66,6 +100,12 @@ function runNodeTest(opts) {
     ...(opts.env || {}),
     AFLT_EVAL_MEASURING: '1',
   };
+  scrubEnvForNestedTestRunner(env);
+  if (opts.coverage) {
+    env.AFLT_EVAL_COVERAGE = '1';
+  } else {
+    delete env.AFLT_EVAL_COVERAGE;
+  }
 
   return new Promise((resolve) => {
     const child = spawn(process.execPath, args, {
@@ -153,6 +193,42 @@ function parseTestReporterOutput(text) {
 function normalizeCoverageSummary(summary) {
   if (!summary || typeof summary !== 'object') return null;
   const totals = summary.totals || summary;
+
+  // Node 24+ flat shape from --experimental-test-coverage:
+  // { totalLineCount, coveredLineCount, coveredLinePercent, ... }
+  if (
+    totals &&
+    typeof totals === 'object' &&
+    (totals.totalLineCount != null ||
+      totals.coveredLinePercent != null ||
+      totals.coveredLineCount != null)
+  ) {
+    const flat = (kind) => {
+      const totalKey = `total${kind}Count`;
+      const coveredKey = `covered${kind}Count`;
+      const percentKey = `covered${kind}Percent`;
+      if (totals[totalKey] == null && totals[percentKey] == null && totals[coveredKey] == null) {
+        return null;
+      }
+      const total = Number(totals[totalKey]) || 0;
+      const covered = Number(totals[coveredKey]) || 0;
+      // Node reports covered*Percent=100 when nothing was instrumented; treat as 0.
+      const percent =
+        total <= 0
+          ? 0
+          : totals[percentKey] != null
+            ? Number(totals[percentKey])
+            : Math.round((covered / total) * 10000) / 100;
+      return { total, covered, percent };
+    };
+    const lines = flat('Line');
+    const functions = flat('Function');
+    const branches = flat('Branch');
+    if (lines || functions || branches) {
+      return { lines, functions, branches };
+    }
+  }
+
   const pick = (key) => {
     const row = totals[key] || totals[key.replace(/s$/, '')];
     if (!row || typeof row !== 'object') return null;
@@ -378,7 +454,19 @@ async function measureSuite(opts = {}) {
       childScript: opts.childScript,
     });
     if (first.coverageSummary) {
-      coverage = { available: true, reason: null, totals: first.coverageSummary };
+      const lineTotal =
+        first.coverageSummary.lines && Number(first.coverageSummary.lines.total);
+      if (lineTotal != null && lineTotal <= 0) {
+        // Event present but nothing instrumented (e.g. tests outside cwd) —
+        // do not claim availability with a fake 100% from Node.
+        coverage = {
+          available: false,
+          reason: 'coverage event present but no instrumented lines',
+          totals: first.coverageSummary,
+        };
+      } else {
+        coverage = { available: true, reason: null, totals: first.coverageSummary };
+      }
     } else if (
       first.events.length === 0 &&
       /experimental-test-coverage|ERR_UNKNOWN|bad option|not support/i.test(
@@ -527,5 +615,8 @@ module.exports = {
   measureSuite,
   parseCoverageFixture,
   normalizeCoverageSummary,
+  scrubEnvForNestedTestRunner,
+  scrubNodeOptionsForNestedRunner,
+  NDJSON_REPORTER,
   RUN_NODE_TEST_CHILD,
 };

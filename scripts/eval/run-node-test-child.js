@@ -7,10 +7,39 @@
  *
  * Parent argv shape:
  *   node [--experimental-test-coverage] --import <setup> this-script.js <testFile>...
+ *
+ * Coverage: on Node 24 the CLI `--experimental-test-coverage` flag alone does
+ * not make programmatic `run()` emit `test:coverage`. Pass `coverage: true`
+ * when the parent requested coverage (flag in `process.execArgv` and/or
+ * `AFLT_EVAL_COVERAGE=1`). Best-effort: if the option is rejected, fall back
+ * without it so the parent can mark coverage unavailable.
  */
 
 const { run } = require('node:test');
 const path = require('path');
+
+/**
+ * @returns {boolean}
+ */
+function coverageRequested() {
+  if (process.env.AFLT_EVAL_COVERAGE === '1') return true;
+  const argv = Array.isArray(process.execArgv) ? process.execArgv : [];
+  return argv.some(
+    (a) =>
+      a === '--experimental-test-coverage' ||
+      String(a).startsWith('--experimental-test-coverage=')
+  );
+}
+
+/**
+ * @param {string[]} files
+ * @param {boolean} withCoverage
+ */
+function startRun(files, withCoverage) {
+  const opts = { files, concurrency: 1 };
+  if (withCoverage) opts.coverage = true;
+  return run(opts);
+}
 
 async function main() {
   const files = process.argv
@@ -24,10 +53,22 @@ async function main() {
     return;
   }
 
-  const stream = run({
-    files,
-    concurrency: 1,
-  });
+  const wantCoverage = coverageRequested();
+  let stream;
+  try {
+    stream = startRun(files, wantCoverage);
+  } catch (err) {
+    if (wantCoverage) {
+      process.stderr.write(
+        'run-node-test-child: coverage option failed; retrying without: ' +
+          String(err && err.message ? err.message : err) +
+          '\n'
+      );
+      stream = startRun(files, false);
+    } else {
+      throw err;
+    }
+  }
 
   let failed = 0;
   for await (const event of stream) {
@@ -51,7 +92,14 @@ async function main() {
   process.exitCode = failed > 0 ? 1 : 0;
 }
 
-main().catch((err) => {
-  process.stderr.write(String(err && err.stack ? err.stack : err) + '\n');
-  process.exitCode = 1;
-});
+module.exports = {
+  coverageRequested,
+  startRun,
+};
+
+if (require.main === module) {
+  main().catch((err) => {
+    process.stderr.write(String(err && err.stack ? err.stack : err) + '\n');
+    process.exitCode = 1;
+  });
+}

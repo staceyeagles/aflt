@@ -422,7 +422,7 @@ aflt loop validate examples/loops/self-improve.json
 aflt loop run examples/loops/self-improve.json --dry-run
 ```
 
-**Measure (E1):** suite pass/fail/skip + per-file duration, flake vs hard-fail (failures rerun once), best-effort coverage (`node --experimental-test-coverage`; unavailable → recorded, not a measure failure), sandboxed CLI smoke (read-only / `--dry-run` only), and dashboard `/api` contract checks (`/api/state`, `/api/loops`, …) with reliable server shutdown.
+**Measure (E1):** suite pass/fail/skip + per-file duration, flake vs hard-fail (failures rerun once), best-effort coverage (`node --test --experimental-test-coverage` + path-based NDJSON reporter; unavailable → recorded, not a measure failure), sandboxed CLI smoke (read-only / `--dry-run` only), and dashboard `/api` contract checks (`/api/state`, `/api/loops`, …) with reliable server shutdown.
 
 **Score (E2):** reads measure JSON + repo files against human-owned [`eval/RUBRIC.md`](eval/RUBRIC.md) (weights sum to 100 → overall 0–100). Qualitative grading is opt-in (`--qualitative`) and always skipped under `AGENTFLEET_TEST` / `AFLT_EVAL_SKIP_QUALITATIVE` — default path never calls engines. `aflt eval gate` exits non-zero if protected paths (`eval/RUBRIC.md`, `scripts/eval/score.js`, `scripts/eval/rubric.js`) change; improvement loops must fail this gate.
 

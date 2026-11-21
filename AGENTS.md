@@ -10,10 +10,11 @@ Human overview: [README.md](README.md) (dashboard screenshots in `docs/images/`;
 
 ## What's new (2026-11-21)
 
+- **`aflt eval measure` coverage (Node 24)** — `node --test --experimental-test-coverage` + path-based `scripts/eval/ndjson-reporter.js`; nested spawns clear `NODE_TEST_CONTEXT` so coverage is not skipped. Best-effort if unsupported.
 - **Token usage** — optional `usage` on `runs/<id>/turns.jsonl` + `usage-summary.json` rollups (`lib/usage.js`). Cursor/OpenCode headless request JSON internally when `--output-format` omitted (user-facing text unchanged); Copilot uses `usage_record`/checkpoint/shutdown. Dashboard History shows token meta + chart; memory sessions.jsonl gets a compact rollup. Never invents USD from tokens.
 - **Named spaces** — `--space NAME` / `AFLT_SPACE` isolate a fleet under `$HOME/.agentfleet/spaces/<name>` when `AGENTFLEET_HOME` is unset (`aflt space list|create|current|remove`). Explicit `AGENTFLEET_HOME` still wins. New spaces get a unique dashboard port, notify off, isolated memory, and LaunchAgent `dev.aflt.dashboard.<space>` (default label unchanged).
 - **`aflt eval` self-improve (E3)** — `examples/loops/self-improve.json`: measure → score + baseline → plan-next (one small fix) → build → `aflt eval gate --improve` (suite green + score ≥ baseline + RUBRIC GUARD); stop via `aflt eval plateau` (plateau or max rounds, default 3). Autonomous profile: `plannedPhaseGate: "none"`, `allow.*` false (opt in commit/merge via allow + onPass). Helpers: `scripts/eval/improve.js`.
-- **`aflt eval measure` (E1)** — hermetic self-measurement (`scripts/eval/`): suite summary + flake rerun, best-effort coverage, sandboxed CLI smoke, dashboard `/api` contracts; writes `eval/results/<timestamp>.json` (`--json` / `--out DIR`). Never touches real `~/.agentfleet`, live engines, or Herdr.
+- **`aflt eval measure` (E1)** — hermetic self-measurement (`scripts/eval/`): suite summary + flake rerun, best-effort coverage via `--experimental-test-coverage` + NDJSON reporter, sandboxed CLI smoke, dashboard `/api` contracts; writes `eval/results/<timestamp>.json` (`--json` / `--out DIR`). Never touches real `~/.agentfleet`, live engines, or Herdr.
 - **`aflt eval score` / `report` / `gate` (E2)** — deterministic 0–100 score from measure JSON + human-owned `eval/RUBRIC.md`; appends `eval/history.jsonl`; `report` shows latest + trend; `gate` (RUBRIC GUARD) fails if rubric/scoring impl paths change. Qualitative opt-in only; skipped in tests; never calls live engines by default.
 - **`aflt loop` (M4)** — multi-phase projects: `type: "plan-next"` planner writes next phases (or `done: true`) to `$AGENTFLEET_HOME/loops/<name>/plan-next.json`; `budget.maxPhases`; loop `goal` / `acceptance` + optional `acceptanceEval`; `plannedPhaseGate` (default `approve` for planned phases). Example: `examples/loops/plan-next.json`.
 - **`aflt loop` (M3)** — Loops view in `aflt dashboard --serve` (list, phase pipeline, eval tails, History session links, start/pause/resume/stop/approve, define/edit form). Definitions save only under `$AGENTFLEET_HOME/loops/definitions` (or configured loops dir). Phase `gate: "approve"` → `loop.gate.waiting` + `POST /api/loops/:name/approve` / `aflt loop approve`.
@@ -378,7 +379,7 @@ Hermetic self-measurement, deterministic scoring, and an opt-in self-improve loo
 ```bash
 aflt eval measure [--json] [--out DIR]
 # Writes eval/results/<timestamp>.json (suite + flakes + coverage + CLI smoke + dashboard API).
-# Sandbox: throwaway AGENTFLEET_HOME. Coverage unavailable → recorded, measure still ok.
+# Sandbox: throwaway AGENTFLEET_HOME. Coverage via --experimental-test-coverage + NDJSON reporter; unavailable → recorded, measure still ok.
 
 aflt eval score [results-file] [--json] [--history PATH] [--qualitative] [--results-dir DIR]
             [--write-baseline PATH] [--max-rounds N]

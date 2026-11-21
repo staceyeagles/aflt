@@ -466,7 +466,7 @@ Usage:
   aflt eval measure [--json] [--out DIR]
                             Hermetic self-measurement: suite summary (pass/fail/
                             skip, per-file duration, flake rerun), best-effort
-                            coverage via node --experimental-test-coverage,
+                            coverage via --experimental-test-coverage + NDJSON reporter,
                             sandboxed CLI smoke, and dashboard /api contract
                             checks. Writes eval/results/<timestamp>.json (or
                             --out DIR). Never touches real ~/.agentfleet, live
