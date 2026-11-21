@@ -260,15 +260,15 @@ _af() {
       ;;
     loop)
       if [[ ${COMP_CWORD} -eq 2 ]]; then
-        COMPREPLY=( $(compgen -W "validate run start pause status stop resume" -- "${cur}") )
+        COMPREPLY=( $(compgen -W "validate run start pause status stop resume approve" -- "${cur}") )
       elif [[ "${COMP_WORDS[2]}" == "validate" || "${COMP_WORDS[2]}" == "start" ]]; then
         COMPREPLY=( $(compgen -W "--json" -- "${cur}") )
       elif [[ "${COMP_WORDS[2]}" == "run" ]]; then
         COMPREPLY=( $(compgen -W "--dry-run --json" -- "${cur}") )
-      elif [[ "${COMP_WORDS[2]}" == "status" || "${COMP_WORDS[2]}" == "stop" || "${COMP_WORDS[2]}" == "resume" || "${COMP_WORDS[2]}" == "pause" ]]; then
+      elif [[ "${COMP_WORDS[2]}" == "status" || "${COMP_WORDS[2]}" == "stop" || "${COMP_WORDS[2]}" == "resume" || "${COMP_WORDS[2]}" == "pause" || "${COMP_WORDS[2]}" == "approve" ]]; then
         COMPREPLY=( $(compgen -W "--json --force" -- "${cur}") )
       else
-        COMPREPLY=( $(compgen -W "validate run start pause status stop resume --json --dry-run" -- "${cur}") )
+        COMPREPLY=( $(compgen -W "validate run start pause status stop resume approve --json --dry-run" -- "${cur}") )
       fi
       ;;
     service)

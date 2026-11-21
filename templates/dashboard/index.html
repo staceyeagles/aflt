@@ -25,6 +25,7 @@
         <div class="view-toggle" role="group" aria-label="View">
           <button type="button" id="view-history" class="active" aria-pressed="true">History</button>
           <button type="button" id="view-graph" aria-pressed="false">Graph</button>
+          <button type="button" id="view-loops" aria-pressed="false">Loops</button>
         </div>
         <label class="sort-control" for="history-sort">Sort
           <select id="history-sort">
@@ -108,6 +109,64 @@
             <span class="failed">Failed</span>
           </div>
           scroll to zoom · drag to pan · hover a node · click for details · double-click an agent for Herdr
+        </div>
+      </div>
+      <div id="loops-view" class="loops-view" hidden>
+        <div class="loops-toolbar">
+          <div class="loops-toolbar-actions">
+            <button type="button" id="loops-new" class="loops-btn">New loop</button>
+            <button type="button" id="loops-refresh" class="loops-btn subtle">Refresh</button>
+          </div>
+          <label class="loops-start-path" for="loops-start-input">
+            Start from file
+            <span class="loops-start-row">
+              <input type="text" id="loops-start-input" placeholder="$AGENTFLEET_HOME/loops/definitions/name.json" autocomplete="off" spellcheck="false"/>
+              <button type="button" id="loops-start-btn" class="loops-btn">Start</button>
+            </span>
+          </label>
+        </div>
+        <div class="loops-layout">
+          <div class="loops-list-panel">
+            <div class="label">Loops</div>
+            <div id="loops-list" class="loops-list" role="list"></div>
+            <div class="label loops-defs-label">Saved definitions</div>
+            <div id="loops-definitions" class="loops-definitions" role="list"></div>
+          </div>
+          <div class="loops-detail-panel">
+            <div id="loops-detail" class="loops-detail">
+              <div class="empty">Select a loop or create one</div>
+            </div>
+            <div id="loops-form-wrap" class="loops-form-wrap" hidden>
+              <div class="label">Define / edit loop</div>
+              <form id="loops-form" class="loops-form" autocomplete="off">
+                <div class="loops-form-grid">
+                  <label>Name <input name="name" required pattern="[A-Za-z0-9._-]+" placeholder="my-loop"/></label>
+                  <label>Project <input name="project" placeholder="optional"/></label>
+                  <label>Engine
+                    <select name="engine">
+                      <option value="cursor">cursor</option>
+                      <option value="copilot">copilot</option>
+                      <option value="opencode">opencode</option>
+                    </select>
+                  </label>
+                  <label>cwd <input name="cwd" placeholder="."/></label>
+                  <label>Budget maxRuns <input name="maxRuns" type="number" min="1" placeholder="20"/></label>
+                  <label>Budget maxHours <input name="maxHours" type="number" min="0.1" step="0.1" placeholder="2"/></label>
+                </div>
+                <div class="label">Phases</div>
+                <div id="loops-phases" class="loops-phases"></div>
+                <div class="loops-form-actions">
+                  <button type="button" id="loops-add-phase" class="loops-btn subtle">Add phase</button>
+                  <button type="submit" class="loops-btn">Save definition</button>
+                  <button type="button" id="loops-form-cancel" class="loops-btn subtle">Cancel</button>
+                </div>
+                <p id="loops-form-status" class="loops-form-status" role="status" aria-live="polite" hidden></p>
+              </form>
+            </div>
+          </div>
+        </div>
+        <div class="hint loops-hint">
+          Loops run via the dashboard scheduler · approval gates pause until Approve · definitions save under $AGENTFLEET_HOME/loops/definitions
         </div>
       </div>
     </main>

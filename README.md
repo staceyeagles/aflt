@@ -406,20 +406,22 @@ aflt loop pause <name>
 aflt loop status [name] [--json]
 aflt loop stop <name>
 aflt loop resume <name>                     # run in this process
+aflt loop approve <name>                    # release gate: "approve"
 
-# Unattended host (scheduler + activity UI)
+# Unattended host (scheduler + activity UI + Loops view)
 aflt dashboard --serve
 aflt service install --port 8787            # macOS LaunchAgent (KeepAlive)
 aflt service status
 aflt service uninstall
 ```
 
-- **Definition (JSON):** `name`, `project`, `cwd`, `engine`, `allow` (`commit`/`merge`/`push`, default false), `budget` (`maxRuns`/`maxHours`), `phases[]` with `id`, `engine`, `session`, `prompt` or `promptFile`, `eval` (`command` string or argv array, `passRegex` and/or `exitCode`), `maxFixAttempts` (default 3), `onPass` (`none`|`commit`|`merge`|`push`).
-- **Semantics:** run phase prompt → run eval → on fail send failing output back to the same session as a fix prompt (up to `maxFixAttempts`) → mark phase passed/failed. Prompts are argv data (no shell interpolation).
+- **Definition (JSON):** `name`, `project`, `cwd`, `engine`, `allow` (`commit`/`merge`/`push`, default false), `budget` (`maxRuns`/`maxHours`), `phases[]` with `id`, `engine`, `session`, `prompt` or `promptFile`, `eval` (`command` string or argv array, `passRegex` and/or `exitCode`), `maxFixAttempts` (default 3), `onPass` (`none`|`commit`|`merge`|`push`), optional `gate: "approve"`. UI-saved files: `$AGENTFLEET_HOME/loops/definitions/<name>.json` (or `config.json` `loop.definitionsDir` / `loopsDir`).
+- **Semantics:** run phase prompt → run eval → on fail send failing output back to the same session as a fix prompt (up to `maxFixAttempts`) → mark phase passed/failed. With `gate: "approve"`, the runner pauses (`status=waiting`) before the phase work until approve. Prompts are argv data (no shell interpolation).
 - **State:** `$AGENTFLEET_HOME/loops/<name>/state.json` (atomic writes) + `runner.lock`. `active` marks the loop for the dashboard scheduler. Crash/restart resumes via `aflt loop resume` or the scheduler on `dashboard --serve` start.
 - **Unattended (M2):** `start` registers without running; `dashboard --serve` runs active loops in-process (one per name, lock respected). API: `GET /api/loops`, `GET /api/loops/:name`, `POST /api/loops/:name/{pause,resume,stop}`.
+- **Dashboard UI (M3):** Loops view lists status / phase / attempt / elapsed / budget, step pipeline, eval tails, History session links; start / pause / resume / stop / approve; define/edit form (server-side `validateDefinition`; writes only under the allowed loops/definitions dirs). Also `POST /api/loops`, `GET /api/loops/definitions`, `POST /api/loops/start`, `POST /api/loops/:name/approve`, `GET|POST /api/loops/:name/definition`.
 - **Service:** `aflt service install|uninstall|status` — macOS LaunchAgent `dev.aflt.dashboard` for the dashboard server; logs under `$AGENTFLEET_HOME/logs`; `--print` shows the plist without writing.
-- **Notify (opt-in):** `loop.started`, `loop.phase.started`, `loop.phase.passed`, `loop.phase.failed`, `loop.completed`, `loop.failed`, `loop.stopped`, and opt-in `loop.heartbeat` (`loop.heartbeatSeconds` / `AFLT_LOOP_HEARTBEAT_SECONDS`, default off).
+- **Notify (opt-in):** `loop.started`, `loop.phase.started`, `loop.phase.passed`, `loop.phase.failed`, `loop.completed`, `loop.failed`, `loop.stopped`, `loop.gate.waiting`, `loop.gate.approved`, and opt-in `loop.heartbeat` (`loop.heartbeatSeconds` / `AFLT_LOOP_HEARTBEAT_SECONDS`, default off).
 - **Memory (opt-in):** appends `<project>/_aflt/loop-timeline.jsonl` and a status note per phase result; no-op when no `memoryRepo`.
 
 ## Agent documentation (opt-in)
@@ -581,7 +583,7 @@ aflt projects my-app --json
 
 Optional `"project"` is a create-time default for non-repo agent groups (after `AFLT_PROJECT`, before mapping inference / basename/`adhoc`). Optional `"memoryRepo"` is set by `aflt memory init` (override with `AFLT_MEMORY_REPO`). Optional `"memoryActiveDays"` sets the Active/Dormant threshold for root `DASHBOARD.md` (overridden by `--active-days`; default 14). Optional `"repositories"` maps normalized remote identities → local checkout paths (per machine; never commit these into the memory repo).
 
-Optional `"notify"` enables fire-and-forget webhook POSTs when a headless `aflt run` finishes or fails (`run.completed` / `run.failed`), when an interactive turn is captured (`turn.captured`), and for `aflt loop` lifecycle (`loop.started` / `loop.phase.*` / `loop.completed` / `loop.failed` / `loop.stopped` / opt-in `loop.heartbeat`). Off unless `notify.url` or `AFLT_NOTIFY_URL` is set. Optional `key` is sent as a header (`header` name defaults to `Authorization` with value `Bearer <key>`; custom header names get the raw key). Env overrides config (`AFLT_NOTIFY_URL` / `AFLT_NOTIFY_KEY` / `AFLT_NOTIFY_HEADER`). Bodies are small JSON (event, session id, title, project, engine, redacted cwd, exit status, timestamp, short redacted summary). Failures are logged and never break the run. Headless `aflt run` awaits the webhook before exit; pending `turn.captured` posts are flushed on CLI shutdown. Probe with `aflt notify test`; `aflt doctor` shows status without printing the key.
+Optional `"notify"` enables fire-and-forget webhook POSTs when a headless `aflt run` finishes or fails (`run.completed` / `run.failed`), when an interactive turn is captured (`turn.captured`), and for `aflt loop` lifecycle (`loop.started` / `loop.phase.*` / `loop.completed` / `loop.failed` / `loop.stopped` / `loop.gate.waiting` / `loop.gate.approved` / opt-in `loop.heartbeat`). Off unless `notify.url` or `AFLT_NOTIFY_URL` is set. Optional `key` is sent as a header (`header` name defaults to `Authorization` with value `Bearer <key>`; custom header names get the raw key). Env overrides config (`AFLT_NOTIFY_URL` / `AFLT_NOTIFY_KEY` / `AFLT_NOTIFY_HEADER`). Bodies are small JSON (event, session id, title, project, engine, redacted cwd, exit status, timestamp, short redacted summary). Failures are logged and never break the run. Headless `aflt run` awaits the webhook before exit; pending `turn.captured` posts are flushed on CLI shutdown. Probe with `aflt notify test`; `aflt doctor` shows status without printing the key.
 
 ### Environment
 

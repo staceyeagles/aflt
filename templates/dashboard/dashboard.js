@@ -653,6 +653,258 @@ function maxTimelineLaneCount(laid) {
   return max;
 }
 
+/** Format elapsed milliseconds for the Loops view. */
+function formatLoopElapsed(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  const sec = Math.floor(n / 1000);
+  if (sec < 60) return sec + 's';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return min + 'm ' + (sec % 60) + 's';
+  const hr = Math.floor(min / 60);
+  return hr + 'h ' + (min % 60) + 'm';
+}
+
+/** Budget used summary: "3/20 runs · 0.4/2 h". */
+function formatLoopBudget(budget) {
+  if (!budget || typeof budget !== 'object') return '—';
+  const parts = [];
+  if (budget.maxRuns != null) {
+    parts.push((budget.runsUsed != null ? budget.runsUsed : 0) + '/' + budget.maxRuns + ' runs');
+  } else if (budget.runsUsed != null) {
+    parts.push(budget.runsUsed + ' runs');
+  }
+  if (budget.maxHours != null) {
+    const used = budget.hoursUsed != null ? Number(budget.hoursUsed) : 0;
+    parts.push((Number.isFinite(used) ? used.toFixed(1) : '0') + '/' + budget.maxHours + ' h');
+  } else if (budget.hoursUsed != null) {
+    parts.push(Number(budget.hoursUsed).toFixed(1) + ' h');
+  }
+  return parts.length ? parts.join(' · ') : '—';
+}
+
+function loopStatusClass(status) {
+  const s = String(status || 'unknown').toLowerCase();
+  if (s === 'running' || s === 'pending') return 'running';
+  if (s === 'waiting') return 'waiting';
+  if (s === 'paused') return 'paused';
+  if (s === 'completed') return 'completed';
+  if (s === 'failed' || s === 'stopped') return s;
+  return 'paused';
+}
+
+/**
+ * Render step pipeline chips: plan → develop → evaluate → revise → (approve) → next.
+ * @param {Array<{id:string,label:string,active?:boolean,done?:boolean}>} steps
+ */
+function renderLoopStepPipeline(steps) {
+  const list = Array.isArray(steps) && steps.length
+    ? steps
+    : [
+        { id: 'plan', label: 'plan' },
+        { id: 'develop', label: 'develop' },
+        { id: 'evaluate', label: 'evaluate' },
+        { id: 'revise', label: 'revise' },
+        { id: 'next', label: 'next' },
+      ];
+  let html = '<div class="loops-pipeline" role="list" aria-label="Phase step pipeline">';
+  for (let i = 0; i < list.length; i++) {
+    const s = list[i] || {};
+    const cls = ['loops-pipe-stage'];
+    if (s.active) cls.push('active');
+    if (s.done) cls.push('done');
+    if (s.id === 'approve' && s.active) cls.push('waiting');
+    if (i) html += '<span class="loops-pipe-arrow" aria-hidden="true">→</span>';
+    html +=
+      '<span class="' +
+      cls.join(' ') +
+      '" role="listitem"' +
+      (s.active ? ' aria-current="step"' : '') +
+      '>' +
+      escapeHtml(s.label || s.id || '') +
+      '</span>';
+  }
+  html += '</div>';
+  return html;
+}
+
+/**
+ * Compact list markup for loop rows (pure; used by live view + tests).
+ */
+function renderLoopsListHtml(loops, selectedName) {
+  const rows = Array.isArray(loops) ? loops : [];
+  if (!rows.length) {
+    return '<div class="empty">No loops yet. Save a definition or start from a file.</div>';
+  }
+  let html = '';
+  for (let i = 0; i < rows.length; i++) {
+    const loop = rows[i] || {};
+    const name = String(loop.name || '');
+    const selected = selectedName && name === selectedName;
+    const status = String(loop.status || 'unknown');
+    const meta = [
+      loop.phaseId ? 'phase ' + loop.phaseId : null,
+      loop.attempt != null ? 'attempt ' + loop.attempt : null,
+      formatLoopElapsed(loop.elapsedMs),
+      formatLoopBudget(loop.budget),
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    html +=
+      '<button type="button" class="loops-row' +
+      (selected ? ' active' : '') +
+      '" role="listitem" data-loop-name="' +
+      escapeHtml(name) +
+      '" aria-pressed="' +
+      String(!!selected) +
+      '">' +
+      '<span class="loops-row-name">' +
+      escapeHtml(name) +
+      '</span>' +
+      '<span class="loops-status ' +
+      loopStatusClass(status) +
+      '">' +
+      escapeHtml(status) +
+      '</span>' +
+      '<span class="loops-row-meta">' +
+      escapeHtml(meta) +
+      '</span>' +
+      '</button>';
+  }
+  return html;
+}
+
+function renderLoopPhaseCards(pipeline) {
+  const phases = Array.isArray(pipeline) ? pipeline : [];
+  if (!phases.length) return '<div class="empty">No phases</div>';
+  let html = '<div class="loops-phases-live">';
+  for (let i = 0; i < phases.length; i++) {
+    const p = phases[i] || {};
+    const cls = 'loops-phase-card' + (p.current ? ' current' : '');
+    html += '<div class="' + cls + '">';
+    html += '<div class="loops-phase-head">';
+    html += '<strong>' + escapeHtml(p.id || 'phase') + '</strong>';
+    html +=
+      '<span class="loops-status ' +
+      loopStatusClass(p.status) +
+      '">' +
+      escapeHtml(p.status || 'pending') +
+      '</span>';
+    html += '</div>';
+    const bits = [];
+    if (p.gate) bits.push('gate=' + p.gate + (p.gateApproved ? ' (approved)' : ''));
+    if (p.sessionId) {
+      bits.push(
+        'session <button type="button" class="loops-session-link" data-session-id="' +
+          escapeHtml(p.sessionId) +
+          '">' +
+          escapeHtml(p.sessionTitle || p.sessionId) +
+          '</button>'
+      );
+    } else if (p.sessionTitle) {
+      bits.push('session ' + escapeHtml(p.sessionTitle));
+    }
+    if (p.attempts) bits.push('attempts ' + p.attempts);
+    if (bits.length) html += '<div class="loops-row-meta">' + bits.join(' · ') + '</div>';
+    if (p.lastEval && p.lastEval.text) {
+      html +=
+        '<pre class="loops-eval-tail" aria-label="Eval output">' +
+        escapeHtml(p.lastEval.text) +
+        '</pre>';
+    }
+    html += '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+/**
+ * Detail panel HTML for a loop status payload from GET /api/loops/:name.
+ */
+function renderLoopDetailHtml(detail) {
+  if (!detail || !detail.name) {
+    return '<div class="empty">Select a loop or create one</div>';
+  }
+  const status = String(detail.status || 'unknown');
+  const waitingGate = Boolean(detail.gate && detail.gate.waiting) || status === 'waiting';
+  let html = '<div class="loops-detail-header">';
+  html += '<div class="loops-detail-title">' + escapeHtml(detail.name) + '</div>';
+  html += '<div class="loops-controls">';
+  if (waitingGate) {
+    html +=
+      '<button type="button" class="loops-btn" data-loop-action="approve" data-loop-name="' +
+      escapeHtml(detail.name) +
+      '">Approve</button>';
+  }
+  html +=
+    '<button type="button" class="loops-btn subtle" data-loop-action="pause" data-loop-name="' +
+    escapeHtml(detail.name) +
+    '">Pause</button>';
+  html +=
+    '<button type="button" class="loops-btn subtle" data-loop-action="resume" data-loop-name="' +
+    escapeHtml(detail.name) +
+    '">Resume</button>';
+  html +=
+    '<button type="button" class="loops-btn danger" data-loop-action="stop" data-loop-name="' +
+    escapeHtml(detail.name) +
+    '">Stop</button>';
+  html +=
+    '<button type="button" class="loops-btn subtle" data-loop-action="edit" data-loop-name="' +
+    escapeHtml(detail.name) +
+    '">Edit</button>';
+  html += '</div></div>';
+
+  html += '<div class="loops-stats">';
+  const stats = [
+    { k: 'Status', v: status },
+    { k: 'Phase', v: detail.phaseId || '—' },
+    { k: 'Attempt', v: detail.attempt != null ? String(detail.attempt) : '—' },
+    { k: 'Step', v: detail.step || '—' },
+    { k: 'Elapsed', v: formatLoopElapsed(detail.elapsedMs) },
+    { k: 'Budget', v: formatLoopBudget(detail.budget) },
+  ];
+  for (let i = 0; i < stats.length; i++) {
+    html +=
+      '<div class="loops-stat"><span class="k">' +
+      escapeHtml(stats[i].k) +
+      '</span><span class="v">' +
+      escapeHtml(stats[i].v) +
+      '</span></div>';
+  }
+  html += '</div>';
+
+  html += '<div class="label">Step pipeline</div>';
+  html += renderLoopStepPipeline(detail.steps);
+  html += '<div class="label">Phases</div>';
+  html += renderLoopPhaseCards(detail.pipeline);
+  if (detail.currentEval && detail.currentEval.text) {
+    html += '<div class="label">Current eval output</div>';
+    html +=
+      '<pre class="loops-eval-tail">' + escapeHtml(detail.currentEval.text) + '</pre>';
+  }
+  if (detail.lastError) {
+    html +=
+      '<p class="loops-form-status error">' + escapeHtml(detail.lastError) + '</p>';
+  }
+  return html;
+}
+
+/** Build a default empty phase editor model. */
+function emptyLoopPhaseForm(index) {
+  return {
+    id: 'phase-' + (index + 1),
+    engine: 'cursor',
+    session: '',
+    prompt: '',
+    evalCommand: 'true',
+    maxFixAttempts: 3,
+    onPass: 'none',
+    gate: '',
+    mode: '',
+    force: true,
+  };
+}
+
 if (typeof module !== 'undefined' && module.exports && typeof document === 'undefined') {
   module.exports = {
     mergeSimPreserve, renderProjectMemory, renderGraphHint, renderMarkdown, resolveDocumentLink,
@@ -665,6 +917,8 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     clampGraphSpread, graphForceParams, clampGraphZoom, fitGraphView, zoomGraphView, panGraphView,
     graphViewTransform, clampTimelineWindow, resolveTimelineWindow, formatTimelineAxisLabel,
     zoomTimelineWindow, panTimelineWindow, layoutTimelineMarkers, maxTimelineLaneCount,
+    formatLoopElapsed, formatLoopBudget, loopStatusClass, renderLoopStepPipeline,
+    renderLoopsListHtml, renderLoopPhaseCards, renderLoopDetailHtml, emptyLoopPhaseForm, escapeHtml,
   };
 } else {
   (function () {
@@ -696,8 +950,23 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     const historyTreeEl = document.getElementById('history-tree');
     const ganttAxisEl = document.getElementById('gantt-axis');
     const graphViewEl = document.getElementById('graph-view');
+    const loopsViewEl = document.getElementById('loops-view');
     const viewHistoryBtn = document.getElementById('view-history');
     const viewGraphBtn = document.getElementById('view-graph');
+    const viewLoopsBtn = document.getElementById('view-loops');
+    const loopsListEl = document.getElementById('loops-list');
+    const loopsDefinitionsEl = document.getElementById('loops-definitions');
+    const loopsDetailEl = document.getElementById('loops-detail');
+    const loopsFormWrap = document.getElementById('loops-form-wrap');
+    const loopsForm = document.getElementById('loops-form');
+    const loopsPhasesEl = document.getElementById('loops-phases');
+    const loopsFormStatus = document.getElementById('loops-form-status');
+    const loopsNewBtn = document.getElementById('loops-new');
+    const loopsRefreshBtn = document.getElementById('loops-refresh');
+    const loopsStartInput = document.getElementById('loops-start-input');
+    const loopsStartBtn = document.getElementById('loops-start-btn');
+    const loopsAddPhaseBtn = document.getElementById('loops-add-phase');
+    const loopsFormCancelBtn = document.getElementById('loops-form-cancel');
     const sortSelect = document.getElementById('history-sort');
     const hideDormantEl = document.getElementById('hide-dormant');
     const dormantHiddenCountEl = document.getElementById('dormant-hidden-count');
@@ -3131,16 +3400,31 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       btn.className = cur.join(' ');
     }
 
+    let selectedLoopName = null;
+    let loopDetailCache = null;
+    let loopDefinitionsCache = [];
+    let loopFormPhases = [emptyLoopPhaseForm(0)];
+    let loopsLoading = false;
+
     function setView(name) {
-      currentView = name === 'graph' ? 'graph' : 'history';
+      currentView = name === 'graph' ? 'graph' : name === 'loops' ? 'loops' : 'history';
       const graph = currentView === 'graph';
-      setShown(historyViewEl, !graph);
+      const loops = currentView === 'loops';
+      setShown(historyViewEl, !graph && !loops);
       setShown(graphViewEl, graph);
-      toggleBtnClass(viewHistoryBtn, 'active', !graph);
+      setShown(loopsViewEl, loops);
+      toggleBtnClass(viewHistoryBtn, 'active', currentView === 'history');
       toggleBtnClass(viewGraphBtn, 'active', graph);
-      if (viewHistoryBtn) viewHistoryBtn.setAttribute('aria-pressed', String(!graph));
+      toggleBtnClass(viewLoopsBtn, 'active', loops);
+      if (viewHistoryBtn) viewHistoryBtn.setAttribute('aria-pressed', String(currentView === 'history'));
       if (viewGraphBtn) viewGraphBtn.setAttribute('aria-pressed', String(graph));
-      if (stage) stage.setAttribute('aria-label', graph ? 'activity graph' : 'session history');
+      if (viewLoopsBtn) viewLoopsBtn.setAttribute('aria-pressed', String(loops));
+      if (stage) {
+        stage.setAttribute(
+          'aria-label',
+          graph ? 'activity graph' : loops ? 'loops' : 'session history'
+        );
+      }
       updateHerdrRemoteNote();
       if (graph) {
         updateSim({ forceRebuild: true, fit: !graphViewInitialized });
@@ -3148,12 +3432,510 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       } else {
         stopLoop();
         dismissGraphTooltip();
-        renderHistoryTree();
+        if (loops) renderLoopsView();
+        else renderHistoryTree();
       }
+    }
+
+    function setLoopsFormStatus(msg, isError) {
+      if (!loopsFormStatus) return;
+      if (!msg) {
+        setShown(loopsFormStatus, false);
+        loopsFormStatus.textContent = '';
+        return;
+      }
+      loopsFormStatus.textContent = msg;
+      loopsFormStatus.className = 'loops-form-status' + (isError ? ' error' : '');
+      setShown(loopsFormStatus, true);
+    }
+
+    function renderLoopPhaseEditors() {
+      if (!loopsPhasesEl) return;
+      let html = '';
+      for (let i = 0; i < loopFormPhases.length; i++) {
+        const p = loopFormPhases[i] || emptyLoopPhaseForm(i);
+        html += '<div class="loops-phase-editor" data-phase-index="' + i + '">';
+        html += '<div class="loops-phase-editor-grid">';
+        html +=
+          '<label>id <input data-field="id" value="' +
+          escapeHtml(p.id) +
+          '" required/></label>';
+        html +=
+          '<label>engine <select data-field="engine">' +
+          ['cursor', 'copilot', 'opencode']
+            .map(function (e) {
+              return (
+                '<option value="' +
+                e +
+                '"' +
+                (p.engine === e ? ' selected' : '') +
+                '>' +
+                e +
+                '</option>'
+              );
+            })
+            .join('') +
+          '</select></label>';
+        html +=
+          '<label>session <input data-field="session" value="' +
+          escapeHtml(p.session || '') +
+          '" placeholder="auto"/></label>';
+        html +=
+          '<label>maxFixAttempts <input data-field="maxFixAttempts" type="number" min="0" value="' +
+          escapeHtml(p.maxFixAttempts != null ? p.maxFixAttempts : 3) +
+          '"/></label>';
+        html +=
+          '<label>onPass <select data-field="onPass">' +
+          ['none', 'commit', 'merge', 'push']
+            .map(function (o) {
+              return (
+                '<option value="' +
+                o +
+                '"' +
+                ((p.onPass || 'none') === o ? ' selected' : '') +
+                '>' +
+                o +
+                '</option>'
+              );
+            })
+            .join('') +
+          '</select></label>';
+        html +=
+          '<label>gate <select data-field="gate">' +
+          '<option value=""' +
+          (!p.gate ? ' selected' : '') +
+          '>none</option>' +
+          '<option value="approve"' +
+          (p.gate === 'approve' ? ' selected' : '') +
+          '>approve</option>' +
+          '</select></label>';
+        html +=
+          '<label>mode <select data-field="mode">' +
+          '<option value=""' +
+          (!p.mode ? ' selected' : '') +
+          '>(default)</option>' +
+          '<option value="ask"' +
+          (p.mode === 'ask' ? ' selected' : '') +
+          '>ask</option>' +
+          '<option value="plan"' +
+          (p.mode === 'plan' ? ' selected' : '') +
+          '>plan</option>' +
+          '</select></label>';
+        html +=
+          '<label>eval command <input data-field="evalCommand" value="' +
+          escapeHtml(p.evalCommand || 'true') +
+          '"/></label>';
+        html +=
+          '<label>prompt <textarea data-field="prompt">' +
+          escapeHtml(p.prompt || '') +
+          '</textarea></label>';
+        html += '</div>';
+        html +=
+          '<button type="button" class="loops-btn subtle" data-remove-phase="' +
+          i +
+          '">Remove phase</button>';
+        html += '</div>';
+      }
+      loopsPhasesEl.innerHTML = html;
+    }
+
+    function readLoopFormPhasesFromDom() {
+      if (!loopsPhasesEl) return loopFormPhases;
+      const editors = loopsPhasesEl.querySelectorAll('.loops-phase-editor');
+      const next = [];
+      for (let i = 0; i < editors.length; i++) {
+        const ed = editors[i];
+        const get = function (field) {
+          const el = ed.querySelector('[data-field="' + field + '"]');
+          return el ? el.value : '';
+        };
+        next.push({
+          id: get('id'),
+          engine: get('engine') || 'cursor',
+          session: get('session'),
+          prompt: get('prompt'),
+          evalCommand: get('evalCommand') || 'true',
+          maxFixAttempts: Number(get('maxFixAttempts') || 3),
+          onPass: get('onPass') || 'none',
+          gate: get('gate') || '',
+          mode: get('mode') || '',
+          force: true,
+        });
+      }
+      loopFormPhases = next.length ? next : [emptyLoopPhaseForm(0)];
+      return loopFormPhases;
+    }
+
+    function showLoopForm(prefill) {
+      if (!loopsFormWrap || !loopsForm) return;
+      setShown(loopsFormWrap, true);
+      setLoopsFormStatus('', false);
+      const def = prefill || {};
+      loopsForm.name.value = def.name || '';
+      loopsForm.project.value = def.project || '';
+      loopsForm.engine.value = def.engine || 'cursor';
+      loopsForm.cwd.value = def.cwd || '.';
+      loopsForm.maxRuns.value =
+        def.budget && def.budget.maxRuns != null ? def.budget.maxRuns : '';
+      loopsForm.maxHours.value =
+        def.budget && def.budget.maxHours != null ? def.budget.maxHours : '';
+      if (Array.isArray(def.phases) && def.phases.length) {
+        loopFormPhases = def.phases.map(function (p, i) {
+          const base = emptyLoopPhaseForm(i);
+          return {
+            id: p.id || base.id,
+            engine: p.engine || base.engine,
+            session: p.session || '',
+            prompt: p.prompt || '',
+            evalCommand: p.eval && p.eval.command != null
+              ? Array.isArray(p.eval.command)
+                ? p.eval.command.join(' ')
+                : String(p.eval.command)
+              : base.evalCommand,
+            maxFixAttempts: p.maxFixAttempts != null ? p.maxFixAttempts : 3,
+            onPass: p.onPass || 'none',
+            gate: p.gate || '',
+            mode: p.mode || '',
+            force: p.force !== false,
+          };
+        });
+      } else {
+        loopFormPhases = [emptyLoopPhaseForm(0)];
+      }
+      renderLoopPhaseEditors();
+    }
+
+    function hideLoopForm() {
+      if (loopsFormWrap) setShown(loopsFormWrap, false);
+      setLoopsFormStatus('', false);
+    }
+
+    function buildDefinitionFromForm() {
+      readLoopFormPhasesFromDom();
+      const phases = loopFormPhases.map(function (p) {
+        const phase = {
+          id: String(p.id || '').trim(),
+          engine: p.engine || 'cursor',
+          prompt: String(p.prompt || ''),
+          eval: { command: String(p.evalCommand || 'true'), exitCode: 0 },
+          maxFixAttempts: Number.isFinite(Number(p.maxFixAttempts))
+            ? Math.floor(Number(p.maxFixAttempts))
+            : 3,
+          onPass: p.onPass || 'none',
+          force: true,
+        };
+        if (p.session) phase.session = String(p.session).trim();
+        if (p.gate) phase.gate = p.gate;
+        if (p.mode) phase.mode = p.mode;
+        return phase;
+      });
+      const def = {
+        name: String(loopsForm.name.value || '').trim(),
+        engine: loopsForm.engine.value || 'cursor',
+        cwd: String(loopsForm.cwd.value || '.').trim() || '.',
+        allow: { commit: false, merge: false, push: false },
+        budget: {},
+        phases: phases,
+      };
+      const project = String(loopsForm.project.value || '').trim();
+      if (project) def.project = project;
+      const maxRuns = Number(loopsForm.maxRuns.value);
+      const maxHours = Number(loopsForm.maxHours.value);
+      if (Number.isFinite(maxRuns) && maxRuns > 0) def.budget.maxRuns = Math.floor(maxRuns);
+      if (Number.isFinite(maxHours) && maxHours > 0) def.budget.maxHours = maxHours;
+      return def;
+    }
+
+    async function fetchLoopDetail(name) {
+      const response = await fetch('/api/loops/' + encodeURIComponent(name));
+      const result = await response.json().catch(function () { return {}; });
+      if (!response.ok) throw new Error(result.error || 'Failed to load loop');
+      return result;
+    }
+
+    async function fetchLoopDefinitions() {
+      const response = await fetch('/api/loops/definitions');
+      const result = await response.json().catch(function () { return {}; });
+      if (!response.ok) throw new Error(result.error || 'Failed to load definitions');
+      return result;
+    }
+
+    function renderLoopsListFromState() {
+      if (!loopsListEl) return;
+      const loops = (state && state.loops && state.loops.loops) || [];
+      loopsListEl.innerHTML = renderLoopsListHtml(loops, selectedLoopName);
+    }
+
+    function renderLoopDefinitionsList() {
+      if (!loopsDefinitionsEl) return;
+      const defs = loopDefinitionsCache || [];
+      if (!defs.length) {
+        loopsDefinitionsEl.innerHTML = '<div class="empty">No saved definitions</div>';
+        return;
+      }
+      let html = '';
+      for (let i = 0; i < defs.length; i++) {
+        const d = defs[i] || {};
+        html +=
+          '<button type="button" class="loops-row" data-definition-name="' +
+          escapeHtml(d.name || '') +
+          '" data-definition-path="' +
+          escapeHtml(d.path || '') +
+          '">' +
+          '<span class="loops-row-name">' +
+          escapeHtml(d.name || '') +
+          '</span>' +
+          '<span class="loops-row-meta">' +
+          escapeHtml(
+            (d.phaseCount != null ? d.phaseCount + ' phase(s)' : '') +
+              (d.engine ? ' · ' + d.engine : '') +
+              (d.project ? ' · ' + d.project : '')
+          ) +
+          '</span>' +
+          '</button>';
+      }
+      loopsDefinitionsEl.innerHTML = html;
+    }
+
+    async function selectLoop(name) {
+      selectedLoopName = name;
+      renderLoopsListFromState();
+      if (!name) {
+        loopDetailCache = null;
+        if (loopsDetailEl) {
+          loopsDetailEl.innerHTML = '<div class="empty">Select a loop or create one</div>';
+        }
+        return;
+      }
+      try {
+        loopDetailCache = await fetchLoopDetail(name);
+        if (loopsDetailEl) loopsDetailEl.innerHTML = renderLoopDetailHtml(loopDetailCache);
+      } catch (err) {
+        if (loopsDetailEl) {
+          loopsDetailEl.innerHTML =
+            '<div class="empty">' + escapeHtml(String(err.message || err)) + '</div>';
+        }
+      }
+    }
+
+    async function refreshLoopsData() {
+      if (loopsLoading) return;
+      loopsLoading = true;
+      try {
+        const listed = await fetch('/api/loops').then(function (r) { return r.json(); });
+        if (state) {
+          state.loops = {
+            ok: listed.ok !== false,
+            loops: listed.loops || [],
+            definitionsDir: listed.definitionsDir || null,
+          };
+        }
+        renderLoopsListFromState();
+        try {
+          const defs = await fetchLoopDefinitions();
+          loopDefinitionsCache = defs.definitions || [];
+          renderLoopDefinitionsList();
+        } catch (_) {
+          /* ignore */
+        }
+        if (selectedLoopName) await selectLoop(selectedLoopName);
+      } catch (err) {
+        setActionMessage(String(err.message || err), true);
+      } finally {
+        loopsLoading = false;
+      }
+    }
+
+    function renderLoopsView() {
+      renderLoopsListFromState();
+      renderLoopDefinitionsList();
+      if (loopDetailCache && selectedLoopName) {
+        if (loopsDetailEl) loopsDetailEl.innerHTML = renderLoopDetailHtml(loopDetailCache);
+      }
+      refreshLoopsData();
+    }
+
+    async function postLoopAction(pathname, body) {
+      if (!actionsAllowed()) {
+        setActionMessage(
+          'Loop controls only work on the Mini — open this dashboard at 127.0.0.1 locally.',
+          true
+        );
+        throw new Error('actions require local dashboard');
+      }
+      const response = await fetch(pathname, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Aflt-Action-Token': actionToken(),
+        },
+        body: JSON.stringify(body || {}),
+      });
+      const result = await response.json().catch(function () { return {}; });
+      if (!response.ok) throw new Error(result.error || 'Request failed');
+      return result;
     }
 
     if (viewHistoryBtn) viewHistoryBtn.addEventListener('click', function () { setView('history'); });
     if (viewGraphBtn) viewGraphBtn.addEventListener('click', function () { setView('graph'); });
+    if (viewLoopsBtn) viewLoopsBtn.addEventListener('click', function () { setView('loops'); });
+
+    if (loopsNewBtn) {
+      loopsNewBtn.addEventListener('click', function () {
+        showLoopForm({ name: '', phases: [emptyLoopPhaseForm(0)] });
+      });
+    }
+    if (loopsRefreshBtn) {
+      loopsRefreshBtn.addEventListener('click', function () { refreshLoopsData(); });
+    }
+    if (loopsFormCancelBtn) {
+      loopsFormCancelBtn.addEventListener('click', function () { hideLoopForm(); });
+    }
+    if (loopsAddPhaseBtn) {
+      loopsAddPhaseBtn.addEventListener('click', function () {
+        readLoopFormPhasesFromDom();
+        loopFormPhases.push(emptyLoopPhaseForm(loopFormPhases.length));
+        renderLoopPhaseEditors();
+      });
+    }
+    if (loopsPhasesEl) {
+      loopsPhasesEl.addEventListener('click', function (ev) {
+        const t = ev.target;
+        const btn = t && t.closest ? t.closest('[data-remove-phase]') : null;
+        if (!btn) return;
+        const idx = Number(btn.getAttribute('data-remove-phase'));
+        readLoopFormPhasesFromDom();
+        if (loopFormPhases.length <= 1) return;
+        loopFormPhases.splice(idx, 1);
+        renderLoopPhaseEditors();
+      });
+    }
+    if (loopsForm) {
+      loopsForm.addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        const def = buildDefinitionFromForm();
+        setLoopsFormStatus('Saving…', false);
+        postLoopAction('/api/loops', { definition: def })
+          .then(function (result) {
+            setLoopsFormStatus('Saved ' + (result.path || def.name), false);
+            setActionMessage('Saved loop definition ' + def.name, false);
+            return refreshLoopsData();
+          })
+          .catch(function (err) {
+            setLoopsFormStatus(String(err.message || err), true);
+          });
+      });
+    }
+    if (loopsStartBtn) {
+      loopsStartBtn.addEventListener('click', function () {
+        const pathVal = loopsStartInput ? String(loopsStartInput.value || '').trim() : '';
+        if (!pathVal) {
+          setActionMessage('Enter a loop definition path to start.', true);
+          return;
+        }
+        postLoopAction('/api/loops/start', { path: pathVal })
+          .then(function (result) {
+            setActionMessage('Started loop ' + (result.name || pathVal), false);
+            if (result.name) selectedLoopName = result.name;
+            return refreshLoopsData();
+          })
+          .catch(function (err) {
+            setActionMessage(String(err.message || err), true);
+          });
+      });
+    }
+    if (loopsListEl) {
+      loopsListEl.addEventListener('click', function (ev) {
+        const t = ev.target;
+        const row = t && t.closest ? t.closest('[data-loop-name]') : null;
+        if (!row) return;
+        selectLoop(row.getAttribute('data-loop-name'));
+      });
+    }
+    if (loopsDefinitionsEl) {
+      loopsDefinitionsEl.addEventListener('click', function (ev) {
+        const t = ev.target;
+        const row = t && t.closest ? t.closest('[data-definition-name]') : null;
+        if (!row) return;
+        const name = row.getAttribute('data-definition-name');
+        const pathVal = row.getAttribute('data-definition-path');
+        if (loopsStartInput && pathVal) loopsStartInput.value = pathVal;
+        fetch('/api/loops/' + encodeURIComponent(name) + '/definition')
+          .then(function (r) { return r.json(); })
+          .then(function (result) {
+            if (result && result.definition) showLoopForm(result.definition);
+            else setActionMessage(result.error || 'Definition not found', true);
+          })
+          .catch(function (err) {
+            setActionMessage(String(err.message || err), true);
+          });
+      });
+    }
+    if (loopsDetailEl) {
+      loopsDetailEl.addEventListener('click', function (ev) {
+        const t = ev.target;
+        const sessionBtn = t && t.closest ? t.closest('[data-session-id]') : null;
+        if (sessionBtn) {
+          const sid = sessionBtn.getAttribute('data-session-id');
+          if (sid) {
+            selectedId = sid;
+            setView('history');
+            renderDetail();
+            setActionMessage('Selected session ' + sid + ' in History.', false);
+          }
+          return;
+        }
+        const btn = t && t.closest ? t.closest('[data-loop-action]') : null;
+        if (!btn) return;
+        const action = btn.getAttribute('data-loop-action');
+        const name = btn.getAttribute('data-loop-name');
+        if (!action || !name) return;
+        if (action === 'edit') {
+          fetch('/api/loops/' + encodeURIComponent(name) + '/definition')
+            .then(function (r) { return r.json(); })
+            .then(function (result) {
+              if (result && result.definition) showLoopForm(result.definition);
+              else if (loopDetailCache && loopDetailCache.definition) {
+                showLoopForm({
+                  name: loopDetailCache.name,
+                  project: loopDetailCache.project,
+                  cwd: loopDetailCache.cwd,
+                  engine: loopDetailCache.definition.engine,
+                  budget: loopDetailCache.definition.budget,
+                  phases: (loopDetailCache.definition.phases || []).map(function (p) {
+                    return {
+                      id: p.id,
+                      engine: p.engine,
+                      session: p.session,
+                      prompt: '',
+                      eval: p.eval,
+                      maxFixAttempts: p.maxFixAttempts,
+                      onPass: p.onPass,
+                      gate: p.gate,
+                      mode: p.mode,
+                      force: p.force,
+                    };
+                  }),
+                });
+              } else {
+                setActionMessage(result.error || 'No editable definition found', true);
+              }
+            })
+            .catch(function (err) {
+              setActionMessage(String(err.message || err), true);
+            });
+          return;
+        }
+        postLoopAction('/api/loops/' + encodeURIComponent(name) + '/' + action, {})
+          .then(function () {
+            setActionMessage(action + ' · ' + name, false);
+            return refreshLoopsData();
+          })
+          .catch(function (err) {
+            setActionMessage(String(err.message || err), true);
+          });
+      });
+    }
     if (hideDormantEl) {
       hideDormantEl.addEventListener('change', function () {
         hideDormant = !!hideDormantEl.checked;
@@ -3408,6 +4190,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       });
     }
     setShown(graphViewEl, false);
+    setShown(loopsViewEl, false);
 
     function applyState(next, opts) {
       opts = opts || {};
@@ -3428,6 +4211,13 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       renderDetail();
       updateHerdrRemoteNote();
       if (historyTooltipId) renderHistoryTooltip();
+      if (currentView === 'loops') {
+        renderLoopsListFromState();
+        if (selectedLoopName && loopDetailCache && loopDetailCache.name === selectedLoopName) {
+          // Keep showing last detail; refreshLoopsData is kicked from setView/refresh.
+          if (loopsDetailEl) loopsDetailEl.innerHTML = renderLoopDetailHtml(loopDetailCache);
+        }
+      }
       // Always rebuild/draw the graph model so a later switch (or tests) have nodes.
       updateSim(opts);
       drawGraph();
