@@ -31,7 +31,15 @@ function af(args, env) {
   });
 }
 
-describe('agentDocs (issue #3 phase 1)', () => {
+function writeNote(memRepo, project, filename, body = '# note\n') {
+  const dir = path.join(memRepo, project, 'status-notes');
+  fs.mkdirSync(dir, { recursive: true });
+  const abs = path.join(dir, filename);
+  fs.writeFileSync(abs, body);
+  return abs;
+}
+
+describe('agentDocs (issue #3 lifecycle)', () => {
   let home;
   let prevHome;
   let prevAfHome;
@@ -67,14 +75,18 @@ describe('agentDocs (issue #3 phase 1)', () => {
     }
   });
 
-  it('ships shared process doc and AGENT-DOCS template', () => {
+  it('ships shared process doc and AGENT-DOCS template with archive + batch guidance', () => {
     const processDoc = agentDocs.packageTemplatePath(agentDocs.PROCESS_DOC_REL);
     const agentTpl = agentDocs.packageTemplatePath(agentDocs.AGENT_DOCS_REL);
     assert.ok(fs.existsSync(processDoc));
     assert.ok(fs.existsSync(agentTpl));
     const body = fs.readFileSync(processDoc, 'utf8');
     assert.match(body, /never auto-moves or deletes/i);
-    assert.match(body, /issue #2/i);
+    assert.match(body, /Archive convention/i);
+    assert.match(body, /status-notes\/archive/i);
+    assert.match(body, /batched/i);
+    assert.match(body, /Completion capture vs this lifecycle/i);
+    assert.match(body, /requireNote/i);
   });
 
   it('memory init copies DOCUMENTATION-PROCESS.md when missing', () => {
@@ -105,6 +117,9 @@ describe('agentDocs (issue #3 phase 1)', () => {
     assert.ok(ctx.agentDocsPath);
     assert.ok(ctx.processDocPath); // package fallback
     assert.equal(ctx.archivePolicy, 'never-auto-move-or-delete');
+    assert.ok(Array.isArray(ctx.boundaries));
+    assert.ok(ctx.boundaries.includes('turn-complete'));
+    assert.equal(ctx.requireNote, true);
   });
 
   it('delivers env + preamble for cursor and copilot when enabled', () => {
@@ -137,6 +152,7 @@ describe('agentDocs (issue #3 phase 1)', () => {
     assert.match(prepared.prompt, /\[aflt agentDocs\]/);
     assert.match(prepared.prompt, /Do the work/);
     assert.match(prepared.prompt, /preserve/i);
+    assert.match(prepared.prompt, /batched/i);
 
     const cursorArgs = cursor.buildPrintArgs(session, { prompt: prepared.prompt });
     assert.ok(cursorArgs.includes(prepared.prompt));
@@ -157,8 +173,23 @@ describe('agentDocs (issue #3 phase 1)', () => {
     assert.equal(prepared.env.AFLT_DOCS_PROCESS, undefined);
   });
 
+  it('prepareLaunch does not auto-request unless session-launch boundary enabled', () => {
+    const project = path.join(home, 'no-launch');
+    fs.mkdirSync(project, { recursive: true });
+    writeJson(path.join(project, '.agentfleet.json'), { agentDocs: true, project: 'no-launch' });
+    const session = { id: 's-nl', cwd: project, project: 'no-launch', chatId: 'x' };
+    const prepared = agentDocs.prepareLaunch(session, { prompt: 'hi' });
+    assert.ok(prepared.checkpoint);
+    assert.equal(prepared.checkpoint.progress, 'none');
+  });
+
   it('tracks checkpoint request/complete; overdue uses age for status only', () => {
+    const mem = path.join(home, 'mem-cp');
+    memory.initMemoryRepo(mem);
+    process.env.AFLT_MEMORY_REPO = mem;
     const project = 'cp-demo';
+    writeNote(mem, project, '2026-11-19T1200-landed.md');
+
     const t0 = '2026-11-19T12:00:00.000Z';
     const req = agentDocs.requestCheckpoint(project, {
       sessionId: 's1',
@@ -193,21 +224,139 @@ describe('agentDocs (issue #3 phase 1)', () => {
     assert.equal(done.missing, false);
     assert.equal(done.overdue, false);
     assert.ok(done.lastCompleted);
+    assert.ok(done.docBotNotify && done.docBotNotify.queued);
   });
 
-  it('notifyDocBot sends via direct messaging when both sides opt in', () => {
+  it('completeCheckpoint requires a real live note (not archive)', () => {
+    const mem = path.join(home, 'mem-note');
+    memory.initMemoryRepo(mem);
+    process.env.AFLT_MEMORY_REPO = mem;
+    const project = 'note-proj';
+    fs.mkdirSync(path.join(mem, project, 'status-notes', 'archive'), { recursive: true });
+    fs.writeFileSync(
+      path.join(mem, project, 'status-notes', 'archive', '2026-11-01T1000-old.md'),
+      '# old\n'
+    );
+
+    agentDocs.requestCheckpoint(project, { now: '2026-11-19T12:00:00.000Z' });
+
+    assert.throws(
+      () => agentDocs.completeCheckpoint(project, {}),
+      (err) => err && err.code === 'NOTE_REQUIRED'
+    );
+    assert.throws(
+      () =>
+        agentDocs.completeCheckpoint(project, {
+          notePath: 'status-notes/archive/2026-11-01T1000-old.md',
+        }),
+      (err) => err && /archiv/i.test(err.message)
+    );
+    assert.throws(
+      () =>
+        agentDocs.completeCheckpoint(project, {
+          notePath: 'status-notes/missing.md',
+        }),
+      (err) => err && /not found/i.test(err.message)
+    );
+  });
+
+  it('maybeRequestAtBoundary only at configured safe boundaries and never when busy', () => {
+    const projectDir = path.join(home, 'bound');
+    fs.mkdirSync(projectDir, { recursive: true });
+    writeJson(path.join(projectDir, '.agentfleet.json'), {
+      agentDocs: true,
+      project: 'bound',
+    });
+    const session = {
+      id: 'bound-1',
+      cwd: projectDir,
+      project: 'bound',
+      chatId: 'c1',
+      engine: 'cursor',
+      status: 'active',
+    };
+
+    const skip = agentDocs.maybeRequestAtBoundary(session, 'session-launch');
+    assert.equal(skip.requested, false);
+    assert.match(String(skip.reason), /not enabled/i);
+
+    const ok = agentDocs.maybeRequestAtBoundary(session, 'turn-complete', {
+      now: '2026-11-19T12:00:00.000Z',
+    });
+    assert.equal(ok.requested, true);
+    assert.equal(ok.checkpoint.progress, 'requested');
+
+    const again = agentDocs.maybeRequestAtBoundary(session, 'run-exit');
+    assert.equal(again.requested, false); // onlyIfNoneOpen
+
+    const busy = {
+      ...session,
+      id: 'bound-2',
+      runPid: process.pid,
+      runHost: os.hostname(),
+    };
+    // Clear open so busy path is tested for a fresh request
+    agentDocs.completeCheckpoint('bound', {
+      notePath: null,
+      requireNote: false,
+      now: '2026-11-19T13:00:00.000Z',
+    });
+    const busyHit = agentDocs.maybeRequestAtBoundary(busy, 'turn-complete');
+    assert.equal(busyHit.requested, false);
+    assert.equal(busyHit.reason, 'busy');
+  });
+
+  it('bounded retry with backoff for unacknowledged checkpoints', () => {
+    writeJson(path.join(process.env.AGENTFLEET_HOME, 'config.json'), {
+      agentDocs: {
+        checkpointHours: 1,
+        retryMax: 2,
+        retryBackoffMinutes: [10, 20],
+      },
+    });
+    const project = 'retry-proj';
+    agentDocs.requestCheckpoint(project, {
+      now: '2026-11-19T10:00:00.000Z',
+      reason: 'stale',
+    });
+
+    const first = agentDocs.processCheckpointRetries({
+      now: '2026-11-19T12:00:00.000Z',
+      projects: [project],
+    });
+    assert.equal(first.results[0].retried, true);
+    assert.equal(first.results[0].checkpoint.notifyAttempts, 1);
+    assert.ok(first.results[0].checkpoint.nextRetryAt);
+
+    const tooSoon = agentDocs.processCheckpointRetries({
+      now: '2026-11-19T12:05:00.000Z',
+      projects: [project],
+    });
+    assert.equal(tooSoon.results[0].retried, false);
+
+    const second = agentDocs.processCheckpointRetries({
+      now: '2026-11-19T12:20:00.000Z',
+      projects: [project],
+    });
+    assert.equal(second.results[0].retried, true);
+    assert.equal(second.results[0].checkpoint.notifyAttempts, 2);
+    assert.equal(second.results[0].checkpoint.retriesExhausted, true);
+  });
+
+  it('batches Doc Bot notify after note written; ack records completion', () => {
     delete require.cache[require.resolve('../lib/registry')];
     delete require.cache[require.resolve('../lib/messages')];
     delete require.cache[require.resolve('../lib/agent-docs')];
-    process.env.AGENTFLEET_HOME = home;
+    process.env.AGENTFLEET_HOME = path.join(home, '.agentfleet');
     const registry = require('../lib/registry');
     const messages = require('../lib/messages');
     const agentDocs2 = require('../lib/agent-docs');
 
-    const missing = agentDocs2.notifyDocBot({ type: 'checkpoint-requested', project: 'x' });
-    assert.equal(missing.sent, false);
-    assert.equal(missing.issue, 2);
-    assert.match(missing.reason, /no doc-bot/i);
+    const mem = path.join(home, 'mem-batch');
+    memory.initMemoryRepo(mem);
+    process.env.AFLT_MEMORY_REPO = mem;
+    const project = 'batch-proj';
+    writeNote(mem, project, '2026-11-19T1400-done.md');
 
     const doc = registry.add({
       title: 'doc-bot',
@@ -225,34 +374,96 @@ describe('agentDocs (issue #3 phase 1)', () => {
       engine: 'cursor',
       status: 'active',
       messaging: true,
+      project,
     });
 
-    const sent = agentDocs2.notifyDocBot({
-      type: 'checkpoint-requested',
-      project: 'demo',
-      checkpoint: { sessionId: worker.id, reason: 'wrap-up' },
+    // Turn enqueue alone must not send
+    const turnQ = agentDocs2.enqueueTurnCaptured(
+      {
+        sessionId: worker.id,
+        turnId: 't1',
+        prompt: 'p',
+        reply: 'r',
+      },
+      { project }
+    );
+    assert.equal(turnQ.queued, true);
+    assert.equal(messages.inboxForSession(doc, { unreadOnly: true }).length, 0);
+
+    agentDocs2.requestCheckpoint(project, {
+      sessionId: worker.id,
+      now: '2026-11-19T13:00:00.000Z',
     });
-    assert.equal(sent.sent, true, sent.reason);
-    assert.ok(sent.message && sent.message.id);
+    const done = agentDocs2.completeCheckpoint(project, {
+      sessionId: worker.id,
+      notePath: 'status-notes/2026-11-19T1400-done.md',
+      now: '2026-11-19T14:00:00.000Z',
+    });
+    assert.equal(done.docBotNotify.sent, true, done.docBotNotify.reason);
+    assert.ok(done.docBotNotify.batchId);
 
     const inbox = messages.inboxForSession(doc, { unreadOnly: true });
-    const hit = inbox.find((m) => m.id === sent.message.id);
+    assert.ok(inbox.length >= 1);
+    const hit = inbox.find((m) => m.meta && m.meta.source === 'flushDocBotBatch');
     assert.ok(hit);
-    assert.equal(hit.meta && hit.meta.source, 'notifyDocBot');
+    assert.match(hit.text, /batch/i);
+    assert.match(hit.text, /2026-11-19T1400-done/);
+
+    const ack = agentDocs2.ackDocBotBatch(done.docBotNotify.batchId);
+    assert.equal(ack.ok, true);
+    assert.equal(ack.batch.status, 'acked');
+    const queue = agentDocs2.summarizeDocBotQueue();
+    assert.ok(queue.batchesAcked >= 1);
   });
 
-  it('listLiveStatusNotes ignores archive/ and never moves files', () => {
+  it('notifyDocBot queues without requiring messaging; useful offline', () => {
+    const queued = agentDocs.notifyDocBot({
+      type: 'checkpoint-requested',
+      project: 'offline',
+      checkpoint: { sessionId: null, reason: 'x' },
+    });
+    assert.equal(queued.queued, true);
+    assert.equal(queued.sent, false);
+    assert.match(String(queued.reason), /note|queued/i);
+    const q = agentDocs.summarizeDocBotQueue();
+    assert.ok(q.pending >= 1);
+  });
+
+  it('listLiveStatusNotes ignores archive/; listArchived labels history', () => {
     const notes = path.join(home, 'notes');
     fs.mkdirSync(path.join(notes, 'archive'), { recursive: true });
     fs.writeFileSync(path.join(notes, '2026-11-19T1000-live.md'), '# live\n');
     fs.writeFileSync(path.join(notes, 'archive', '2026-11-01T1000-old.md'), '# old\n');
     const live = agentDocs.listLiveStatusNotes(notes);
     assert.deepEqual(live, ['2026-11-19T1000-live.md']);
+    const archived = agentDocs.listArchivedStatusNotes(notes);
+    assert.deepEqual(archived, ['2026-11-01T1000-old.md']);
+    const summary = agentDocs.summarizeStatusNotesDir(notes);
+    assert.equal(summary.archivedCount, 1);
+    assert.equal(summary.latestLive, '2026-11-19T1000-live.md');
     assert.ok(fs.existsSync(path.join(notes, 'archive', '2026-11-01T1000-old.md')));
     assert.ok(fs.existsSync(path.join(notes, '2026-11-19T1000-live.md')));
   });
 
-  it('docs --status --json includes agentDocs checkpoint fields', () => {
+  it('fleet config.json agentDocs knobs are readable', () => {
+    writeJson(path.join(process.env.AGENTFLEET_HOME, 'config.json'), {
+      agentDocs: {
+        boundaries: ['turn-complete'],
+        requireNote: false,
+        retryMax: 5,
+        retryBackoffMinutes: [1, 2],
+        batchNotify: false,
+      },
+    });
+    const fleet = agentDocs.resolveFleetAgentDocsConfig();
+    assert.deepEqual(fleet.boundaries, ['turn-complete']);
+    assert.equal(fleet.requireNote, false);
+    assert.equal(fleet.retryMax, 5);
+    assert.equal(fleet.batchNotify, false);
+    assert.equal(fleet.source, 'config');
+  });
+
+  it('docs --status --json includes agentDocs checkpoint + archive fields', () => {
     const project = path.join(home, 'status-proj');
     fs.mkdirSync(project, { recursive: true });
     spawnSync('git', ['init'], { cwd: project, encoding: 'utf8' });
@@ -285,26 +496,42 @@ describe('agentDocs (issue #3 phase 1)', () => {
     assert.equal(row.agentDocs.enabled, true);
     assert.equal(row.agentDocs.checkpoint.missing, true);
     assert.equal(row.agentDocs.checkpoint.overdue, true);
-    assert.equal(row.agentDocs.docBotNotify.issue, 2);
+    assert.equal(row.agentDocs.archivePolicy, 'never-auto-move-or-delete');
+    assert.ok(row.agentDocs.docBotQueue);
+    assert.ok(Array.isArray(row.agentDocs.boundaries));
   });
 
-  it('docs checkpoint CLI request/complete is hermetic', () => {
+  it('docs checkpoint CLI complete requires --note; notify flush/ack work', () => {
     const project = path.join(home, 'cli-proj');
+    const mem = path.join(home, 'cli-mem');
     fs.mkdirSync(project, { recursive: true });
+    memory.initMemoryRepo(mem);
+    writeNote(mem, 'cli-proj', '2026-11-19T1500-cli.md');
     writeJson(path.join(project, '.agentfleet.json'), {
       agentDocs: true,
       project: 'cli-proj',
     });
+    const env = {
+      HOME: home,
+      AGENTFLEET_HOME: process.env.AGENTFLEET_HOME,
+      AFLT_MEMORY_REPO: mem,
+    };
+
     const req = af(
       ['docs', 'checkpoint', 'request', project, '--json', '--reason', 'manual'],
-      { HOME: home, AGENTFLEET_HOME: process.env.AGENTFLEET_HOME }
+      env
     );
     assert.equal(req.status, 0, req.stderr);
     const reqJson = JSON.parse(req.stdout);
     assert.equal(reqJson.ok, true);
     assert.equal(reqJson.checkpoint.progress, 'requested');
-    assert.equal(reqJson.docBotNotify.issue, 2);
     assert.equal(reqJson.docBotNotify.sent, false);
+
+    const missingNote = af(
+      ['docs', 'checkpoint', 'complete', project, '--json'],
+      env
+    );
+    assert.notEqual(missingNote.status, 0);
 
     const done = af(
       [
@@ -314,16 +541,31 @@ describe('agentDocs (issue #3 phase 1)', () => {
         project,
         '--json',
         '--note',
-        'status-notes/x.md',
+        'status-notes/2026-11-19T1500-cli.md',
       ],
-      { HOME: home, AGENTFLEET_HOME: process.env.AGENTFLEET_HOME }
+      env
     );
     assert.equal(done.status, 0, done.stderr);
     const doneJson = JSON.parse(done.stdout);
     assert.equal(doneJson.checkpoint.progress, 'completed');
+
+    const status = af(['docs', 'notify', 'status', '--json'], env);
+    assert.equal(status.status, 0, status.stderr);
+    const st = JSON.parse(status.stdout);
+    assert.equal(st.ok, true);
+    assert.ok(st.queue);
+
+    if (doneJson.docBotNotify && doneJson.docBotNotify.batchId) {
+      const ack = af(
+        ['docs', 'notify', 'ack', '--id', doneJson.docBotNotify.batchId, '--json'],
+        env
+      );
+      assert.equal(ack.status, 0, ack.stderr);
+      assert.equal(JSON.parse(ack.stdout).batch.status, 'acked');
+    }
   });
 
-  it('dashboard JSON exposes checkpoints without treating age as progress', () => {
+  it('dashboard JSON exposes checkpoints + docBotQueue without treating age as progress', () => {
     const projectDir = path.join(home, 'dash-proj');
     fs.mkdirSync(projectDir, { recursive: true });
     writeJson(path.join(projectDir, '.agentfleet.json'), {
@@ -360,14 +602,29 @@ describe('agentDocs (issue #3 phase 1)', () => {
       checkpoints: agentDocs.collectCheckpointStatuses(sessions, {
         now: '2026-11-19T12:00:00.000Z',
       }),
+      docBotQueue: agentDocs.summarizeDocBotQueue(),
       now: '2026-11-19T12:00:00.000Z',
     });
     assert.ok(state.checkpoints);
     assert.ok(state.checkpoints.missing >= 1);
     assert.ok(state.checkpoints.overdue >= 1);
+    assert.ok(state.checkpoints.docBotQueue);
     assert.equal(state.checkpoints.docBotNotify.issue, 2);
     const proj = state.projects.find((p) => p.name === 'dash-proj');
     assert.ok(proj);
     assert.equal(proj.checkpoint.progress, 'requested');
+  });
+
+  it('doctor reports agent_docs check', () => {
+    const r = af(['doctor', '--json'], {
+      HOME: home,
+      AGENTFLEET_HOME: process.env.AGENTFLEET_HOME,
+    });
+    assert.equal(r.status, 0, r.stderr);
+    const json = JSON.parse(r.stdout);
+    const hit = (json.checks || []).find((c) => c.name === 'agent_docs');
+    assert.ok(hit);
+    assert.equal(hit.ok, true);
+    assert.match(String(hit.detail), /boundaries=/);
   });
 });
