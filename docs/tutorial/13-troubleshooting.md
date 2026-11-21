@@ -86,7 +86,7 @@ The live activity UI is `aflt dashboard --serve`. Regenerating memory-repo `DASH
 New spaces start with notify off. Do not set `AFLT_NOTIFY_URL` globally while using a tutorial space unless you intend webhooks there.
 
 **Where is token usage?**  
-Not shipped in this tree yet — see [12 — Token usage](12-token-usage.md).
+Recorded on turns under `runs/<id>/turns.jsonl` and rolled up in `usage-summary.json` (History + memory show compact counts). There is no dedicated `usage` subcommand — see [12 — Token usage](12-token-usage.md).
 
 ## Try it
 

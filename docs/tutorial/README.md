@@ -33,7 +33,7 @@ That isolates registry, config, memory, dashboard port, and LaunchAgent label un
 | 09 | [Loops](09-loops.md) | validate / dry-run / status; examples; gates; plan-next |
 | 10 | [Eval](10-eval.md) | measure / score / report / gate / plateau; RUBRIC GUARD |
 | 11 | [Named spaces](11-spaces.md) | `--space` / `AFLT_SPACE`; create / list / current / remove |
-| 12 | [Token usage](12-token-usage.md) | Coming soon (not shipped in this tree) |
+| 12 | [Token usage](12-token-usage.md) | Per-turn `usage`, `usage-summary.json`, engines, History, memory rollup |
 | 13 | [Troubleshooting](13-troubleshooting.md) | Timeouts, PATH, no pkill, prompts from files, FAQ |
 
 ## Deeper docs (do not duplicate here)

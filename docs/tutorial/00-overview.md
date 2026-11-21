@@ -48,7 +48,7 @@ Lifecycle `STATUS` on `aflt ls` is saved state (`active` | `paused` | `done`). A
 9. [Loops](09-loops.md) — validate and inspect multi-phase definitions
 10. [Eval](10-eval.md) — measure, score, RUBRIC GUARD
 11. [Spaces](11-spaces.md) — throwaway isolation for this tutorial
-12. [Token usage](12-token-usage.md) — planned; not in this tree yet
+12. [Token usage](12-token-usage.md) — turns + usage-summary, History, memory rollup
 13. [Troubleshooting](13-troubleshooting.md) — real-world pitfalls
 
 Deeper matrices and setup: [CAPABILITIES.md](../CAPABILITIES.md), [SETUP.md](../SETUP.md). Agent-oriented detail: [AGENTS.md](../../AGENTS.md).

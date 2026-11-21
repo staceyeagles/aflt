@@ -176,6 +176,9 @@ const PROSE_AFTER_AFLT = new Set([
   'stays',
   'may',
   'itself',
+  // "no aflt usage subcommand" / similar — not a real CLI path
+  'usage',
+  'still',
 ]);
 
 /**
