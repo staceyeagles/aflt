@@ -74,8 +74,8 @@ Ensure the npm global bin dir (and `~/.local/bin` if you use clone-backed symlin
 **Migration** from older clone-backed `~/.local/bin/{aflt,af,agentfleet}` symlinks: after a global npm install, point `which aflt` at the npm binary (remove or replace checkout symlinks). `aflt setup` refuses to overwrite an unrelated `~/.local/bin` name unless `--force`.
 
 ```bash
-aflt --version            # e.g. "aflt 1.3.0"
-aflt --version --json     # {"version":"1.3.0"}
+aflt --version            # e.g. "aflt 1.5.0"
+aflt --version --json     # {"version":"1.5.0"}
 
 # Machine setup (preview by default; --apply to mutate)
 aflt setup                # non-mutating plan
@@ -458,7 +458,7 @@ To run that completed improve definition again in the same fleethome (fair secon
 aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt-improve.json --fresh
 ```
 
-Details: [`examples/loops/hello-aflt/README.md`](examples/loops/hello-aflt/README.md).
+Details: [`examples/loops/hello-aflt/README.md`](examples/loops/hello-aflt/README.md). Work-Mac Copilot live-test guide (validate → dry-run → `--fresh` live run, dashboard success signals, results template): [`docs/copilot-live-test.md`](docs/copilot-live-test.md).
 
 **Plan-next (M4):** a phase with `type: "plan-next"` builds a planner prompt (goal, acceptance, recent history, status notes) and requires the engine to write JSON to `$AGENTFLEET_HOME/loops/<name>/plan-next.json`. `{ "done": true }` completes planning (loop finishes after remaining phases / optional `acceptanceEval`); `{ "phases": [ … ] }` validates and inserts phases **before** the plan-next sentinel (then continues, returning to plan-next later). Newly planned phases get `gate: "approve"` unless they set `gate` or the loop sets `plannedPhaseGate: "none"`. Cap growth with `budget.maxPhases`. When `goal` / `acceptance` are set, completion writes an acceptance-summary status note to memory.
 
@@ -476,7 +476,7 @@ Opt-in notify events (same `notify` / `AFLT_NOTIFY_*` config): `loop.started`, `
 
 ```bash
 aflt master --goal TEXT [--engine cursor|copilot|opencode] [--cwd DIR] [--title T] [--model X]
-            [--project NAME] [--worker-engine copilot|cursor] [--headless] [--timeout SEC]
+            [--project NAME] [--worker-engine copilot|cursor|opencode] [--headless] [--timeout SEC]
             [--force] [--messaging|--no-messaging] [--no-docs]
             [--dry-run] [--json]
 # Initial prompt is templates/orchestrator.md. Default: interactive via Herdr.
@@ -919,5 +919,6 @@ Injected on launch (do not overwrite casually inside a session):
 - [docs/CAPABILITIES.md](docs/CAPABILITIES.md) — engine × mode matrix and `aflt wait` outcomes
 - [docs/SETUP.md](docs/SETUP.md) — environment setup, Herdr, work-computer install, troubleshooting
 - [docs/PROJECT-REPO-METADATA.md](docs/PROJECT-REPO-METADATA.md) — project↔repo schema (issue #1)
+- [docs/copilot-live-test.md](docs/copilot-live-test.md) — Copilot-only work Mac: validate / dry-run / live `hello-aflt` with `--fresh`, dashboard Loops success signals, results template
 - `aflt help` — authoritative flag list
 - `templates/orchestrator.md` / `templates/documentarian.md` — prompts injected for master and docs workers

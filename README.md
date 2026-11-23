@@ -6,8 +6,8 @@
 
 <p align="center">
   <img alt="Node 18+" src="https://img.shields.io/badge/node-%3E%3D18-brightgreen?logo=node.js&logoColor=white"/>
-  <img alt="version 1.3.0" src="https://img.shields.io/badge/version-1.3.0-blue"/>
-  <img alt="552 tests passing, 1 skipped" src="https://img.shields.io/badge/tests-552%20passing%20%7C%201%20skipped-success"/>
+  <img alt="version 1.5.0" src="https://img.shields.io/badge/version-1.5.0-blue"/>
+  <img alt="670 tests passing" src="https://img.shields.io/badge/tests-670%20passing-success"/>
   <img alt="macOS | Linux untested" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20untested-lightgrey"/>
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-yellow"/>
 </p>
@@ -16,7 +16,7 @@
 
 **For AI agents:** [AGENTS.md](AGENTS.md) — install, commands, engines, and how to delegate or orchestrate work from Cursor, Copilot, or OpenCode CLI.
 
-**New to aflt?** Start with the [tutorial](docs/tutorial/README.md) (throwaway `--space tutorial`, beginner → advanced).
+**New to aflt?** Start with the [tutorial](docs/tutorial/README.md) (throwaway `--space tutorial`, beginner → advanced). Copilot-only work Mac live test of `hello-aflt`: [docs/copilot-live-test.md](docs/copilot-live-test.md).
 
 Zero npm runtime dependencies beyond **Node ≥18**. Install the CLI (`npm install -g aflt`, or `npm install -g github:wwlib/aflt` before the first registry publish), then optionally run `aflt setup` for machine config. Engine × mode behavior (liveness, completion, handoffs, `aflt wait`): [docs/CAPABILITIES.md](docs/CAPABILITIES.md). Setup deep-dive: [docs/SETUP.md](docs/SETUP.md). Full history: [CHANGELOG.md](CHANGELOG.md).
 
@@ -86,7 +86,7 @@ CLI coding agents are powerful but ephemeral: chat IDs live in engine-local stor
 | **Modes** | Interactive TUI (Herdr by default when `hc` is on PATH) vs headless `aflt run` / spawn |
 | **Herdr** | `hc` terminals + desktop app spaces/tabs + bundled `af-sessions` panel; shell-only reboot recovery via in-tab relaunch |
 | **Orchestration** | `aflt master`, `aflt spawn [--detach]`, `children`, `wait`, `result [--require-fresh]`, `tail`, `send`, `stop`, `rm --children` |
-| **Loop** | `aflt loop` multi-phase eval/fix runner (JSON definition; state under `loops/`; opt-in notify + memory) |
+| **Loop** | `aflt loop` multi-phase eval/fix runner (`validate` / `run [--dry-run\|--fresh]` / `status`; JSON definition; state under `loops/`; opt-in notify + memory; example [`examples/loops/hello-aflt/`](examples/loops/hello-aflt/)) |
 | **Eval** | `aflt eval measure` / `score` / `report` / `gate` / `plateau` — hermetic measure → rubric score → improve gate + self-improve loop example |
 | **Projects** | Optional `session.project` + `aflt ls --project` / `aflt timeline` / `aflt projects` (repo mappings + validation) |
 | **Live dashboard** | `aflt dashboard --serve` / `--snapshot` — local history-first activity UI (tree + Gantt; optional star graph; not `aflt memory dashboard`) |
@@ -181,6 +181,8 @@ aflt master --goal "Split auth into helpers + tests" --cwd ~/src/app --headless 
 aflt spawn --parent <master> --prompt "…" --detach
 aflt wait --parent <master>
 aflt result <worker-id>
+aflt result <worker-id> --json
+aflt result <worker-id> --require-fresh   # exit 1 if handoff is stale
 ```
 
 ---
@@ -447,12 +449,20 @@ aflt loop run examples/loops/self-improve.json --dry-run
 aflt loop validate examples/loops/hello-eval.json
 aflt loop run examples/loops/hello-eval.json --dry-run
 aflt loop run my-loop.json --json
+aflt loop run my-loop.json --fresh --json   # restart a completed loop (0 of N) in the same fleethome
 aflt loop start my-loop.json --json          # register for dashboard scheduler
 aflt loop pause <name>
-aflt loop status [name] [--json]
+aflt loop status [name] [--json]            # --json includes elapsedMs, budget, usage, pipeline.evalScore
 aflt loop stop <name>
 aflt loop resume <name>                     # run in this process
 aflt loop approve <name>                    # release gate: "approve"
+
+# Portable Copilot-friendly example (empty git repo cwd; set AGENTFLEET_ENGINE=copilot once)
+# export AGENTFLEET_ENGINE=copilot
+# aflt loop validate examples/loops/hello-aflt/hello-aflt.json --json
+# aflt loop run examples/loops/hello-aflt/hello-aflt.json --dry-run
+# aflt loop run examples/loops/hello-aflt/hello-aflt.json --fresh
+# See examples/loops/hello-aflt/README.md and docs/copilot-live-test.md
 
 # Unattended host (scheduler + activity UI + Loops view)
 aflt dashboard --serve
@@ -470,11 +480,13 @@ aflt space remove lab --force
 ```
 
 - **Definition (JSON):** `name`, `project`, `cwd`, `engine` (optional; omit to follow `AGENTFLEET_ENGINE` / config), `allow` (`commit`/`merge`/`push`, default false), `budget` (`maxRuns`/`maxHours`/`maxPhases`), optional `goal`, `acceptance` (or `acceptanceCriteria`), `acceptanceEval`, `plannedPhaseGate` (`approve`|`none`, default `approve` for phases inserted by plan-next), `phases[]` with `id`, optional `type` (`run`|`plan-next`), `engine`, `session`, `prompt` or `promptFile`, `eval` (`command` string or argv array, `passRegex` and/or `exitCode`), `maxFixAttempts` (default 3), `onPass` (`none`|`commit`|`merge`|`push`), optional `gate: "approve"`. Relative `promptFile` / companion scripts resolve against the definition directory. UI-saved files: `$AGENTFLEET_HOME/loops/definitions/<name>.json` (or `config.json` `loop.definitionsDir` / `loopsDir`). Examples: `examples/loops/hello-eval.json`, `examples/loops/plan-next.json`, `examples/loops/self-improve.json`, `examples/loops/hello-aflt/`.
+- **hello-aflt / improve-gate:** [`examples/loops/hello-aflt/`](examples/loops/hello-aflt/) is the portable tile-dungeon loop (M0 seed → M1–M5a → ≤3 plan-next improve rounds). It omits `engine` so Copilot works via `AGENTFLEET_ENGINE=copilot` / `aflt engine copilot`. Planned improve phases eval with `["node","improve-gate.js"]` (definition-dir resolved): compares **committed HEAD** gameplay vs the **working tree**, prints a JSON `overall` line for Loops `evalScore`, keeps improvements or restores HEAD on plateau. Continue-only: `hello-aflt-improve.json`. Work-Mac walkthrough: [docs/copilot-live-test.md](docs/copilot-live-test.md).
+- **`--fresh`:** without it, a completed loop returns `loop already completed` and does no work. With `--fresh`, start a new state (0 of N) in the **same** fleethome (prefer over a new space so the default Loops view still shows the run). Fresh runs mint new planner / loop-root sessions.
 - **Semantics:** run phase prompt → run eval → on fail send failing output back to the same session as a fix prompt (up to `maxFixAttempts`) → mark phase passed/failed. With `gate: "approve"`, the runner pauses (`status=waiting`) before the phase work until approve. Prompts are argv data (no shell interpolation).
 - **Plan-next (M4):** `type: "plan-next"` gives the configured engine the goal, history, and status notes and requires JSON at `$AGENTFLEET_HOME/loops/<name>/plan-next.json`. `{ "done": true }` ends planning (then optional `acceptanceEval` + completion); `{ "phases": [ … ] }` validates and inserts phases before the plan-next sentinel (default gate from `plannedPhaseGate`). Cap with `budget.maxPhases`. When `goal`/`acceptance` are set, completion writes an acceptance-summary status note.
-- **State:** `$AGENTFLEET_HOME/loops/<name>/state.json` (atomic writes) + `runner.lock`. `active` marks the loop for the dashboard scheduler. Crash/restart resumes via `aflt loop resume` or the scheduler on `dashboard --serve` start.
+- **State:** `$AGENTFLEET_HOME/loops/<name>/state.json` (atomic writes) + `runner.lock`. Includes per-loop `usage` rollup from phase `usage-summary.json` (never invents USD). `active` marks the loop for the dashboard scheduler. Crash/restart resumes via `aflt loop resume` or the scheduler on `dashboard --serve` start.
 - **Unattended (M2):** `start` registers without running; `dashboard --serve` runs active loops in-process (one per name, lock respected). API: `GET /api/loops`, `GET /api/loops/:name`, `POST /api/loops/:name/{pause,resume,stop}`.
-- **Dashboard UI (M3):** Loops view lists status / phase / attempt / elapsed / budget, step pipeline, eval tails, History session links; start / pause / resume / stop / approve; define/edit form (server-side `validateDefinition`; writes only under the allowed loops/definitions dirs). Also `POST /api/loops`, `GET /api/loops/definitions`, `POST /api/loops/start`, `POST /api/loops/:name/approve`, `GET|POST /api/loops/:name/definition`.
+- **Dashboard UI (M3):** Loops view lists status / phase / attempt / elapsed / budget / token rollup, step pipeline, phase tree with eval scores, eval tails, History session links; start / pause / resume / stop / approve; define/edit form (server-side `validateDefinition`; writes only under the allowed loops/definitions dirs). Also `POST /api/loops`, `GET /api/loops/definitions`, `POST /api/loops/start`, `POST /api/loops/:name/approve`, `GET|POST /api/loops/:name/definition`.
 - **Service:** `aflt service install|uninstall|status` — macOS LaunchAgent `dev.aflt.dashboard` for the dashboard server (named space: `dev.aflt.dashboard.<space>`); logs under `$AGENTFLEET_HOME/logs`; `--print` shows the plist without writing. Default `--port` comes from the space `config.json` when set.
 - **Named spaces:** `aflt space list|create|current|remove` — isolated homes under `~/.agentfleet/spaces/<name>` via `--space` / `AFLT_SPACE` (explicit `AGENTFLEET_HOME` still wins). New spaces: unique dashboard port, notify off, own `memoryRepo`, never overwrite the default LaunchAgent plist.
 - **Notify (opt-in):** events `loop.started`, `loop.phase.started`, `loop.phase.passed`, `loop.phase.failed`, `loop.completed`, `loop.failed`, `loop.stopped`, `loop.gate.waiting`, `loop.gate.approved`, and opt-in `loop.heartbeat` (`loop.heartbeatSeconds` / `AFLT_LOOP_HEARTBEAT_SECONDS`, default off). Payload fields: `event`, `sessionId`, `title`, `project`, `engine`, `cwd` (redacted), `exitStatus`, `timestamp`, `summary` (redacted), `loop`, `phaseId`, `attempt`. Point `notify.url` / `AFLT_NOTIFY_URL` at a Grok Bot routine webhook to wake the bot on progress; the loop itself never waits on the bot.
@@ -750,7 +762,7 @@ See `af --help` / `aflt help` for the authoritative flag list. Long-form help co
 npm test
 ```
 
-552 tests (Node test runner): all passing in the hermetic suite (a live `create-chat` smoke test only runs with a real `cursor-agent`). Coverage includes registry, engines, Herdr backends, orchestration, messaging, MCP, docs, project/timeline, project memory, live dashboard, dry-run purity, interactive rm/stop pickers, and hermetic `AGENTFLEET_HOME` fixtures.
+670 tests (Node test runner): all passing in the hermetic suite (a live `create-chat` smoke test only runs with a real `cursor-agent`). Coverage includes registry, engines, Herdr backends, orchestration, messaging, MCP, docs, project/timeline, project memory, live dashboard, dry-run purity, interactive rm/stop pickers, and hermetic `AGENTFLEET_HOME` fixtures.
 
 ## Versioning and releases
 

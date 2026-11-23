@@ -291,9 +291,11 @@ Usage:
                             List a master's workers, or (no arg) resolve master from
                             AGENTFLEET_ID / AGENTFLEET_PARENT, or summarize all masters.
                             --all includes lifecycle-done masters in the summary.
-  aflt result <id|title> [--path]
+  aflt result <id|title> [--path] [--json] [--require-fresh]
                             Print a worker's handoff file (or its path). If missing,
                             stderr note + last ~40 lines of the run log; exit 1.
+                            --require-fresh exits 1 if the handoff exists but is
+                            stale (mtime not after runStartedAt / resultMtimeAtStart).
   aflt wait [<id|title>...] [--parent <master>] [--any] [--timeout SEC] [--interval SEC]
                             [--send-grace SEC] [--docs] [--json]
                             Block until listed workers reach done|failed|stopped|waiting.
