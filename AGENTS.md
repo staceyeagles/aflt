@@ -12,7 +12,7 @@ Human overview: [README.md](README.md) (dashboard screenshots in `docs/images/`;
 
 ## What's new (2026-11-22)
 
-- **`aflt loop` UX fixes + portable hello-aflt** — freeze elapsed/budget hours on completed/failed/stopped/paused loops; per-loop token rollup on `state.json` / `loop status` / Loops view (reuse `lib/usage.js`, never invent USD); phase sessions get `parent`/`role` under a `loop-<name>` master so History trees nest; Loops phase tree shows eval scores from stored phase results; prompt previews skip the plan-mode/pkill preamble (full prompt unchanged for runs); `promptFile` + companion scripts resolve relative to the definition directory. Example: `examples/loops/hello-aflt/` (Copilot-friendly, fixed `improve-gate.js` that measures before/after itself).
+- **`aflt loop` UX fixes + portable hello-aflt** — freeze elapsed/budget hours on completed/failed/stopped/paused loops; per-loop token rollup on `state.json` / `loop status` / Loops view (reuse `lib/usage.js`, never invent USD); phase sessions get `parent`/`role` under a `loop-<name>` master so History trees nest; Loops phase tree shows eval scores from stored phase results (`overall` parsed from full eval stdout before truncation); prompt previews skip the plan-mode/pkill preamble (full prompt unchanged for runs); `promptFile` + companion scripts resolve relative to the definition directory. Example: `examples/loops/hello-aflt/` (one-command empty-repo quick start with M0 seed, Copilot-friendly, fixed `improve-gate.js`; continue with `hello-aflt-improve.json`).
 
 ## What's new (2026-11-21)
 
@@ -432,7 +432,24 @@ aflt loop resume <name> [--json]       # run in this process from saved state
 aflt loop approve <name> [--json]      # release gate: "approve"
 ```
 
-Definition keys: `name`, `project`, `cwd`, `engine` (optional — omit to follow `AGENTFLEET_ENGINE` / config / cursor), `allow`, `budget` (`maxRuns` / `maxHours` / `maxPhases`), optional `goal` / `acceptance` (or `acceptanceCriteria`) / `acceptanceEval` / `plannedPhaseGate` (`approve`|`none`, default `approve` for phases appended by plan-next), `phases[]` (`id`, optional `type: "run"|"plan-next"`, `engine`, `session`, `prompt`|`promptFile`, `eval.command` string|argv, `eval.passRegex` / `eval.exitCode`, `maxFixAttempts`, `onPass`, optional `gate: "approve"`). Relative `promptFile` (and companion eval scripts like `improve-gate.js`) resolve against the definition file’s directory first, then the loop cwd. Examples: `examples/loops/hello-eval.json`, `examples/loops/plan-next.json`, `examples/loops/self-improve.json`, `examples/loops/hello-aflt/`. UI-saved definitions: `$AGENTFLEET_HOME/loops/definitions/<name>.json` (override with `config.json` `loop.definitionsDir` / `loop.dir` / `loopsDir`).
+Definition keys: `name`, `project`, `cwd`, `engine` (optional — omit to follow `AGENTFLEET_ENGINE` / config / cursor), `allow`, `budget` (`maxRuns` / `maxHours` / `maxPhases`), optional `goal` / `acceptance` (or `acceptanceCriteria`) / `acceptanceEval` / `plannedPhaseGate` (`approve`|`none`, default `approve` for phases appended by plan-next), `phases[]` (`id`, optional `type: "run"|"plan-next"`, `engine`, `session`, `prompt`|`promptFile`, `eval.command` string|argv, `eval.passRegex` / `eval.exitCode`, `maxFixAttempts`, `onPass`, optional `gate: "approve"`). Relative `promptFile` (and companion eval scripts like `improve-gate.js` / `seed-m0.js`) resolve against the definition file’s directory first, then the loop cwd. Examples: `examples/loops/hello-eval.json`, `examples/loops/plan-next.json`, `examples/loops/self-improve.json`, `examples/loops/hello-aflt/`. UI-saved definitions: `$AGENTFLEET_HOME/loops/definitions/<name>.json` (override with `config.json` `loop.definitionsDir` / `loop.dir` / `loopsDir`).
+
+**hello-aflt quick start (Copilot work Mac):** one command from an empty git repo — no Grok Bot, no `AGENTFLEET_CURSOR_BIN`, no engine pin, no `/tmp` paths. `aflt loop` orchestrates; Copilot/Cursor are workers only:
+
+```bash
+mkdir tile-dungeon && cd tile-dungeon && git init
+export AGENTFLEET_ENGINE=copilot   # once; or: aflt engine copilot
+aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt.json
+```
+
+That run seeds portable M0 when the tree is empty (`m0-seed/` + `seed-m0.js`), then M1–M4, M5a, and up to 3 plan-next improve rounds. To continue improve-only on a repo that already has M5a (distinct loop name `hello-aflt-improve`):
+
+```bash
+cd /path/to/existing-game
+aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt-improve.json
+```
+
+Details: [`examples/loops/hello-aflt/README.md`](examples/loops/hello-aflt/README.md).
 
 **Plan-next (M4):** a phase with `type: "plan-next"` builds a planner prompt (goal, acceptance, recent history, status notes) and requires the engine to write JSON to `$AGENTFLEET_HOME/loops/<name>/plan-next.json`. `{ "done": true }` completes planning (loop finishes after remaining phases / optional `acceptanceEval`); `{ "phases": [ … ] }` validates and inserts phases **before** the plan-next sentinel (then continues, returning to plan-next later). Newly planned phases get `gate: "approve"` unless they set `gate` or the loop sets `plannedPhaseGate: "none"`. Cap growth with `budget.maxPhases`. When `goal` / `acceptance` are set, completion writes an acceptance-summary status note to memory.
 

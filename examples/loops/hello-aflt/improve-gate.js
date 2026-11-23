@@ -154,7 +154,10 @@ function main() {
     payload.result = 'improved';
     payload.keep_changes = true;
     payload.stop = false;
+    payload.overall = next;
     fs.writeFileSync('eval/plateau.json', JSON.stringify(payload, null, 2) + '\n');
+    // JSON line first so aflt loop / Loops phase tree can parse overall without inventing scores.
+    process.stdout.write(JSON.stringify({ overall: next, previous: prev, after: next, result: 'improved' }) + '\n');
     process.stdout.write(`improve-gate: improved ${prev} -> ${next}\n`);
     process.exit(0);
   }
@@ -162,6 +165,7 @@ function main() {
   payload.result = next === prev ? 'plateau' : 'regressed';
   payload.keep_changes = false;
   payload.stop = true;
+  payload.overall = next;
 
   // Preserve gate measurements / history written by this run, then restore gameplay.
   const preserved = {};
@@ -186,6 +190,14 @@ function main() {
     fs.writeFileSync(rel, blob);
   }
 
+  process.stdout.write(
+    JSON.stringify({
+      overall: next,
+      previous: prev,
+      after: next,
+      result: payload.result,
+    }) + '\n'
+  );
   process.stdout.write(
     `improve-gate: ${payload.result} ${prev} -> ${next}; gameplay changes reverted\n`
   );

@@ -29,7 +29,8 @@ State lives under `$AGENTFLEET_HOME/loops/<name>/` (`state.json` + runner lock).
 | `examples/loops/hello-eval.json` | Single phase: write HELLO.txt, grep eval |
 | `examples/loops/plan-next.json` | Seed phases + `type: "plan-next"` planner |
 | `examples/loops/self-improve.json` | Eval measure → score/baseline → plan-next → gate `--improve` |
-| `examples/loops/hello-aflt/` | Portable tile-dungeon M1–M5a + improve rounds (Copilot-friendly; see its README) |
+| `examples/loops/hello-aflt/` | Portable tile-dungeon: empty-repo M0 seed → M1–M5a → ≤3 improve rounds (Copilot-friendly) |
+| `examples/loops/hello-aflt/hello-aflt-improve.json` | Continue improve-only on an existing M5a game (loop name `hello-aflt-improve`) |
 
 Validate (safe; no engines):
 
@@ -38,9 +39,10 @@ aflt --space tutorial loop validate examples/loops/hello-eval.json --json
 aflt --space tutorial loop validate examples/loops/plan-next.json --json
 aflt --space tutorial loop validate examples/loops/self-improve.json --json
 aflt --space tutorial loop validate examples/loops/hello-aflt/hello-aflt.json --json
+aflt --space tutorial loop validate examples/loops/hello-aflt/hello-aflt-improve.json --json
 ```
 
-For a longer end-to-end game loop on a work Mac (Copilot CLI, no Cursor required), see [`examples/loops/hello-aflt/README.md`](../../examples/loops/hello-aflt/README.md). Run it with shell cwd set to your game repo and the definition path pointing at this package.
+**hello-aflt one-liner** (work Mac / Copilot; no Grok Bot): create a folder, `git init`, then `aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt.json` — see [`examples/loops/hello-aflt/README.md`](../../examples/loops/hello-aflt/README.md). Optional once: `export AGENTFLEET_ENGINE=copilot`.
 
 Success text shape:
 

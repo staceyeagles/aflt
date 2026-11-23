@@ -14,7 +14,7 @@ Hard rules:
    - acceptance is otherwise met.
 3. If continuing, propose exactly ONE improve phase (not a bundle of phases). Use this shape (change the id and session per round, e.g. improve-r1, hello-aflt-m5-r1).
    Do NOT pin engine to cursor — omit engine so the loop default / AGENTFLEET_ENGINE applies (copilot works on a work Mac with no Cursor).
-   The improve-gate script lives next to this loop definition. Prefer a relative path; aflt resolves it against the definition directory:
+   The improve-gate script lives next to this loop definition (hello-aflt/ or hello-aflt-improve.json’s directory). Prefer the relative basename; aflt resolves it against the definition directory (not the game cwd, not /tmp):
    {
      "id": "improve-rN",
      "session": "hello-aflt-m5-rN",

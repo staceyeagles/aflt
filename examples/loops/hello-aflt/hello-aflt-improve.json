@@ -1,0 +1,30 @@
+{
+  "name": "hello-aflt-improve",
+  "project": "tile-dungeon-loop",
+  "cwd": ".",
+  "goal": "Continue eval-gated improvement rounds on an existing tile-dungeon repo that already has the M5a harness (scripts/eval + eval/history.jsonl baseline). At most 3 improve rounds via plan-next; stop on plateau, regression-after-revert, overall >= 99, or 3 rounds. Zero-dependency Node ESM; default PORT 8792.",
+  "acceptance": "At most 3 improve rounds applied. Each round uses the portable improve-gate.js (definition-dir resolved) that measures overall before and after itself. Suite stays green. Locked scripts/eval/eval.js and scripts/eval/scorer.js untouched. Local commits per passed improve phase allowed; no remotes, no push.",
+  "plannedPhaseGate": "none",
+  "allow": {
+    "commit": true,
+    "merge": false,
+    "push": false
+  },
+  "budget": {
+    "maxRuns": 20,
+    "maxHours": 4,
+    "maxPhases": 8
+  },
+  "phases": [
+    {
+      "id": "plan-next",
+      "type": "plan-next",
+      "session": "hello-aflt-improve-planner",
+      "promptFile": "prompts/plan-next.txt",
+      "maxFixAttempts": 2,
+      "onPass": "none",
+      "force": true,
+      "timeoutSec": 1800
+    }
+  ]
+}
