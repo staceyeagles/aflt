@@ -232,6 +232,69 @@ describe('hello-aflt loop fixes', () => {
       91.5
     );
     assert.equal(loop.extractEvalScore({ stdout: 'no score here' }), null);
+    // Trailing overall after lengthy node:test noise (M5a shape).
+    const long = `${'ok\n'.repeat(2500)}{"overall":87.5,"weakest":"avg_depth"}\n`;
+    assert.ok(long.length > 4000);
+    assert.equal(loop.extractEvalScore({ stdout: long }), 87.5);
+  });
+
+  it('runLoop stores evalScore from full stdout before lastEval truncation', async () => {
+    const loop = require('../lib/loop');
+    const longStdout = `${'pass\n'.repeat(3000)}{"overall":88.25,"weakest":"avg_depth"}\n`;
+    assert.ok(longStdout.length > 4000);
+
+    const def = {
+      name: 'score-trunc-loop',
+      cwd,
+      project: 'demo',
+      allow: { commit: false, merge: false, push: false },
+      budget: { maxRuns: 5, maxHours: 1 },
+      phases: [
+        {
+          id: 'm5a',
+          session: 'score-trunc-m5a',
+          prompt: 'READY',
+          eval: { command: ['true'], exitCode: 0 },
+          maxFixAttempts: 1,
+          onPass: 'none',
+          force: false,
+        },
+      ],
+    };
+    const result = await loop.runLoop(def, {
+      env: process.env,
+      fresh: true,
+      ensureSession: async () => ({
+        id: 'sess-score-trunc',
+        title: 'score-trunc-m5a',
+        engine: 'cursor',
+        cwd,
+        status: 'active',
+      }),
+      runPrompt: async () => ({
+        code: 0,
+        timedOut: false,
+        stdout: 'ready',
+        stderr: '',
+        outPath: null,
+        runId: 'r1',
+      }),
+      runEval: async () => ({
+        code: 0,
+        timedOut: false,
+        stdout: longStdout,
+        stderr: '',
+        cwd,
+      }),
+    });
+    assert.equal(result.ok, true, result.error || result.status);
+    assert.equal(result.status, 'completed');
+    const state = loop.loadState('score-trunc-loop');
+    assert.equal(state.phases.m5a.evalScore, 88.3);
+    assert.ok(String(state.phases.m5a.lastEval.stdout).length <= 4010);
+    assert.ok(!String(state.phases.m5a.lastEval.stdout).includes('"overall":88.25'));
+    const pipe = loop.buildPhasePipeline(state);
+    assert.equal(pipe[0].evalScore, 88.3);
   });
 
   it('buildPhasePipeline exposes evalScore + parent session', () => {
@@ -359,14 +422,20 @@ describe('hello-aflt loop fixes', () => {
   it('portable hello-aflt example validates and dry-runs', () => {
     assert.ok(fs.existsSync(exampleJson));
     assert.ok(fs.existsSync(path.join(exampleDir, 'improve-gate.js')));
+    assert.ok(fs.existsSync(path.join(exampleDir, 'seed-m0.js')));
+    assert.ok(fs.existsSync(path.join(exampleDir, 'm0-seed', 'package.json')));
+    assert.ok(fs.existsSync(path.join(exampleDir, 'm0-seed', 'server.js')));
+    assert.ok(fs.existsSync(path.join(exampleDir, 'prompts', 'M0.txt')));
     assert.ok(fs.existsSync(path.join(exampleDir, 'prompts', 'M5a.txt')));
     assert.ok(fs.existsSync(path.join(exampleDir, 'README.md')));
+    assert.ok(fs.existsSync(path.join(exampleDir, 'hello-aflt-improve.json')));
 
     const loop = require('../lib/loop');
     const raw = JSON.parse(fs.readFileSync(exampleJson, 'utf8'));
     assert.ok(!Object.prototype.hasOwnProperty.call(raw, 'engine') || raw.engine == null);
     assert.ok(!JSON.stringify(raw).includes('/tmp/'));
     assert.ok(!JSON.stringify(raw).includes('AGENTFLEET_CURSOR_BIN'));
+    assert.equal(raw.phases[0].id, 'm0');
 
     const result = loop.validateFile(exampleJson, {
       checkCwd: false,
@@ -379,11 +448,33 @@ describe('hello-aflt loop fixes', () => {
         assert.ok(fs.existsSync(p.promptFile), p.promptFile);
       }
     }
+    const m0Eval = result.definition.phases.find((p) => p.id === 'm0').eval.command;
+    assert.ok(Array.isArray(m0Eval));
+    assert.equal(m0Eval[0], 'node');
+    assert.equal(m0Eval[1], path.join(exampleDir, 'seed-m0.js'));
 
     const plan = loop.planDryRun(result.definition, exampleJson);
     assert.equal(plan.ok, true);
     assert.equal(plan.name, 'hello-aflt');
-    assert.ok(plan.phases.length >= 6);
+    assert.ok(plan.phases.length >= 7);
+
+    const improveJson = path.join(exampleDir, 'hello-aflt-improve.json');
+    const improveRaw = JSON.parse(fs.readFileSync(improveJson, 'utf8'));
+    assert.equal(improveRaw.name, 'hello-aflt-improve');
+    assert.ok(!Object.prototype.hasOwnProperty.call(improveRaw, 'engine') || improveRaw.engine == null);
+    assert.ok(!JSON.stringify(improveRaw).includes('/tmp/'));
+    assert.equal(improveRaw.plannedPhaseGate, 'none');
+    assert.equal(improveRaw.allow.commit, true);
+    assert.equal(improveRaw.phases.length, 1);
+    assert.equal(improveRaw.phases[0].type, 'plan-next');
+    const improve = loop.validateFile(improveJson, { checkCwd: false, cwdBase: cwd });
+    assert.equal(improve.ok, true, (improve.errors || []).join('; '));
+
+    const readme = fs.readFileSync(path.join(exampleDir, 'README.md'), 'utf8');
+    assert.match(readme, /aflt loop run .*hello-aflt\.json/);
+    assert.match(readme, /AGENTFLEET_ENGINE=copilot/);
+    assert.match(readme, /hello-aflt-improve\.json/);
+    assert.match(readme, /git init/);
 
     const m1 = fs.readFileSync(path.join(exampleDir, 'prompts', 'M1.txt'), 'utf8');
     assert.match(m1, /8792/);
@@ -396,6 +487,33 @@ describe('hello-aflt loop fixes', () => {
     const planNext = fs.readFileSync(path.join(exampleDir, 'prompts', 'plan-next.txt'), 'utf8');
     assert.match(planNext, /improve-gate\.js/);
     assert.ok(!planNext.includes('/tmp/aflt-dungeon-loop'));
+
+    const seedServer = fs.readFileSync(path.join(exampleDir, 'm0-seed', 'server.js'), 'utf8');
+    assert.match(seedServer, /PORT \|\| 8792/);
+  });
+
+  it('seed-m0 copies portable M0 into an empty cwd and passes smoke', () => {
+    const { spawnSync } = require('child_process');
+    const seed = path.join(exampleDir, 'seed-m0.js');
+    const game = fs.mkdtempSync(path.join(os.tmpdir(), 'af-hello-m0-'));
+    const r = spawnSync(process.execPath, [seed], {
+      cwd: game,
+      encoding: 'utf8',
+      env: process.env,
+    });
+    assert.equal(r.status, 0, r.stderr || r.stdout);
+    assert.ok(fs.existsSync(path.join(game, 'package.json')));
+    assert.ok(fs.existsSync(path.join(game, 'server.js')));
+    assert.ok(fs.existsSync(path.join(game, 'test', 'smoke.test.js')));
+    assert.match(r.stdout || '', /seeded \+ smoke green|ok \(seeded/);
+
+    const again = spawnSync(process.execPath, [seed], {
+      cwd: game,
+      encoding: 'utf8',
+      env: process.env,
+    });
+    assert.equal(again.status, 0, again.stderr || again.stdout);
+    assert.match(again.stdout || '', /leaving tree unchanged/);
   });
 
   it('improve-gate measures before/after and never uses history.jsonl as previous', () => {
@@ -445,10 +563,15 @@ process.stdout.write(JSON.stringify(out)+'\\n');
     });
     assert.equal(r.status, 0, r.stderr || r.stdout);
     assert.match(r.stdout || '', /improved 90 -> 95/);
+    assert.match(r.stdout || '', /"overall"\s*:\s*95/);
     const plateau = JSON.parse(fs.readFileSync(path.join(game, 'eval', 'plateau.json'), 'utf8'));
     assert.equal(plateau.previous, 90);
     assert.equal(plateau.after, 95);
     assert.equal(plateau.result, 'improved');
     assert.equal(plateau.beforeSource, 'gate-pre-measure');
+    assert.equal(
+      require('../lib/loop').extractEvalScore({ stdout: r.stdout }),
+      95
+    );
   });
 });

@@ -1,0 +1,18 @@
+Do not switch to plan mode.
+Never use pkill/killall or pattern-matched kills; only stop PIDs you started.
+
+You are ensuring Milestone 0 (M0) — the minimal tile-dungeon scaffold — exists in this empty (or nearly empty) git repo before M1–M5a.
+
+Preferred path: do nothing heavy. The loop eval runs `node seed-m0.js` from the hello-aflt definition directory (aflt resolves that script next to the loop JSON). That script copies the portable `m0-seed/` tree into this cwd when `package.json` is missing, then runs `test/smoke.test.js`.
+
+If you want to seed yourself first, run the same seed script with cwd = this repo (pass the absolute path to seed-m0.js next to the loop definition). Do not invent a different layout.
+
+M0 must remain zero-dependency Node ESM + HTML canvas:
+- package.json with "type": "module"
+- server.js binding 0.0.0.0 (default PORT 8792; do not bind 8790 or 8791)
+- public/index.html with a canvas
+- src/main.js stub
+- test/smoke.test.js (node:test)
+- README.md + AGENTS.md describing the milestone plan
+
+Do not implement M1 features (RNG, game-state, renderer movement). Do not commit.

@@ -2,8 +2,8 @@
   "name": "hello-aflt",
   "project": "tile-dungeon-loop",
   "cwd": ".",
-  "goal": "Build a tile-based dungeon roguelike from the M0 scaffold using aflt loop: M1-M4 gameplay milestones, then an equivalent M5a eval harness, then at most 3 eval-gated improvement rounds that stop at plateau. Zero-dependency Node ESM, HTML canvas, node:test, server on 0.0.0.0 (default PORT 8792; 8790 and 8791 are commonly taken).",
-  "acceptance": "M1-M4 and M5a each leave the node:test suite green. M5a adds scripts/eval (bot.js, scorer.js, eval.js) with the original metric names and weights (crash_free 0.25, solvability 0.20, avg_depth 0.20, turns_survived 0.15, balance_sanity 0.20; avg_depth target 3.5) and writes eval/history.jsonl. Then at most 3 improve rounds, stopping when overall plateaus, regresses after revert, reaches >= 99, or hits 3 rounds. Local commits per passed phase are allowed; no remotes, no push.",
+  "goal": "From an empty git repo (or existing M0), build a tile-based dungeon roguelike using aflt loop: seed M0 if missing, then M1-M4 gameplay milestones, then an equivalent M5a eval harness, then at most 3 eval-gated improvement rounds that stop at plateau. Zero-dependency Node ESM, HTML canvas, node:test, server on 0.0.0.0 (default PORT 8792; 8790 and 8791 are commonly taken).",
+  "acceptance": "M0 leaves smoke tests green. M1-M4 and M5a each leave the node:test suite green. M5a adds scripts/eval (bot.js, scorer.js, eval.js) with the original metric names and weights (crash_free 0.25, solvability 0.20, avg_depth 0.20, turns_survived 0.15, balance_sanity 0.20; avg_depth target 3.5) and writes eval/history.jsonl. Then at most 3 improve rounds, stopping when overall plateaus, regresses after revert, reaches >= 99, or hits 3 rounds. Local commits per passed phase are allowed; no remotes, no push.",
   "plannedPhaseGate": "none",
   "allow": {
     "commit": true,
@@ -16,6 +16,20 @@
     "maxPhases": 16
   },
   "phases": [
+    {
+      "id": "m0",
+      "session": "hello-aflt-m0",
+      "promptFile": "prompts/M0.txt",
+      "eval": {
+        "command": ["node", "seed-m0.js"],
+        "exitCode": 0,
+        "timeoutSec": 120
+      },
+      "maxFixAttempts": 2,
+      "onPass": "commit",
+      "force": true,
+      "timeoutSec": 900
+    },
     {
       "id": "m1",
       "session": "hello-aflt-m1",

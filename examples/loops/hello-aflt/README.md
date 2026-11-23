@@ -1,6 +1,35 @@
 # hello-aflt — portable tile-dungeon loop example
 
-Multi-phase `aflt loop` that builds a tile dungeon (M1–M4), adds an M5a eval harness, then runs at most three eval-gated improve rounds via `plan-next`.
+## Quick start (one command)
+
+From scratch on a work Mac (Copilot CLI is enough; no Grok Bot, no Cursor pin):
+
+```bash
+mkdir tile-dungeon && cd tile-dungeon && git init
+aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt.json
+```
+
+That single command scaffolds M0 if the tree is empty, then drives M1–M4, M5a, and up to 3 plan-next improve rounds. `aflt loop` is the orchestrator; Copilot/Cursor are only workers.
+
+Copilot default (once per machine):
+
+```bash
+export AGENTFLEET_ENGINE=copilot
+# or: aflt engine copilot
+```
+
+Then the same `aflt loop run …/hello-aflt.json` command.
+
+Already have M5a and want more improve rounds (distinct loop name, no collision with a finished `hello-aflt`):
+
+```bash
+cd /path/to/existing-game
+aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt-improve.json
+```
+
+---
+
+Multi-phase `aflt loop` that builds a tile dungeon (M0 seed → M1–M4 → M5a eval harness → at most three eval-gated improve rounds via `plan-next`).
 
 Works on a **work Mac with Copilot CLI** (no Cursor, no Grok Bot required).
 
@@ -8,10 +37,10 @@ Works on a **work Mac with Copilot CLI** (no Cursor, no Grok Bot required).
 
 - Node ≥ 18
 - `aflt` on `PATH` (`npm install -g aflt` or a linked checkout)
-- An engine CLI: **GitHub Copilot CLI** recommended for this README (`npm install -g @github/copilot`). Cursor / OpenCode also work if configured as the default.
-- A game repo checkout that starts from the M0 tile-dungeon scaffold (your working tree; not copied from another machine’s paths)
+- An engine CLI: **GitHub Copilot CLI** recommended (`npm install -g @github/copilot`). Cursor / OpenCode also work if configured as the default.
+- An empty git repo (or an existing game tree). M0 is seeded automatically when `package.json` is missing.
 
-Not required: Cursor CLI, `AGENTFLEET_CURSOR_BIN`, Herdr, notify / Grok Bot webhooks.
+Not required: Cursor CLI, `AGENTFLEET_CURSOR_BIN`, Herdr, notify / Grok Bot webhooks, `/tmp` paths, or a pre-copied game scaffold.
 
 ## Engine default
 
@@ -19,34 +48,22 @@ This definition **omits** `engine` so phases inherit:
 
 `--` (n/a) → `AGENTFLEET_ENGINE` → `$AGENTFLEET_HOME/config.json` `defaultEngine` → builtin `cursor`
 
-On a Copilot-only Mac:
+## How paths resolve
+
+`promptFile`, `seed-m0.js`, and `improve-gate.js` resolve **relative to this definition directory**, while `"cwd": "."` follows your **shell cwd** (the game repo).
+
+Optional validate / dry-run / named space:
 
 ```bash
-export AGENTFLEET_ENGINE=copilot
-# or: aflt engine copilot
-```
-
-## Run from your game repo
-
-`promptFile` and `improve-gate.js` resolve **relative to this definition directory**, while `"cwd": "."` follows your **shell cwd** (the game repo).
-
-```bash
-cd /path/to/your-tile-dungeon
 aflt loop validate /path/to/aflt/examples/loops/hello-aflt/hello-aflt.json --json
 aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt.json --dry-run --json
-
-# Unattended (dashboard scheduler) or in-process:
-aflt loop start /path/to/aflt/examples/loops/hello-aflt/hello-aflt.json --json
-# or:
-aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt.json --json
-```
-
-Optional: use a named space so the loop never writes the default home:
-
-```bash
 aflt space create hello-demo   # once
 aflt --space hello-demo loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt.json
 ```
+
+## M0 seed
+
+`m0-seed/` is a portable zero-dependency scaffold (default **PORT 8792**). Phase `m0` runs `seed-m0.js`, which copies that tree into an empty cwd and runs `test/smoke.test.js`. If `package.json` already exists, the seed leaves the tree alone and only re-checks smoke.
 
 ## Improve gate
 
@@ -56,11 +73,12 @@ aflt --space hello-demo loop run /path/to/aflt/examples/loops/hello-aflt/hello-a
 2. Runs the game test suite
 3. Measures again with `--json --write` **after** worker changes
 4. Compares gate-owned before vs after — **never** the last line of `eval/history.jsonl`
-5. On improvement → exit 0, keep changes  
+5. Prints a JSON line with `overall` / `after` so the Loops phase tree can show the score
+6. On improvement → exit 0, keep changes  
    On plateau/regression → restore gameplay paths to `HEAD`, keep gate records, exit 0  
    On test failure or edits to locked `scripts/eval/eval.js` / `scorer.js` → exit 1
 
-Plan-next instructs planned improve phases to use:
+Plan-next instructs planned improve phases to use (definition-dir resolved):
 
 ```json
 "eval": { "command": ["node", "improve-gate.js"], "exitCode": 0 }
@@ -68,7 +86,7 @@ Plan-next instructs planned improve phases to use:
 
 ## Server port
 
-Prompts discuss default **PORT 8792** for the comparison tree (8790/8791 often taken). Override with `PORT` in the game repo when needed.
+Default **PORT 8792** for the comparison tree (8790/8791 often taken). Override with `PORT` in the game repo when needed.
 
 ## M5a metrics (do not invent)
 
