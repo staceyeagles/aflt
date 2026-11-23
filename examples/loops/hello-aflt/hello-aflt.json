@@ -1,0 +1,101 @@
+{
+  "name": "hello-aflt",
+  "project": "tile-dungeon-loop",
+  "cwd": ".",
+  "goal": "Build a tile-based dungeon roguelike from the M0 scaffold using aflt loop: M1-M4 gameplay milestones, then an equivalent M5a eval harness, then at most 3 eval-gated improvement rounds that stop at plateau. Zero-dependency Node ESM, HTML canvas, node:test, server on 0.0.0.0 (default PORT 8792; 8790 and 8791 are commonly taken).",
+  "acceptance": "M1-M4 and M5a each leave the node:test suite green. M5a adds scripts/eval (bot.js, scorer.js, eval.js) with the original metric names and weights (crash_free 0.25, solvability 0.20, avg_depth 0.20, turns_survived 0.15, balance_sanity 0.20; avg_depth target 3.5) and writes eval/history.jsonl. Then at most 3 improve rounds, stopping when overall plateaus, regresses after revert, reaches >= 99, or hits 3 rounds. Local commits per passed phase are allowed; no remotes, no push.",
+  "plannedPhaseGate": "none",
+  "allow": {
+    "commit": true,
+    "merge": false,
+    "push": false
+  },
+  "budget": {
+    "maxRuns": 40,
+    "maxHours": 8,
+    "maxPhases": 16
+  },
+  "phases": [
+    {
+      "id": "m1",
+      "session": "hello-aflt-m1",
+      "promptFile": "prompts/M1.txt",
+      "eval": {
+        "command": "node --test test/*.test.js",
+        "exitCode": 0,
+        "timeoutSec": 180
+      },
+      "maxFixAttempts": 3,
+      "onPass": "commit",
+      "force": true,
+      "timeoutSec": 5400
+    },
+    {
+      "id": "m2",
+      "session": "hello-aflt-m2",
+      "promptFile": "prompts/M2.txt",
+      "eval": {
+        "command": "node --test test/*.test.js",
+        "exitCode": 0,
+        "timeoutSec": 180
+      },
+      "maxFixAttempts": 3,
+      "onPass": "commit",
+      "force": true,
+      "timeoutSec": 5400
+    },
+    {
+      "id": "m3",
+      "session": "hello-aflt-m3",
+      "promptFile": "prompts/M3.txt",
+      "eval": {
+        "command": "node --test test/*.test.js",
+        "exitCode": 0,
+        "timeoutSec": 180
+      },
+      "maxFixAttempts": 3,
+      "onPass": "commit",
+      "force": true,
+      "timeoutSec": 5400
+    },
+    {
+      "id": "m4",
+      "session": "hello-aflt-m4",
+      "promptFile": "prompts/M4.txt",
+      "eval": {
+        "command": "node --test test/*.test.js",
+        "exitCode": 0,
+        "timeoutSec": 180
+      },
+      "maxFixAttempts": 3,
+      "onPass": "commit",
+      "force": true,
+      "timeoutSec": 5400
+    },
+    {
+      "id": "m5a",
+      "session": "hello-aflt-m5a",
+      "promptFile": "prompts/M5a.txt",
+      "eval": {
+        "command": "node --test test/*.test.js && node scripts/eval/eval.js --json --write",
+        "exitCode": 0,
+        "passRegex": "\"overall\"\\s*:",
+        "timeoutSec": 1200
+      },
+      "maxFixAttempts": 3,
+      "onPass": "commit",
+      "force": true,
+      "timeoutSec": 5400
+    },
+    {
+      "id": "plan-next",
+      "type": "plan-next",
+      "session": "hello-aflt-planner",
+      "promptFile": "prompts/plan-next.txt",
+      "maxFixAttempts": 2,
+      "onPass": "none",
+      "force": true,
+      "timeoutSec": 1800
+    }
+  ]
+}

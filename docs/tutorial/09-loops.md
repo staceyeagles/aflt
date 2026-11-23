@@ -24,11 +24,12 @@ State lives under `$AGENTFLEET_HOME/loops/<name>/` (`state.json` + runner lock).
 
 ## Examples in the repo
 
-| File | Role |
+| File / dir | Role |
 |------|------|
 | `examples/loops/hello-eval.json` | Single phase: write HELLO.txt, grep eval |
 | `examples/loops/plan-next.json` | Seed phases + `type: "plan-next"` planner |
 | `examples/loops/self-improve.json` | Eval measure → score/baseline → plan-next → gate `--improve` |
+| `examples/loops/hello-aflt/` | Portable tile-dungeon M1–M5a + improve rounds (Copilot-friendly; see its README) |
 
 Validate (safe; no engines):
 
@@ -36,7 +37,10 @@ Validate (safe; no engines):
 aflt --space tutorial loop validate examples/loops/hello-eval.json --json
 aflt --space tutorial loop validate examples/loops/plan-next.json --json
 aflt --space tutorial loop validate examples/loops/self-improve.json --json
+aflt --space tutorial loop validate examples/loops/hello-aflt/hello-aflt.json --json
 ```
+
+For a longer end-to-end game loop on a work Mac (Copilot CLI, no Cursor required), see [`examples/loops/hello-aflt/README.md`](../../examples/loops/hello-aflt/README.md). Run it with shell cwd set to your game repo and the definition path pointing at this package.
 
 Success text shape:
 

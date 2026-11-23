@@ -458,6 +458,9 @@ describe('aflt loop milestone 3', () => {
       step: 'gate',
       elapsedMs: 5000,
       budget: { maxRuns: 5, runsUsed: 0, maxHours: 1, hoursUsed: 0 },
+      usage: { totalTokens: 1200, turnCount: 2, accuracy: 'reported' },
+      loopRootSessionId: 'root-1',
+      loopRootSessionTitle: 'loop-demo',
       gate: { phaseId: 'gated', waiting: true },
       steps: [
         { id: 'develop', label: 'develop', done: true },
@@ -472,6 +475,7 @@ describe('aflt loop milestone 3', () => {
           gate: 'approve',
           sessionId: 'sess-1',
           sessionTitle: 'loop-demo',
+          evalScore: 88.5,
           lastEval: { text: 'fail output', code: 1 },
         },
       ],
@@ -480,5 +484,10 @@ describe('aflt loop milestone 3', () => {
     assert.match(detail, /data-loop-action="approve"/);
     assert.match(detail, /data-session-id="sess-1"/);
     assert.match(detail, /fail output/);
+    assert.match(detail, /Phase tree/);
+    assert.match(detail, /88\.5/);
+    assert.match(detail, /1\.2k tok|1200 tok|Tokens/);
+    assert.equal(typeof ui.formatLoopUsage, 'function');
+    assert.equal(typeof ui.renderLoopPhaseTree, 'function');
   });
 });
