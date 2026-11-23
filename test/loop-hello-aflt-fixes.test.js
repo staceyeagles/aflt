@@ -487,6 +487,32 @@ describe('hello-aflt loop fixes', () => {
     const planNext = fs.readFileSync(path.join(exampleDir, 'prompts', 'plan-next.txt'), 'utf8');
     assert.match(planNext, /improve-gate\.js/);
     assert.ok(!planNext.includes('/tmp/aflt-dungeon-loop'));
+    // Planner must count THIS loop's passed improve-* phases, not history.jsonl lines.
+    assert.match(planNext, /passed improve-\* phases/i);
+    assert.match(planNext, /NOT the number of eval\/history\.jsonl lines/i);
+    assert.ok(
+      !/Count completed improve rounds as history\.jsonl entries/i.test(planNext),
+      'plan-next must not count history.jsonl lines as improve rounds'
+    );
+    // Live overall from eval.js --json (no --write); ignore stale prior-loop files.
+    assert.match(planNext, /node scripts\/eval\/eval\.js --json/);
+    assert.match(planNext, /no --write/);
+    assert.match(planNext, /Ignore leftover eval\/latest-score\.json/i);
+    assert.match(planNext, /keep_changes false/i);
+    // Continue loop: start at 0 of 3; ignore prior plateau stop.
+    assert.match(planNext, /hello-aflt-improve/);
+    assert.match(planNext, /starts at 0 of 3/i);
+    assert.match(planNext, /Ignore a prior loop's plateau\.json stop/i);
+
+    const readmePlanRules = fs.readFileSync(path.join(exampleDir, 'README.md'), 'utf8');
+    assert.match(readmePlanRules, /passed `improve-\*` phases/i);
+    assert.match(readmePlanRules, /\*\*not\*\* the number of `eval\/history\.jsonl` lines/i);
+    assert.match(readmePlanRules, /0 of 3/);
+    assert.match(readmePlanRules, /keep_changes:\s*false/i);
+
+    const improveGoal = String(improveRaw.goal || '');
+    assert.match(improveGoal, /starts at 0 of 3/i);
+    assert.match(improveGoal, /live overall/i);
 
     const seedServer = fs.readFileSync(path.join(exampleDir, 'm0-seed', 'server.js'), 'utf8');
     assert.match(seedServer, /PORT \|\| 8792/);
