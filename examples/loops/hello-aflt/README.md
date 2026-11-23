@@ -27,6 +27,15 @@ cd /path/to/existing-game
 aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt-improve.json
 ```
 
+### Continue improve after a completed run
+
+If `hello-aflt-improve` already finished in this fleethome, a plain `aflt loop run …/hello-aflt-improve.json` is a no-op (`loop already completed`). Re-run the same definition with **`--fresh`** so it starts a new state (0 of N phases) in the same home — prefer this over creating a space, so the default dashboard Loops view still shows the run. Still no `/tmp`, no engine pin, no Grok Bot:
+
+```bash
+cd /path/to/existing-game
+aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt-improve.json --fresh
+```
+
 ---
 
 Multi-phase `aflt loop` that builds a tile dungeon (M0 seed → M1–M4 → M5a eval harness → at most three eval-gated improve rounds via `plan-next`).
