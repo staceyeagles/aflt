@@ -74,8 +74,8 @@ aflt --space hello-demo loop run /path/to/aflt/examples/loops/hello-aflt/hello-a
 3. Measures again with `--json --write` **after** worker changes
 4. Compares gate-owned before vs after — **never** the last line of `eval/history.jsonl`
 5. Prints a JSON line with `overall` / `after` so the Loops phase tree can show the score
-6. On improvement → exit 0, keep changes  
-   On plateau/regression → restore gameplay paths to `HEAD`, keep gate records, exit 0  
+6. On improvement → exit 0, keep changes (`keep_changes: true`)  
+   On plateau/regression → restore gameplay paths to `HEAD`, keep gate records (`keep_changes: false`), exit 0  
    On test failure or edits to locked `scripts/eval/eval.js` / `scorer.js` → exit 1
 
 Plan-next instructs planned improve phases to use (definition-dir resolved):
@@ -83,6 +83,14 @@ Plan-next instructs planned improve phases to use (definition-dir resolved):
 ```json
 "eval": { "command": ["node", "improve-gate.js"], "exitCode": 0 }
 ```
+
+### How plan-next counts rounds / scores
+
+- Completed improve rounds = **this loop’s** passed `improve-*` phases in loop state — **not** the number of `eval/history.jsonl` lines (the gate / `--write` can append several lines per round).
+- Live overall = `node scripts/eval/eval.js --json` (no `--write`), or this loop’s own gate before/after. Do **not** treat leftover `eval/latest-score.json` / `eval/plateau.json` from a prior loop as the live score.
+- `plateau.json` with `keep_changes: false` means gameplay was reverted; that score is **not** a kept round.
+- `hello-aflt-improve.json` always starts at **0 of 3** rounds for that loop name, ignoring a prior `hello-aflt` loop’s history/plateau stop flag. Stop only for this loop’s own gate plateau/regression, 3 kept rounds, or live overall ≥ 99.
+
 
 ## Server port
 
