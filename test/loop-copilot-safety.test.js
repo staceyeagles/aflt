@@ -312,6 +312,88 @@ exit 0
     assert.notEqual(rows[0].usage.source, 'estimated-chars');
   });
 
+  function unavailableDefaultStub(log) {
+    const stub = path.join(stubDir, 'copilot');
+    fs.writeFileSync(
+      stub,
+      `#!/usr/bin/env bash
+printf '%s\\n' "$@" >> "${log}"
+echo '---' >> "${log}"
+for a in "$@"; do
+  if [[ "$a" == "--model" ]]; then
+    echo '{"type":"assistant.message","data":{"content":"done"}}'
+    exit 0
+  fi
+done
+echo '{"type":"session.error","data":{"errorType":"query","message":"Execution failed: Model \\"claude-opus-4.6\\" is not available."}}'
+exit 1
+`,
+      { mode: 0o755 }
+    );
+    return stub;
+  }
+
+  it('retries on --model auto when the Copilot account default is unavailable', async () => {
+    gitInit(cwd);
+    const log = path.join(stubDir, 'fallback.log');
+    const copilotHome = path.join(home, 'copilot-home');
+    const stub = unavailableDefaultStub(log);
+    process.env.AGENTFLEET_COPILOT_BIN = stub;
+    process.env.AGENTFLEET_COPILOT_HOME = copilotHome;
+    const file = writeDef({
+      name: 'model-fallback',
+      cwd,
+      engine: 'copilot',
+      allow: { commit: false, merge: false, push: false },
+      budget: { maxRuns: 6, maxHours: 1 },
+      phases: [phase({ force: false }), phase({ id: 'p2', session: 'loop-p2', force: false })],
+    });
+    const loop = require('../lib/loop');
+    const result = await loop.runFromFile(file, {
+      env: enforcedEnv({ AGENTFLEET_COPILOT_BIN: stub, AGENTFLEET_COPILOT_HOME: copilotHome }),
+      checkWorkdir: true,
+    });
+    assert.equal(result.ok, true, result.error || JSON.stringify(result));
+    const runs = fs.readFileSync(log, 'utf8').split('---\n').filter(Boolean);
+    // p1: default fails, retry with auto. p2: starts on auto directly.
+    assert.equal(runs.length, 3, runs.join('|'));
+    assert.doesNotMatch(runs[0], /--model/);
+    assert.match(runs[1], /--model\nauto\n/);
+    assert.match(runs[2], /--model\nauto\n/);
+    const state = loop.loadState('model-fallback');
+    assert.equal(state.phases.p1.status, 'passed');
+    assert.equal(state.phases.p2.status, 'passed');
+  });
+
+  it('does not retry when AGENTFLEET_COPILOT_FALLBACK_MODEL=none', async () => {
+    gitInit(cwd);
+    const log = path.join(stubDir, 'nofallback.log');
+    const copilotHome = path.join(home, 'copilot-home');
+    const stub = unavailableDefaultStub(log);
+    process.env.AGENTFLEET_COPILOT_BIN = stub;
+    process.env.AGENTFLEET_COPILOT_HOME = copilotHome;
+    const file = writeDef({
+      name: 'model-nofallback',
+      cwd,
+      engine: 'copilot',
+      allow: { commit: false, merge: false, push: false },
+      budget: { maxRuns: 3, maxHours: 1 },
+      phases: [phase({ force: false })],
+    });
+    const loop = require('../lib/loop');
+    const result = await loop.runFromFile(file, {
+      env: enforcedEnv({
+        AGENTFLEET_COPILOT_BIN: stub,
+        AGENTFLEET_COPILOT_HOME: copilotHome,
+        AGENTFLEET_COPILOT_FALLBACK_MODEL: 'none',
+      }),
+      checkWorkdir: true,
+    });
+    assert.equal(result.ok, false);
+    assert.doesNotMatch(fs.readFileSync(log, 'utf8'), /--model/);
+    assert.match(loop.loadState('model-nofallback').lastError || '', /agent exited 1/);
+  });
+
   it('dry-run shows cwd and permissions and refuses an unsafe folder', () => {
     const file = writeDef({
       name: 'guard',
@@ -331,7 +413,7 @@ exit 0
     const deniedJson = JSON.parse(denied.stdout);
     assert.equal(deniedJson.ok, false);
     assert.equal(deniedJson.dryRun, true);
-    assert.equal(deniedJson.cwd, path.resolve(cwd));
+    assert.equal(fs.realpathSync(deniedJson.cwd), fs.realpathSync(cwd));
     assert.equal(deniedJson.permissions, 'restricted');
     assert.match(denied.stdout, new RegExp(`"permissions": "restricted"`));
     assert.match(denied.stderr, /not a git repository/);
