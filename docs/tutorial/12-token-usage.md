@@ -89,6 +89,14 @@ If you pass `--output-format json` yourself, you get JSON end-to-end (no silent 
 
 Cache note for Cursor: `inputTokens` is **uncached**; cache read/write are separate fields that fold into `totalInput`.
 
+**What Cursor often cannot provide (do not invent):**
+
+- **`cost`** — Cursor headless `result.usage` has no USD figure; `cost` stays `null` (never derived from tokens).
+- **`model`** — many Cursor JSON results and agent transcripts omit model names, so session `models: []` is common even when token counts are `reported`.
+- **`accuracy: "partial"`** — a session can mix a reported headless turn with an estimated transcript/backfill turn; the rollup correctly marks `partial`. Loop-level rollups on `state.json` sum phase `usage-summary.json` files the same way.
+
+Loops: `aflt loop status` / the Loops view show a compact per-loop token rollup when phase sessions have usage summaries.
+
 ### Copilot turns
 
 Interactive / sync paths prefer, in order:

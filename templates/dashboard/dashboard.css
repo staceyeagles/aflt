@@ -966,6 +966,37 @@ body {
   margin-bottom: 0.25rem;
 }
 .loops-phase-head strong { font-size: 0.88rem; }
+.loops-phase-score {
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--state-completed);
+  margin-left: 0.35rem;
+}
+.loops-phase-tree {
+  margin: 0.4rem 0 0.8rem;
+  font-size: 0.85rem;
+}
+.loops-phase-tree-root {
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+.loops-phase-tree-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 1rem;
+  border-left: 1px solid var(--cp-border, rgba(127, 127, 127, 0.35));
+}
+.loops-phase-tree-item {
+  padding: 0.2rem 0 0.2rem 0.65rem;
+  position: relative;
+}
+.loops-phase-tree-item.current {
+  background: var(--cp-accent-soft, rgba(100, 140, 255, 0.12));
+  border-radius: 4px;
+}
+.loops-phase-tree-id {
+  font-weight: 600;
+}
 .loops-eval-tail {
   margin: 0.35rem 0 0;
   padding: 0.4rem 0.5rem;

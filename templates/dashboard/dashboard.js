@@ -774,6 +774,95 @@ function renderLoopsListHtml(loops, selectedName) {
   return html;
 }
 
+/** Compact token rollup for Loops detail (never invents USD). */
+function formatLoopUsage(usage) {
+  if (!usage || typeof usage !== 'object') return '—';
+  const total =
+    usage.totalTokens != null
+      ? usage.totalTokens
+      : usage.totalInput != null || usage.outputTokens != null
+        ? (usage.totalInput || 0) + (usage.outputTokens || 0)
+        : null;
+  if (total == null && !usage.turnCount) return '—';
+  const approx =
+    usage.accuracy === 'estimated' || usage.accuracy === 'partial' ? '~' : '';
+  function fmtTok(n) {
+    if (n == null || !Number.isFinite(Number(n))) return '';
+    const v = Number(n);
+    if (Math.abs(v) < 1000) return String(Math.round(v));
+    if (Math.abs(v) < 1000000) {
+      const k = v / 1000;
+      const rounded = k >= 100 ? Math.round(k) : Math.round(k * 10) / 10;
+      return String(rounded).replace(/\.0$/, '') + 'k';
+    }
+    return String(Math.round((v / 1000000) * 10) / 10).replace(/\.0$/, '') + 'm';
+  }
+  const parts = [];
+  if (total != null) parts.push(approx + fmtTok(total) + ' tok');
+  if (usage.turnCount) parts.push(usage.turnCount + ' turn' + (usage.turnCount === 1 ? '' : 's'));
+  if (usage.accuracy) parts.push(String(usage.accuracy));
+  if (usage.cost != null && Number.isFinite(Number(usage.cost))) {
+    parts.push('$' + Number(usage.cost).toFixed(4));
+  }
+  return parts.length ? parts.join(' · ') : '—';
+}
+
+/**
+ * Historical loop phase tree with eval scores (from stored phase results).
+ */
+function renderLoopPhaseTree(detail) {
+  const pipeline = detail && Array.isArray(detail.pipeline) ? detail.pipeline : [];
+  if (!pipeline.length) return '';
+  const rootId = detail.loopRootSessionId || null;
+  const rootTitle = detail.loopRootSessionTitle || (detail.name ? 'loop-' + detail.name : 'loop');
+  let html = '<div class="loops-phase-tree" role="tree" aria-label="Loop phase tree">';
+  html += '<div class="loops-phase-tree-root" role="treeitem" aria-expanded="true">';
+  if (rootId) {
+    html +=
+      '<button type="button" class="loops-session-link" data-session-id="' +
+      escapeHtml(rootId) +
+      '">' +
+      escapeHtml(rootTitle) +
+      '</button>';
+  } else {
+    html += '<span>' + escapeHtml(rootTitle) + '</span>';
+  }
+  html += ' <span class="loops-row-meta">master</span>';
+  html += '</div>';
+  html += '<ul class="loops-phase-tree-list" role="group">';
+  for (let i = 0; i < pipeline.length; i++) {
+    const p = pipeline[i] || {};
+    html +=
+      '<li class="loops-phase-tree-item' +
+      (p.current ? ' current' : '') +
+      '" role="treeitem">';
+    html += '<span class="loops-phase-tree-id">' + escapeHtml(p.id || 'phase') + '</span>';
+    html +=
+      ' <span class="loops-status ' +
+      loopStatusClass(p.status) +
+      '">' +
+      escapeHtml(p.status || 'pending') +
+      '</span>';
+    if (p.evalScore != null && Number.isFinite(Number(p.evalScore))) {
+      html +=
+        ' <span class="loops-phase-score" title="Eval overall score">' +
+        escapeHtml(String(p.evalScore)) +
+        '</span>';
+    }
+    if (p.sessionId) {
+      html +=
+        ' <button type="button" class="loops-session-link" data-session-id="' +
+        escapeHtml(p.sessionId) +
+        '">' +
+        escapeHtml(p.sessionTitle || p.sessionId) +
+        '</button>';
+    }
+    html += '</li>';
+  }
+  html += '</ul></div>';
+  return html;
+}
+
 function renderLoopPhaseCards(pipeline) {
   const phases = Array.isArray(pipeline) ? pipeline : [];
   if (!phases.length) return '<div class="empty">No phases</div>';
@@ -790,6 +879,12 @@ function renderLoopPhaseCards(pipeline) {
       '">' +
       escapeHtml(p.status || 'pending') +
       '</span>';
+    if (p.evalScore != null && Number.isFinite(Number(p.evalScore))) {
+      html +=
+        '<span class="loops-phase-score" title="Eval overall score">' +
+        escapeHtml(String(p.evalScore)) +
+        '</span>';
+    }
     html += '</div>';
     const bits = [];
     if (p.gate) bits.push('gate=' + p.gate + (p.gateApproved ? ' (approved)' : ''));
@@ -862,6 +957,7 @@ function renderLoopDetailHtml(detail) {
     { k: 'Step', v: detail.step || '—' },
     { k: 'Elapsed', v: formatLoopElapsed(detail.elapsedMs) },
     { k: 'Budget', v: formatLoopBudget(detail.budget) },
+    { k: 'Tokens', v: formatLoopUsage(detail.usage) },
   ];
   for (let i = 0; i < stats.length; i++) {
     html +=
@@ -875,6 +971,8 @@ function renderLoopDetailHtml(detail) {
 
   html += '<div class="label">Step pipeline</div>';
   html += renderLoopStepPipeline(detail.steps);
+  html += '<div class="label">Phase tree</div>';
+  html += renderLoopPhaseTree(detail);
   html += '<div class="label">Phases</div>';
   html += renderLoopPhaseCards(detail.pipeline);
   if (detail.currentEval && detail.currentEval.text) {
@@ -917,8 +1015,9 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     clampGraphSpread, graphForceParams, clampGraphZoom, fitGraphView, zoomGraphView, panGraphView,
     graphViewTransform, clampTimelineWindow, resolveTimelineWindow, formatTimelineAxisLabel,
     zoomTimelineWindow, panTimelineWindow, layoutTimelineMarkers, maxTimelineLaneCount,
-    formatLoopElapsed, formatLoopBudget, loopStatusClass, renderLoopStepPipeline,
-    renderLoopsListHtml, renderLoopPhaseCards, renderLoopDetailHtml, emptyLoopPhaseForm, escapeHtml,
+    formatLoopElapsed, formatLoopBudget, formatLoopUsage, loopStatusClass, renderLoopStepPipeline,
+    renderLoopsListHtml, renderLoopPhaseTree, renderLoopPhaseCards, renderLoopDetailHtml,
+    emptyLoopPhaseForm, escapeHtml,
   };
 } else {
   (function () {
