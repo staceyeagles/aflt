@@ -4,15 +4,20 @@
 /**
  * Improve-round eval gate for the hello-aflt loop (portable Node).
  *
- * Measures the score BEFORE comparing to baseline and AFTER the worker's
- * changes by running `node scripts/eval/eval.js --json` itself.
+ * Runs AFTER the worker (workers are told not to commit). Compares:
+ *   previous = overall from the committed HEAD gameplay tree
+ *   after    = overall from the current (uncommitted) working tree
+ *
  * NEVER uses the last line of eval/history.jsonl as "previous" — that bug
- * compared a post-write history line to itself (e.g. 92.4 → 92.4) and
- * reverted real improvements.
+ * compared a post-write history line to itself. Also never measures "before
+ * and after itself" on the dirty tree (that compared 92.4→92.4 and reverted
+ * a real gain that was already in the working tree).
  *
  * Exit codes:
- *   0 — improved (keep changes) OR plateau/regression (gameplay restored to
- *       HEAD; gate measurements preserved) so plan-next can stop.
+ *   0 — improved (keep changes, --write once) OR plateau/regression
+ *       (gameplay restored to HEAD; plateau.json has both scores;
+ *       latest-score is not left at the discarded working-tree score)
+ *       so plan-next can stop.
  *   1 — test failure or locked scorer edits (scripts/eval/eval.js,
  *       scripts/eval/scorer.js) → fix attempt.
  */
@@ -31,7 +36,6 @@ const RESTORE = [
   'AGENTS.md',
   'package.json',
 ];
-const PRESERVE = ['eval/history.jsonl', 'eval/latest-score.json', 'eval/plateau.json'];
 
 function die(msg, code = 1) {
   process.stderr.write(`improve-gate: ${msg}\n`);
@@ -72,10 +76,11 @@ function measureOverall(write) {
     : ['scripts/eval/eval.js', '--json'];
   const r = run('node', args);
   if (r.status !== 0) {
-    die(
-      `eval.js failed (exit ${r.status}): ${(r.stderr || r.stdout || '').slice(0, 800)}`,
-      1
+    const err = new Error(
+      `eval.js failed (exit ${r.status}): ${(r.stderr || r.stdout || '').slice(0, 800)}`
     );
+    err.exitCode = 1;
+    throw err;
   }
   let overall = parseOverall(r.stdout);
   if (overall == null && write && fs.existsSync('eval/latest-score.json')) {
@@ -86,7 +91,9 @@ function measureOverall(write) {
     }
   }
   if (overall == null) {
-    die('eval.js produced no overall score', 1);
+    const err = new Error('eval.js produced no overall score');
+    err.exitCode = 1;
+    throw err;
   }
   return { overall, stdout: r.stdout };
 }
@@ -108,25 +115,101 @@ function listTestFiles(dir) {
   return out.sort();
 }
 
+function walkFiles(root) {
+  if (!fs.existsSync(root)) return [];
+  let st;
+  try {
+    st = fs.statSync(root);
+  } catch (_) {
+    return [];
+  }
+  if (st.isFile()) return [root];
+  if (!st.isDirectory()) return [];
+  const out = [];
+  for (const name of fs.readdirSync(root)) {
+    out.push(...walkFiles(path.join(root, name)));
+  }
+  return out;
+}
+
+function rmRf(target) {
+  if (!fs.existsSync(target)) return;
+  fs.rmSync(target, { recursive: true, force: true });
+}
+
+/** Snapshot current gameplay files (buffers) so HEAD measure cannot lose them. */
+function snapshotGameplay() {
+  const files = Object.create(null);
+  for (const root of RESTORE) {
+    for (const rel of walkFiles(root)) {
+      files[rel] = fs.readFileSync(rel);
+    }
+  }
+  return files;
+}
+
+function trackedRestoreRoots() {
+  const existing = [];
+  for (const rel of RESTORE) {
+    const ls = run('git', ['ls-files', '--', rel]);
+    if (String(ls.stdout || '').trim()) existing.push(rel);
+  }
+  return existing;
+}
+
+/**
+ * Restore RESTORE paths to committed HEAD for previous measurement.
+ * Removes working copies first so untracked worker files do not linger.
+ */
+function checkoutHeadGameplay() {
+  for (const rel of RESTORE) {
+    rmRf(rel);
+  }
+  const existing = trackedRestoreRoots();
+  if (existing.length) {
+    const r = run('git', ['checkout', 'HEAD', '--', ...existing]);
+    if (r.status !== 0) {
+      die(
+        `git checkout HEAD failed: ${(r.stderr || r.stdout || '').slice(0, 800)}`,
+        1
+      );
+    }
+  }
+}
+
+/** Put worker gameplay files back (exact WT snapshot). */
+function applyGameplaySnapshot(files) {
+  for (const rel of RESTORE) {
+    rmRf(rel);
+  }
+  for (const [rel, blob] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(rel), { recursive: true });
+    fs.writeFileSync(rel, blob);
+  }
+}
+
+function writeLatestScore(overall) {
+  fs.mkdirSync('eval', { recursive: true });
+  const out = { overall, source: 'improve-gate-head' };
+  fs.writeFileSync('eval/latest-score.json', JSON.stringify(out) + '\n');
+}
+
 function main() {
   if (!fs.existsSync('package.json')) {
     die('must run from the tile-dungeon (game) repo root');
   }
-
-  if (fs.existsSync('.git')) {
-    const dirty = run('git', ['diff', '--name-only', 'HEAD', '--', ...LOCKED]);
-    const names = String(dirty.stdout || '')
-      .split(/\r?\n/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (names.length) {
-      die(`locked scorer files were modified: ${names.join(', ')}`, 1);
-    }
+  if (!fs.existsSync('.git')) {
+    die('need a git repo to compare committed HEAD vs working tree');
   }
 
-  // BEFORE measurement — capture baseline before any history write from this gate.
-  // Do not read eval/history.jsonl for "previous".
-  const before = measureOverall(false);
+  const dirtyLocked = run('git', ['diff', '--name-only', 'HEAD', '--', ...LOCKED]);
+  const lockedNames = String(dirtyLocked.stdout || '')
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (lockedNames.length) {
+    die(`locked scorer files were modified: ${lockedNames.join(', ')}`, 1);
+  }
 
   const testFiles = listTestFiles('test');
   const testArgs = testFiles.length ? ['--test', ...testFiles] : ['--test', 'test'];
@@ -135,10 +218,26 @@ function main() {
     die(`tests failed (exit ${testRun.status})`, 1);
   }
 
-  // AFTER measurement — write history/latest via --write for the project record,
-  // but compare against the gate's own before-measurement only.
+  // Snapshot worker (uncommitted) gameplay, measure HEAD, then put worker files back.
+  // Do not read eval/history.jsonl for "previous".
+  const workerSnap = snapshotGameplay();
+  let before;
+  try {
+    checkoutHeadGameplay();
+    before = measureOverall(false);
+  } catch (err) {
+    applyGameplaySnapshot(workerSnap);
+    die(err.message || String(err), err.exitCode || 1);
+  }
+  applyGameplaySnapshot(workerSnap);
+
   fs.mkdirSync('eval', { recursive: true });
-  const after = measureOverall(true);
+  let after;
+  try {
+    after = measureOverall(false);
+  } catch (err) {
+    die(err.message || String(err), err.exitCode || 1);
+  }
 
   const prev = before.overall;
   const next = after.overall;
@@ -146,18 +245,25 @@ function main() {
     previous: prev,
     after: next,
     measuredBy: 'improve-gate',
-    beforeSource: 'gate-pre-measure',
-    afterSource: 'gate-post-measure',
+    beforeSource: 'committed-head',
+    afterSource: 'working-tree',
   };
 
   if (next > prev) {
+    // Keep worker changes; --write once on the kept tree.
+    try {
+      measureOverall(true);
+    } catch (err) {
+      die(err.message || String(err), err.exitCode || 1);
+    }
     payload.result = 'improved';
     payload.keep_changes = true;
     payload.stop = false;
     payload.overall = next;
     fs.writeFileSync('eval/plateau.json', JSON.stringify(payload, null, 2) + '\n');
-    // JSON line first so aflt loop / Loops phase tree can parse overall without inventing scores.
-    process.stdout.write(JSON.stringify({ overall: next, previous: prev, after: next, result: 'improved' }) + '\n');
+    process.stdout.write(
+      JSON.stringify({ overall: next, previous: prev, after: next, result: 'improved' }) + '\n'
+    );
     process.stdout.write(`improve-gate: improved ${prev} -> ${next}\n`);
     process.exit(0);
   }
@@ -165,34 +271,18 @@ function main() {
   payload.result = next === prev ? 'plateau' : 'regressed';
   payload.keep_changes = false;
   payload.stop = true;
-  payload.overall = next;
+  // After revert, live score matches HEAD (previous) — do not advertise the discarded WT score as overall.
+  payload.overall = prev;
 
-  // Preserve gate measurements / history written by this run, then restore gameplay.
-  const preserved = {};
-  for (const rel of PRESERVE) {
-    if (fs.existsSync(rel)) preserved[rel] = fs.readFileSync(rel);
-  }
-  preserved['eval/plateau.json'] = Buffer.from(JSON.stringify(payload, null, 2) + '\n');
+  checkoutHeadGameplay();
 
-  if (fs.existsSync('.git')) {
-    const existing = [];
-    for (const rel of RESTORE) {
-      const ls = run('git', ['ls-files', '--', rel]);
-      if (String(ls.stdout || '').trim()) existing.push(rel);
-    }
-    if (existing.length) {
-      run('git', ['checkout', '--', ...existing]);
-    }
-  }
-
-  for (const [rel, blob] of Object.entries(preserved)) {
-    fs.mkdirSync(path.dirname(rel), { recursive: true });
-    fs.writeFileSync(rel, blob);
-  }
+  fs.writeFileSync('eval/plateau.json', JSON.stringify(payload, null, 2) + '\n');
+  // Do not leave latest-score.json at the discarded working-tree score.
+  writeLatestScore(prev);
 
   process.stdout.write(
     JSON.stringify({
-      overall: next,
+      overall: prev,
       previous: prev,
       after: next,
       result: payload.result,

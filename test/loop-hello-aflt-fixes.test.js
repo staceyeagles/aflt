@@ -499,6 +499,14 @@ describe('hello-aflt loop fixes', () => {
     assert.match(planNext, /no --write/);
     assert.match(planNext, /Ignore leftover eval\/latest-score\.json/i);
     assert.match(planNext, /keep_changes false/i);
+    // Gate compares committed HEAD vs working tree (not before/after itself).
+    assert.match(planNext, /committed HEAD/);
+    assert.match(planNext, /working tree/);
+    assert.ok(!/measures overall BEFORE and AFTER itself/i.test(planNext));
+    // Continue loops: unique session per loop+round (do not resume hello-aflt-m5-rN).
+    assert.match(planNext, /hello-aflt-improve-rN/);
+    assert.match(planNext, /unique per loop name \+ round/i);
+    assert.ok(!/"session":\s*"hello-aflt-m5-rN"/.test(planNext));
     // Continue loop: start at 0 of 3; ignore prior plateau stop.
     assert.match(planNext, /hello-aflt-improve/);
     assert.match(planNext, /starts at 0 of 3/i);
@@ -542,33 +550,46 @@ describe('hello-aflt loop fixes', () => {
     assert.match(again.stdout || '', /leaving tree unchanged/);
   });
 
-  it('improve-gate measures before/after and never uses history.jsonl as previous', () => {
+  it('improve-gate: dirty working tree scoring higher than HEAD is improved (not plateau)', () => {
     const { spawnSync } = require('child_process');
     const gate = path.join(exampleDir, 'improve-gate.js');
     const src = fs.readFileSync(gate, 'utf8');
-    assert.match(src, /gate-pre-measure/);
+    assert.match(src, /committed-head/);
+    assert.match(src, /working-tree/);
     assert.match(src, /Do not read eval\/history\.jsonl/);
-    assert.ok(!src.includes('/tmp/'));
+    assert.ok(!src.includes("'/tmp/") && !src.includes('"/tmp/'));
+    assert.ok(!/before and after itself/i.test(src));
 
     const game = fs.mkdtempSync(path.join(os.tmpdir(), 'af-hello-gate-game-'));
+    const git = (args) =>
+      spawnSync('git', args, {
+        cwd: game,
+        encoding: 'utf8',
+        env: process.env,
+      });
+    const gitCommit = (msg) =>
+      spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-m', msg], {
+        cwd: game,
+        encoding: 'utf8',
+        env: process.env,
+      });
+
     fs.writeFileSync(path.join(game, 'package.json'), JSON.stringify({ name: 'g' }) + '\n');
     fs.mkdirSync(path.join(game, 'scripts', 'eval'), { recursive: true });
+    fs.mkdirSync(path.join(game, 'src'), { recursive: true });
     fs.mkdirSync(path.join(game, 'test'), { recursive: true });
     fs.writeFileSync(
       path.join(game, 'test', 'smoke.test.js'),
       `const { describe, it } = require('node:test');\nconst assert = require('node:assert/strict');\ndescribe('smoke', () => { it('ok', () => assert.equal(1, 1)); });\n`
     );
-    // Counter: first measure → 90, second → 95 (real improvement).
-    // Misleading history.jsonl last line is 95 (old gate would see 95→95 plateau).
+    // Score follows gameplay: HEAD has no src/boost.js → 88.2; dirty tree with boost → 92.4.
+    // Call-count "before/after itself" on the dirty tree would see 92.4→92.4 and falsely plateau.
     fs.writeFileSync(
       path.join(game, 'scripts', 'eval', 'eval.js'),
       `const fs=require('fs');
-const c='eval/.gate-count';
-fs.mkdirSync('eval',{recursive:true});
-let n=0; try{n=Number(fs.readFileSync(c,'utf8'))||0;}catch{}
-n+=1; fs.writeFileSync(c,String(n));
-const overall = n===1 ? 90 : 95;
+const overall = fs.existsSync('src/boost.js') ? 92.4 : 88.2;
 const out={overall,weakest:'avg_depth',metrics:{}};
+fs.mkdirSync('eval',{recursive:true});
 if(process.argv.includes('--write')){
   fs.writeFileSync('eval/latest-score.json', JSON.stringify(out)+'\\n');
   fs.appendFileSync('eval/history.jsonl', JSON.stringify(out)+'\\n');
@@ -576,10 +597,22 @@ if(process.argv.includes('--write')){
 process.stdout.write(JSON.stringify(out)+'\\n');
 `
     );
+    fs.writeFileSync(path.join(game, 'src', 'monsters.js'), 'module.exports = {};\n');
+
+    assert.equal(git(['init']).status, 0);
+    assert.equal(git(['add', '-A']).status, 0);
+    assert.equal(gitCommit('HEAD baseline').status, 0, 'git commit');
+
+    // Worker improvement (uncommitted) + misleading history/latest left at the new score.
+    fs.writeFileSync(path.join(game, 'src', 'boost.js'), '// worker gain\n');
     fs.mkdirSync(path.join(game, 'eval'), { recursive: true });
     fs.writeFileSync(
       path.join(game, 'eval', 'history.jsonl'),
-      JSON.stringify({ overall: 95 }) + '\n'
+      JSON.stringify({ overall: 92.4 }) + '\n'
+    );
+    fs.writeFileSync(
+      path.join(game, 'eval', 'latest-score.json'),
+      JSON.stringify({ overall: 92.4 }) + '\n'
     );
 
     const r = spawnSync(process.execPath, [gate], {
@@ -588,16 +621,88 @@ process.stdout.write(JSON.stringify(out)+'\\n');
       env: process.env,
     });
     assert.equal(r.status, 0, r.stderr || r.stdout);
-    assert.match(r.stdout || '', /improved 90 -> 95/);
-    assert.match(r.stdout || '', /"overall"\s*:\s*95/);
+    assert.match(r.stdout || '', /improved 88\.2 -> 92\.4/);
+    assert.match(r.stdout || '', /"overall"\s*:\s*92\.4/);
+    assert.ok(fs.existsSync(path.join(game, 'src', 'boost.js')), 'kept worker changes');
     const plateau = JSON.parse(fs.readFileSync(path.join(game, 'eval', 'plateau.json'), 'utf8'));
-    assert.equal(plateau.previous, 90);
-    assert.equal(plateau.after, 95);
+    assert.equal(plateau.previous, 88.2);
+    assert.equal(plateau.after, 92.4);
     assert.equal(plateau.result, 'improved');
-    assert.equal(plateau.beforeSource, 'gate-pre-measure');
+    assert.equal(plateau.keep_changes, true);
+    assert.equal(plateau.beforeSource, 'committed-head');
+    assert.equal(plateau.afterSource, 'working-tree');
     assert.equal(
       require('../lib/loop').extractEvalScore({ stdout: r.stdout }),
-      95
+      92.4
     );
+  });
+
+  it('improve-gate: plateau restores HEAD and does not leave discarded latest-score', () => {
+    const { spawnSync } = require('child_process');
+    const gate = path.join(exampleDir, 'improve-gate.js');
+    const game = fs.mkdtempSync(path.join(os.tmpdir(), 'af-hello-gate-plat-'));
+    const git = (args) =>
+      spawnSync('git', args, {
+        cwd: game,
+        encoding: 'utf8',
+        env: process.env,
+      });
+    const gitCommit = (msg) =>
+      spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-m', msg], {
+        cwd: game,
+        encoding: 'utf8',
+        env: process.env,
+      });
+
+    fs.writeFileSync(path.join(game, 'package.json'), JSON.stringify({ name: 'g' }) + '\n');
+    fs.mkdirSync(path.join(game, 'scripts', 'eval'), { recursive: true });
+    fs.mkdirSync(path.join(game, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(game, 'test'), { recursive: true });
+    fs.writeFileSync(
+      path.join(game, 'test', 'smoke.test.js'),
+      `const { describe, it } = require('node:test');\nconst assert = require('node:assert/strict');\ndescribe('smoke', () => { it('ok', () => assert.equal(1, 1)); });\n`
+    );
+    // Same score with or without worker file → plateau; stale latest-score must not stick at 92.4.
+    fs.writeFileSync(
+      path.join(game, 'scripts', 'eval', 'eval.js'),
+      `const fs=require('fs');
+const overall = 88.2;
+const out={overall,weakest:'avg_depth',metrics:{}};
+fs.mkdirSync('eval',{recursive:true});
+if(process.argv.includes('--write')){
+  fs.writeFileSync('eval/latest-score.json', JSON.stringify(out)+'\\n');
+  fs.appendFileSync('eval/history.jsonl', JSON.stringify(out)+'\\n');
+}
+process.stdout.write(JSON.stringify(out)+'\\n');
+`
+    );
+    fs.writeFileSync(path.join(game, 'src', 'monsters.js'), 'module.exports = { orcs: true };\n');
+    assert.equal(git(['init']).status, 0);
+    assert.equal(git(['add', '-A']).status, 0);
+    assert.equal(gitCommit('HEAD').status, 0);
+
+    fs.writeFileSync(path.join(game, 'src', 'noop.js'), '// no score change\n');
+    fs.mkdirSync(path.join(game, 'eval'), { recursive: true });
+    fs.writeFileSync(
+      path.join(game, 'eval', 'latest-score.json'),
+      JSON.stringify({ overall: 92.4 }) + '\n'
+    );
+
+    const r = spawnSync(process.execPath, [gate], {
+      cwd: game,
+      encoding: 'utf8',
+      env: process.env,
+    });
+    assert.equal(r.status, 0, r.stderr || r.stdout);
+    assert.match(r.stdout || '', /plateau 88\.2 -> 88\.2/);
+    assert.ok(!fs.existsSync(path.join(game, 'src', 'noop.js')), 'reverted worker file');
+    const plateau = JSON.parse(fs.readFileSync(path.join(game, 'eval', 'plateau.json'), 'utf8'));
+    assert.equal(plateau.previous, 88.2);
+    assert.equal(plateau.after, 88.2);
+    assert.equal(plateau.result, 'plateau');
+    assert.equal(plateau.keep_changes, false);
+    assert.equal(plateau.overall, 88.2);
+    const latest = JSON.parse(fs.readFileSync(path.join(game, 'eval', 'latest-score.json'), 'utf8'));
+    assert.equal(latest.overall, 88.2);
   });
 });

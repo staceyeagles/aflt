@@ -12,7 +12,7 @@ Human overview: [README.md](README.md) (dashboard screenshots in `docs/images/`;
 
 ## What's new (2026-11-22)
 
-- **`aflt loop` UX fixes + portable hello-aflt** — freeze elapsed/budget hours on completed/failed/stopped/paused loops; per-loop token rollup on `state.json` / `loop status` / Loops view (reuse `lib/usage.js`, never invent USD); phase sessions get `parent`/`role` under a `loop-<name>` master so History trees nest; Loops phase tree shows eval scores from stored phase results (`overall` parsed from full eval stdout before truncation); prompt previews skip the plan-mode/pkill preamble (full prompt unchanged for runs); `promptFile` + companion scripts resolve relative to the definition directory. Example: `examples/loops/hello-aflt/` (one-command empty-repo quick start with M0 seed, Copilot-friendly, fixed `improve-gate.js`; continue with `hello-aflt-improve.json`).
+- **`aflt loop` UX fixes + portable hello-aflt** — freeze elapsed/budget hours on completed/failed/stopped/paused loops; per-loop token rollup on `state.json` / `loop status` / Loops view (reuse `lib/usage.js`, never invent USD); phase sessions get `parent`/`role` under a `loop-<name>` master so History trees nest; Loops phase tree shows eval scores from stored phase results (`overall` parsed from full eval stdout before truncation); prompt previews skip the plan-mode/pkill preamble (full prompt unchanged for runs); `promptFile` + companion scripts resolve relative to the definition directory. Example: `examples/loops/hello-aflt/` (one-command empty-repo quick start with M0 seed, Copilot-friendly, `improve-gate.js` compares committed HEAD vs working tree; continue with `hello-aflt-improve.json`).
 
 ## What's new (2026-11-21)
 
