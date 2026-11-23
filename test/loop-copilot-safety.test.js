@@ -363,6 +363,12 @@ exit 1
     const state = loop.loadState('model-fallback');
     assert.equal(state.phases.p1.status, 'passed');
     assert.equal(state.phases.p2.status, 'passed');
+    // Both worker sessions record the model they actually ran on.
+    const registry = require('../lib/registry');
+    for (const id of ['p1', 'p2']) {
+      const row = registry.list().find((r) => r.id === state.phases[id].sessionId);
+      assert.equal(row && row.model, 'auto', `${id}: ${JSON.stringify(row)}`);
+    }
   });
 
   it('does not retry when AGENTFLEET_COPILOT_FALLBACK_MODEL=none', async () => {
