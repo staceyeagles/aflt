@@ -126,7 +126,7 @@ Resolution for each phase (first hit wins):
 2. Loop-level `model`
 3. `COPILOT_MODEL` when the phase engine is Copilot
 4. `$AGENTFLEET_HOME/config.json` `defaultModel` (alias `model`)
-5. Otherwise the CLI's own default (no `--model`)
+5. Otherwise the CLI's own default (no `--model`). If Copilot answers `Model "…" is not available`, aflt retries that phase once with `--model auto` and uses `auto` for the rest of the run. Change the fallback with `AGENTFLEET_COPILOT_FALLBACK_MODEL=<model>`, or turn it off with `AGENTFLEET_COPILOT_FALLBACK_MODEL=none`.
 
 ```bash
 export COPILOT_MODEL=auto
@@ -134,7 +134,7 @@ export COPILOT_MODEL=auto
 # printf '%s\n' '{ "defaultEngine": "copilot", "defaultModel": "auto" }' > config via aflt, or edit the space config.json
 ```
 
-`hello-aflt.json` does not pin `model`, so set `COPILOT_MODEL` (or `defaultModel`) before the live run. Without it, every phase uses the account default.
+`hello-aflt.json` does not pin `model`. Without `COPILOT_MODEL` or `defaultModel`, each phase starts on the account default and falls back to `auto` if that model is unavailable. Pin a model when you want repeatable runs.
 
 ---
 
@@ -180,7 +180,7 @@ git init
 
 export AGENTFLEET_ENGINE=copilot
 export AFLT_SPACE=copilot-live
-export COPILOT_MODEL=auto
+# Optional: export COPILOT_MODEL=auto (unpinned runs fall back to auto anyway)
 
 # First run in this fleethome — --fresh is optional but safe.
 # Re-running after status=completed REQUIRES --fresh (else: "loop already completed").

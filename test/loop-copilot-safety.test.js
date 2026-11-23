@@ -394,6 +394,39 @@ exit 1
     assert.match(loop.loadState('model-nofallback').lastError || '', /agent exited 1/);
   });
 
+  it('refuses a live run with a clear message when the engine CLI is missing', async () => {
+    gitInit(cwd);
+    const prevPath = process.env.PATH;
+    // Only git + node; no cursor-agent and no bare \`agent\`.
+    const binDir = path.join(stubDir, 'bin');
+    fs.mkdirSync(binDir);
+    const gitBin = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+    fs.symlinkSync(gitBin, path.join(binDir, 'git'));
+    process.env.PATH = [binDir, path.dirname(process.execPath)].join(path.delimiter);
+    try {
+      const file = writeDef({
+        name: 'no-cursor',
+        cwd,
+        engine: 'cursor',
+        allow: { commit: false, merge: false, push: false },
+        budget: { maxRuns: 2, maxHours: 1 },
+        phases: [phase({ force: true })],
+      });
+      const loop = require('../lib/loop');
+      const env = enforcedEnv({ PATH: process.env.PATH });
+      const dry = await loop.runFromFile(file, { env, checkWorkdir: true, dryRun: true });
+      assert.equal(dry.ok, true, JSON.stringify(dry));
+      assert.match((dry.warnings || []).join('\n'), /cursor-agent not on PATH/);
+      const result = await loop.runFromFile(file, { env, checkWorkdir: true });
+      assert.equal(result.ok, false);
+      assert.equal(result.status, 'refused');
+      assert.match(result.error || '', /engine cursor: cursor-agent not on PATH.*aflt doctor/);
+      assert.doesNotMatch(result.error || '', /ENOENT/);
+    } finally {
+      process.env.PATH = prevPath;
+    }
+  });
+
   it('dry-run shows cwd and permissions and refuses an unsafe folder', () => {
     const file = writeDef({
       name: 'guard',
