@@ -264,7 +264,7 @@ _af() {
       elif [[ "${COMP_WORDS[2]}" == "validate" || "${COMP_WORDS[2]}" == "start" ]]; then
         COMPREPLY=( $(compgen -W "--json" -- "${cur}") )
       elif [[ "${COMP_WORDS[2]}" == "run" ]]; then
-        COMPREPLY=( $(compgen -W "--dry-run --json" -- "${cur}") )
+        COMPREPLY=( $(compgen -W "--dry-run --json --fresh" -- "${cur}") )
       elif [[ "${COMP_WORDS[2]}" == "status" || "${COMP_WORDS[2]}" == "stop" || "${COMP_WORDS[2]}" == "resume" || "${COMP_WORDS[2]}" == "pause" || "${COMP_WORDS[2]}" == "approve" ]]; then
         COMPREPLY=( $(compgen -W "--json --force" -- "${cur}") )
       else

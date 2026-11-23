@@ -422,11 +422,14 @@ Usage:
   aflt loop validate <file> [--json]
                             Validate a loop definition JSON file (schema,
                             phases, eval, allow/onPass). Exit 1 on errors.
-  aflt loop run <file> [--dry-run] [--json]
+  aflt loop run <file> [--dry-run] [--json] [--fresh]
                             Run a multi-phase loop (plan→develop→eval→fix,
                             optional plan-next). Persists state under
                             $AGENTFLEET_HOME/loops/<name>/.
                             --dry-run prints the plan without locking or running.
+                            --fresh starts a new state (0 of N) when the loop
+                            already completed (same fleethome; prefer over a
+                            new space so the default Loops view still shows it).
   aflt loop start <file> [--json]
                             Register a loop as active for the dashboard
                             scheduler (does not run phases in this process).
@@ -7601,7 +7604,7 @@ async function cmdLoop(argv) {
   const sub = args[0];
   const asJson = Boolean(flags.json);
   const usage =
-    'usage: aflt loop validate <file> | run <file> [--dry-run] | start <file> | pause <name> | status [name] | stop <name> | resume <name> | approve <name> [--json]';
+    'usage: aflt loop validate <file> | run <file> [--dry-run] [--json] [--fresh] | start <file> | pause <name> | status [name] | stop <name> | resume <name> | approve <name> [--json]';
   if (!sub || sub === 'help' || sub === '-h' || sub === '--help') {
     fail(usage);
   }
@@ -7644,11 +7647,12 @@ async function cmdLoop(argv) {
 
   if (sub === 'run') {
     const file = args[1];
-    if (!file) fail('usage: aflt loop run <file> [--dry-run] [--json]');
+    if (!file) fail('usage: aflt loop run <file> [--dry-run] [--json] [--fresh]');
     const dryRun = Boolean(flags['dry-run']);
+    const fresh = Boolean(flags.fresh);
     let result;
     try {
-      result = await loopLib.runFromFile(file, { dryRun });
+      result = await loopLib.runFromFile(file, { dryRun, fresh });
     } catch (err) {
       fail(err.message, { json: asJson });
     }
@@ -7659,6 +7663,7 @@ async function cmdLoop(argv) {
         status: result.status || null,
         path: result.path || null,
         name: result.state ? result.state.name : result.name || null,
+        message: result.message || null,
         error: result.error || (result.errors && result.errors.join('; ')) || null,
         errors: result.errors || null,
         warnings: result.warnings || null,

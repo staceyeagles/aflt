@@ -235,6 +235,106 @@ exit 0
     assert.ok(state.runsUsed >= 1);
   });
 
+  it('completed loop is a no-op without --fresh; --fresh starts a new run', async () => {
+    const loop = require('../lib/loop');
+    const def = baseDef({ name: 'fresh-rerun' });
+    const file = writeLoopFile(cwd, 'fresh-rerun.json', def);
+    let promptCalls = 0;
+    const stubOpts = {
+      env: afEnv(),
+      ensureSession: async () => ({
+        id: 'sess-fresh-rerun',
+        title: 'loop-hello-eval',
+        engine: 'cursor',
+        cwd,
+        status: 'active',
+      }),
+      runPrompt: async () => {
+        promptCalls += 1;
+        fs.writeFileSync(path.join(cwd, 'HELLO.txt'), 'hello from aflt loop\n');
+        return {
+          code: 0,
+          timedOut: false,
+          stdout: 'ok',
+          stderr: '',
+          outPath: null,
+          runId: `fresh-${promptCalls}`,
+        };
+      },
+      runEval: async () => ({
+        code: 0,
+        timedOut: false,
+        stdout: 'pass',
+        stderr: '',
+        cwd,
+      }),
+    };
+
+    const first = await loop.runFromFile(file, stubOpts);
+    assert.equal(first.ok, true, first.error);
+    assert.equal(first.status, 'completed');
+    assert.equal(promptCalls, 1);
+    const afterFirst = loop.loadState('fresh-rerun');
+    assert.equal(afterFirst.status, 'completed');
+    assert.equal(afterFirst.phases['write-greeting'].status, 'passed');
+    assert.ok(afterFirst.runsUsed >= 1);
+    const firstCompletedAt = afterFirst.completedAt;
+    assert.ok(firstCompletedAt);
+
+    const noop = await loop.runFromFile(file, { env: afEnv() });
+    assert.equal(noop.ok, true);
+    assert.equal(noop.status, 'completed');
+    assert.equal(noop.message, 'loop already completed');
+    assert.equal(promptCalls, 1, 'no-op must not re-run the phase');
+    const afterNoop = loop.loadState('fresh-rerun');
+    assert.equal(afterNoop.completedAt, firstCompletedAt);
+    assert.equal(afterNoop.phases['write-greeting'].status, 'passed');
+
+    const cliNoop = af(['loop', 'run', file, '--json']);
+    assert.equal(cliNoop.status, 0, cliNoop.stderr);
+    const cliNoopJson = JSON.parse(cliNoop.stdout);
+    assert.equal(cliNoopJson.ok, true);
+    assert.equal(cliNoopJson.status, 'completed');
+    assert.equal(cliNoopJson.message, 'loop already completed');
+    assert.equal(promptCalls, 1);
+
+    const fresh = await loop.runFromFile(file, { ...stubOpts, fresh: true });
+    assert.equal(fresh.ok, true, fresh.error);
+    assert.equal(fresh.status, 'completed');
+    assert.equal(promptCalls, 2, 'fresh must start a new run');
+    const afterFresh = loop.loadState('fresh-rerun');
+    assert.equal(afterFresh.status, 'completed');
+    assert.equal(afterFresh.phases['write-greeting'].status, 'passed');
+    assert.ok(afterFresh.completedAt);
+    assert.notEqual(afterFresh.completedAt, firstCompletedAt);
+    assert.ok(
+      (afterFresh.history || []).some((h) => h.event === 'loop.started'),
+      'fresh run must emit a new loop.started'
+    );
+    assert.equal(afterFresh.runsUsed, 1, 'fresh must reset runsUsed then count the new run');
+
+    // Seed completed again, then prove CLI --fresh restarts (stub cursor, no hang).
+    const seed = loop.createInitialState(def, { definitionPath: file });
+    seed.status = 'completed';
+    seed.completedAt = '2026-11-22T00:00:00.000Z';
+    seed.phaseIndex = 0;
+    seed.phases['write-greeting'].status = 'passed';
+    seed.runsUsed = 9;
+    loop.saveState(seed);
+
+    const cliFresh = af(['loop', 'run', file, '--fresh', '--json']);
+    assert.equal(cliFresh.status, 0, cliFresh.stderr + cliFresh.stdout);
+    const cliFreshJson = JSON.parse(cliFresh.stdout);
+    assert.equal(cliFreshJson.ok, true, cliFreshJson.error || cliFreshJson.message);
+    assert.equal(cliFreshJson.status, 'completed');
+    assert.notEqual(cliFreshJson.message, 'loop already completed');
+    const afterCli = loop.loadState('fresh-rerun');
+    assert.equal(afterCli.status, 'completed');
+    assert.notEqual(afterCli.completedAt, seed.completedAt);
+    assert.ok(afterCli.runsUsed >= 1);
+    assert.ok(afterCli.runsUsed < 9, 'fresh must reset runsUsed from the new state');
+  });
+
   it('retries on eval failure up to maxFixAttempts then fails', async () => {
     const loop = require('../lib/loop');
     let runs = 0;

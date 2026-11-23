@@ -12,7 +12,7 @@ Human overview: [README.md](README.md) (dashboard screenshots in `docs/images/`;
 
 ## What's new (2026-11-22)
 
-- **`aflt loop` UX fixes + portable hello-aflt** — freeze elapsed/budget hours on completed/failed/stopped/paused loops; per-loop token rollup on `state.json` / `loop status` / Loops view (reuse `lib/usage.js`, never invent USD); phase sessions get `parent`/`role` under a `loop-<name>` master so History trees nest; Loops phase tree shows eval scores from stored phase results (`overall` parsed from full eval stdout before truncation); prompt previews skip the plan-mode/pkill preamble (full prompt unchanged for runs); `promptFile` + companion scripts resolve relative to the definition directory. Example: `examples/loops/hello-aflt/` (one-command empty-repo quick start with M0 seed, Copilot-friendly, `improve-gate.js` compares committed HEAD vs working tree; continue with `hello-aflt-improve.json`).
+- **`aflt loop` UX fixes + portable hello-aflt** — freeze elapsed/budget hours on completed/failed/stopped/paused loops; per-loop token rollup on `state.json` / `loop status` / Loops view (reuse `lib/usage.js`, never invent USD); phase sessions get `parent`/`role` under a `loop-<name>` master so History trees nest; Loops phase tree shows eval scores from stored phase results (`overall` parsed from full eval stdout before truncation); prompt previews skip the plan-mode/pkill preamble (full prompt unchanged for runs); `promptFile` + companion scripts resolve relative to the definition directory. Example: `examples/loops/hello-aflt/` (one-command empty-repo quick start with M0 seed, Copilot-friendly, `improve-gate.js` compares committed HEAD vs working tree; continue with `hello-aflt-improve.json`). **`aflt loop run … --fresh`** restarts a completed loop in the same fleethome (prefer over a new space so the default Loops view still shows it).
 
 ## What's new (2026-11-21)
 
@@ -423,7 +423,7 @@ Long-running phases without a bot waking aflt: each phase runs a prompt in a Cur
 
 ```bash
 aflt loop validate <file.json> [--json]
-aflt loop run <file.json> [--dry-run] [--json]
+aflt loop run <file.json> [--dry-run] [--json] [--fresh]
 aflt loop start <file.json> [--json]   # register active for dashboard scheduler
 aflt loop pause <name> [--json]
 aflt loop status [name] [--json]
@@ -431,6 +431,8 @@ aflt loop stop <name> [--json]
 aflt loop resume <name> [--json]       # run in this process from saved state
 aflt loop approve <name> [--json]      # release gate: "approve"
 ```
+
+`--fresh` on `run` starts a new state (0 of N phases) when the loop already completed in this fleethome (without it, completed loops return `loop already completed` and do no work). Prefer `--fresh` over creating a space so the default dashboard Loops view still shows the run.
 
 Definition keys: `name`, `project`, `cwd`, `engine` (optional — omit to follow `AGENTFLEET_ENGINE` / config / cursor), `allow`, `budget` (`maxRuns` / `maxHours` / `maxPhases`), optional `goal` / `acceptance` (or `acceptanceCriteria`) / `acceptanceEval` / `plannedPhaseGate` (`approve`|`none`, default `approve` for phases appended by plan-next), `phases[]` (`id`, optional `type: "run"|"plan-next"`, `engine`, `session`, `prompt`|`promptFile`, `eval.command` string|argv, `eval.passRegex` / `eval.exitCode`, `maxFixAttempts`, `onPass`, optional `gate: "approve"`). Relative `promptFile` (and companion eval scripts like `improve-gate.js` / `seed-m0.js`) resolve against the definition file’s directory first, then the loop cwd. Examples: `examples/loops/hello-eval.json`, `examples/loops/plan-next.json`, `examples/loops/self-improve.json`, `examples/loops/hello-aflt/`. UI-saved definitions: `$AGENTFLEET_HOME/loops/definitions/<name>.json` (override with `config.json` `loop.definitionsDir` / `loop.dir` / `loopsDir`).
 
@@ -447,6 +449,12 @@ That run seeds portable M0 when the tree is empty (`m0-seed/` + `seed-m0.js`), t
 ```bash
 cd /path/to/existing-game
 aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt-improve.json
+```
+
+To run that completed improve definition again in the same fleethome (fair second attempt; prefer over a new space):
+
+```bash
+aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt-improve.json --fresh
 ```
 
 Details: [`examples/loops/hello-aflt/README.md`](examples/loops/hello-aflt/README.md).
