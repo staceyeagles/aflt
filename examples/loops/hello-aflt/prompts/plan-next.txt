@@ -8,7 +8,7 @@ Read-only context you must inspect:
 
 Hard rules:
 1. Count completed improve rounds as THIS loop's passed improve-* phases (ids like improve-r1, improve-r2, …) in loop state / Loop history — NOT the number of eval/history.jsonl lines. The improve gate and eval --write can append several history lines per round, so one kept round is not one history line.
-2. Current overall must come from a live measurement: `node scripts/eval/eval.js --json` (no --write), or from THIS loop's own improve-gate before/after in Loop history. Ignore leftover eval/latest-score.json and eval/plateau.json left by a prior loop run.
+2. Current overall must come from a live measurement: `node scripts/eval/eval.js --json` (no --write), or from THIS loop's own improve-gate HEAD-vs-working-tree scores in Loop history. Ignore leftover eval/latest-score.json and eval/plateau.json left by a prior loop run.
 3. If eval/plateau.json exists with keep_changes false, that means gameplay was reverted; that score was NOT kept and is NOT an applied / completed improve round. Only keep_changes true (or a passed improve-* phase in THIS loop) counts as a kept round.
 4. Stop and write { "done": true } when ANY of these is true for THIS loop:
    - THIS loop already has 3 passed/kept improve-* phases, OR
@@ -16,12 +16,13 @@ Hard rules:
    - THIS loop's own improve gate just reported plateau or regression (keep_changes false / stop true from a gate run belonging to this loop), OR
    - acceptance is otherwise met.
 5. hello-aflt-improve continue loops: THIS loop starts at 0 of 3 rounds regardless of leftover history.jsonl / latest-score.json / plateau.json from a prior hello-aflt loop. Ignore a prior loop's plateau.json stop flag. Stop only for THIS loop's own gate plateau/regression, THIS loop reaching 3 kept rounds, or live overall >= 99.
-6. If continuing, propose exactly ONE improve phase (not a bundle of phases). Use this shape (change the id and session per round, e.g. improve-r1, hello-aflt-m5-r1).
+6. If continuing, propose exactly ONE improve phase (not a bundle of phases). Use this shape (change the id and session per round).
+   Session titles must be unique per loop name + round so continue loops do not resume an old chat (e.g. hello-aflt-improve-r1, not hello-aflt-m5-r1). For the initial hello-aflt loop use hello-aflt-rN.
    Do NOT pin engine to cursor — omit engine so the loop default / AGENTFLEET_ENGINE applies (copilot works on a work Mac with no Cursor).
    The improve-gate script lives next to this loop definition (hello-aflt/ or hello-aflt-improve.json’s directory). Prefer the relative basename; aflt resolves it against the definition directory (not the game cwd, not /tmp):
    {
      "id": "improve-rN",
-     "session": "hello-aflt-m5-rN",
+     "session": "hello-aflt-improve-rN",
      "gate": "none",
      "force": true,
      "maxFixAttempts": 3,
@@ -50,8 +51,8 @@ Hard rules:
 9. After a successful improve phase the runner returns here; then either plan the next single round or write { "done": true }.
 
 Notes on the improve gate:
-- The gate measures overall BEFORE and AFTER itself via node scripts/eval/eval.js --json.
-- It never treats the last line of eval/history.jsonl as the previous score.
-- On improvement it exits 0, sets keep_changes true / stop false, and keeps changes.
-- On plateau/regression it restores gameplay files to HEAD, keeps the gate's measurement record (keep_changes false / stop true), and exits 0 so THIS loop can stop — that reverted score is not a kept round.
+- The gate runs after the worker (workers do not commit). previous = overall from committed HEAD gameplay; after = overall from the uncommitted working tree (via node scripts/eval/eval.js --json). It temporarily restores HEAD only for the previous measure, then puts worker files back.
+- It never treats the last line of eval/history.jsonl as the previous score, and never measures "before and after itself" on the dirty tree.
+- On improvement (after > previous) it --write once on the kept tree, exits 0, sets keep_changes true / stop false, and keeps changes.
+- On plateau/regression it restores gameplay files to HEAD, writes plateau.json with both scores, does not leave eval/latest-score.json at the discarded working-tree score (keep_changes false / stop true), and exits 0 so THIS loop can stop — that reverted score is not a kept round.
 - On test failure or locked scorer edits it exits 1 for a fix attempt.
