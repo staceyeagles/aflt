@@ -75,7 +75,7 @@ export function createServer() {
 const isDirect = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isDirect) {
   const port = Number(process.env.PORT || 8792);
-  const host = process.env.HOST || '0.0.0.0';
+  const host = process.env.HOST || '127.0.0.1';
   const server = createServer();
   server.listen(port, host, () => {
     console.log(`tile-dungeon listening on http://${host}:${port}`);

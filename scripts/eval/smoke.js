@@ -108,6 +108,7 @@ function runCliSmoke(opts = {}) {
     'memory-where',
     'memory-status',
     'service-status', // unsupported off macOS; unloaded when no LaunchAgent
+    'service-print', // --print still reports unsupported on non-macOS (exit 1)
     'herdr-app-status', // panel may be missing
     'docs-status', // may skip when not a docs-enabled project
   ]);

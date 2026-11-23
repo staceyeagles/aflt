@@ -18,7 +18,7 @@
 
 **New to aflt?** Start with the [tutorial](docs/tutorial/README.md) (throwaway `--space tutorial`, beginner → advanced). Copilot-only work Mac live test of `hello-aflt`: [docs/copilot-live-test.md](docs/copilot-live-test.md).
 
-Zero npm runtime dependencies beyond **Node ≥18**. Install the CLI (`npm install -g aflt`, or `npm install -g github:wwlib/aflt` before the first registry publish), then optionally run `aflt setup` for machine config. Engine × mode behavior (liveness, completion, handoffs, `aflt wait`): [docs/CAPABILITIES.md](docs/CAPABILITIES.md). Setup deep-dive: [docs/SETUP.md](docs/SETUP.md). Full history: [CHANGELOG.md](CHANGELOG.md).
+Zero npm runtime dependencies beyond **Node ≥20.10**. The npm name `aflt` is not published yet (`npm install -g aflt` 404s). Install from GitHub or a checkout (`npm install -g github:wwlib/aflt`, or `npm link` / `npm install -g .`), then optionally run `aflt setup` for machine config. Engine × mode behavior (liveness, completion, handoffs, `aflt wait`): [docs/CAPABILITIES.md](docs/CAPABILITIES.md). Setup deep-dive: [docs/SETUP.md](docs/SETUP.md). Full history: [CHANGELOG.md](CHANGELOG.md).
 
 ## Screenshots
 
@@ -41,7 +41,7 @@ Live dashboard (`aflt dashboard --serve`):
 
 Install the panel and layout with `aflt setup --apply --herdr` (or `aflt herdr-app install`), then `herdr-app do layout.switch --name af`. See [Herdr integration](#herdr-integration) below for details.
 
-Regenerate with `npm run screenshots` (needs Google Chrome, Node ≥18, and a dashboard running at `DASHBOARD_URL`, default `http://127.0.0.1:8787/`; output in `OUT_DIR`, default `docs/images`).
+Regenerate with `npm run screenshots` (needs Google Chrome, Node ≥20.10, and a dashboard running at `DASHBOARD_URL`, default `http://127.0.0.1:8787/`; output in `OUT_DIR`, default `docs/images`).
 
 ## What's new (2026-11-22)
 
@@ -115,22 +115,21 @@ Step-by-step walkthrough (spaces, doctor, first run, dashboard, …): [docs/tuto
 **Install** the CLI, then optionally run **machine setup**. Project onboarding (`.agentfleet.json`, `aflt memory`, …) and day-to-day workflows stay separate.
 
 ```bash
-# Node 18+
-# Primary (after the package is published to the npm registry):
-npm install -g aflt
-
-# Fallback (works before the first registry publish, and anytime):
+# Node >= 20.10
+# The registry name is not published yet (npm install -g aflt → 404).
+# Supported installs until the first npm publish:
 npm install -g github:wwlib/aflt
 
 # Contributors / local checkout:
-#   cd /path/to/aflt && npm install -g .
-#   # or: npm link / ln -sfn "$(pwd)/bin/af.js" ~/.local/bin/{aflt,af,agentfleet}
+#   cd /path/to/aflt && npm link
+#   # or: npm install -g .
+#   # or: ln -sfn "$(pwd)/bin/af.js" ~/.local/bin/{aflt,af,agentfleet}
 
 # Ensure your PATH includes the npm global bin dir (and ~/.local/bin if you
 # use clone-backed symlinks). Edit your shell rc yourself — aflt never does.
 ```
 
-Until the first `npm publish`, the GitHub install is the supported path. Bin entries are `aflt`, `af`, and `agentfleet` (same CLI).
+Until the first `npm publish`, the GitHub install (or `npm link` from a checkout) is the supported path. Bin entries are `aflt`, `af`, and `agentfleet` (same CLI).
 
 **Migration** from clone-backed `~/.local/bin` aliases: after `npm install -g aflt` (or the GitHub form), remove or replace old symlinks that pointed at a checkout so `which aflt` resolves to the npm-installed binary. `aflt setup` will refuse to overwrite an unrelated `~/.local/bin/aflt` unless you pass `--force`.
 
@@ -432,7 +431,7 @@ aflt eval gate [--json]            # RUBRIC GUARD: fail if rubric/scoring paths 
 aflt eval gate --improve --json    # suite green + score >= baseline + RUBRIC GUARD
 aflt eval plateau [--json]         # stop=true on plateau or max rounds
 aflt loop validate examples/loops/self-improve.json
-aflt loop run examples/loops/self-improve.json --dry-run
+aflt loop run examples/loops/self-improve.json --dry-run --allow-existing
 ```
 
 **Measure (E1):** suite pass/fail/skip + per-file duration, flake vs hard-fail (failures rerun once), best-effort coverage (`node --test --experimental-test-coverage` + path-based NDJSON reporter; unavailable → recorded, not a measure failure), sandboxed CLI smoke (read-only / `--dry-run` only), and dashboard `/api` contract checks (`/api/state`, `/api/loops`, …) with reliable server shutdown.
@@ -443,11 +442,14 @@ aflt loop run examples/loops/self-improve.json --dry-run
 
 ## Loop runner (milestones 1–4)
 
-`aflt` can drive long-running agent work itself (plan → develop → eval → revise → next phase) without a bot waking it. Each phase hands off to a Cursor / Copilot / OpenCode session via the existing engines, with an explicit eval and exit criteria. Progress is recorded to aflt-memory when configured and reported through opt-in notify webhooks (`loop.*` events) so bots can wake — but the loop never needs a bot to continue.
+`aflt` can drive long-running agent work itself (plan → develop → eval → revise → next phase) without a bot waking it. Each phase hands off to a Cursor / Copilot / OpenCode session via the existing engines, with an explicit eval and exit criteria. A phase does not pass when the agent exits non-zero or times out, even if the eval is already green. Progress is recorded to aflt-memory when configured and reported through opt-in notify webhooks (`loop.*` events) so bots can wake — but the loop never needs a bot to continue.
+
+`force` defaults to **false** (no Cursor `--force` / Copilot `--allow-all-tools`) unless the definition sets `force: true` or you pass `aflt loop run --force`. `loop run` refuses a working folder that is not a clean empty git repo, or that contains the aflt checkout or the definition, unless `--allow-existing`. `--dry-run` prints the resolved cwd, permission mode (`force` / `restricted` / `mixed`), and model. Model resolution: phase `model`, else definition `model`, else `COPILOT_MODEL` for Copilot, else `config.json` `defaultModel` (alias `model`).
 
 ```bash
 aflt loop validate examples/loops/hello-eval.json
-aflt loop run examples/loops/hello-eval.json --dry-run
+# In-repo examples use "cwd": "." — pass --allow-existing from this checkout.
+aflt loop run examples/loops/hello-eval.json --dry-run --allow-existing
 aflt loop run my-loop.json --json
 aflt loop run my-loop.json --fresh --json   # restart a completed loop (0 of N) in the same fleethome
 aflt loop start my-loop.json --json          # register for dashboard scheduler

@@ -8,7 +8,7 @@ Guidance for AI coding agents working on `tile-dungeon`.
 - **Pure state vs. rendering.** Keep game rules, RNG, dungeon generation, FOV, AI, combat, inventory, and progression in pure ES modules under `src/` with zero DOM/`window`/`document` dependencies so `node:test` can drive every mechanic headlessly.
 - **Deterministic RNG.** Use an explicit seeded PRNG (`src/rng.js`) for every random roll in gameplay and generation. Never rely on unseeded `Math.random()` inside simulation logic.
 - **Testing.** Run `npm test` (`node --test test/*.test.js`). Keep all tests fast, deterministic, and hermetic.
-- **Server.** `server.js` binds `0.0.0.0` on `process.env.PORT || 8792`. Do not bind 8790 or 8791.
+- **Server.** `server.js` binds `127.0.0.1` on `process.env.PORT || 8792` (override with `HOST`). Do not bind 8790 or 8791.
 
 ## Safety & Workflow Rules
 

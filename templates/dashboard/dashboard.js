@@ -1051,7 +1051,7 @@ function emptyLoopPhaseForm(index) {
     onPass: 'none',
     gate: '',
     mode: '',
-    force: true,
+    force: false,
   };
 }
 
@@ -3837,6 +3837,10 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
           '>plan</option>' +
           '</select></label>';
         html +=
+          '<label>force <input data-field="force" type="checkbox"' +
+          (p.force === true ? ' checked' : '') +
+          '/></label>';
+        html +=
           '<label>eval command <input data-field="evalCommand" value="' +
           escapeHtml(p.evalCommand || 'true') +
           '"/></label>';
@@ -3874,7 +3878,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
           onPass: get('onPass') || 'none',
           gate: get('gate') || '',
           mode: get('mode') || '',
-          force: true,
+          force: Boolean(ed.querySelector('[data-field="force"]') && ed.querySelector('[data-field="force"]').checked),
         });
       }
       loopFormPhases = next.length ? next : [emptyLoopPhaseForm(0)];
@@ -3911,7 +3915,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
             onPass: p.onPass || 'none',
             gate: p.gate || '',
             mode: p.mode || '',
-            force: p.force !== false,
+            force: p.force === true,
           };
         });
       } else {
@@ -3937,7 +3941,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
             ? Math.floor(Number(p.maxFixAttempts))
             : 3,
           onPass: p.onPass || 'none',
-          force: true,
+          force: p.force === true,
         };
         if (p.session) phase.session = String(p.session).trim();
         if (p.gate) phase.gate = p.gate;

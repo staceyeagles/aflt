@@ -10,6 +10,10 @@ Human overview: [README.md](README.md) (dashboard screenshots in `docs/images/`;
 
 **Tutorial for humans (and agents helping them):** [docs/tutorial/README.md](docs/tutorial/README.md) — beginner → advanced; create a throwaway `aflt space create tutorial` first so you never touch the real default home.
 
+## What's new (2026-11-23)
+
+- **Copilot live-test fixes** — failed agent runs no longer pass a green eval; fresh Copilot homes get `results/` before `--add-dir`; loop `model` / `config.json` `defaultModel` / `COPILOT_MODEL`; Copilot `usage_record` counts (`estimated` stays char/4 of prompt + final reply); `force` defaults off (`--force` or `"force": true`); `loop run` refuses a non-empty/dirty cwd or one that contains the aflt checkout or the definition unless `--allow-existing`; `--dry-run` prints cwd, permission mode, and model; `aflt doctor` ignores a non-Cursor `agent`; Node `>=20.10`; report in `docs/reports/2026-11-23-copilot-live-test-report.md`.
+
 ## What's new (2026-11-22)
 
 - **hello-aflt audit follow-ups** — `--fresh` / new loop runs mint new planner + loop-root sessions (no title reuse of completed/failed peers; mid-run still reuses bound session ids); Cursor transcript sync aggregates multi-step assistant + tool_use and can enrich sparse headless `estimated` usage (still never invents `reported` or USD); prompt teasers strip same-line plan-mode preambles (timeline / memory / History / dashboard); terminal loops freeze the step pipeline so `develop`/`plan` are never left `active`.
@@ -53,20 +57,18 @@ It does **not** replace the engines. You (the agent) call `aflt` to create sessi
 
 ## Install and linking
 
-Requires **Node ≥ 18**. Zero npm runtime dependencies.
+Requires **Node ≥ 20.10** (`package.json` `engines`; `npm test` needs it). Zero npm runtime dependencies.
 
 Keep **install**, **machine setup**, **project onboarding**, and **workflows** separate:
 
 ```bash
-# Install the CLI (primary, after registry publish):
-npm install -g aflt
-
-# Fallback (before first publish, and anytime):
+# npm install -g aflt 404s until the package is published.
 npm install -g github:wwlib/aflt
 
 # Contributors / checkout:
-#   cd ~/github/wwlib/aflt && npm install -g .
-#   # or: npm link / ln -sfn "$(pwd)/bin/af.js" ~/.local/bin/{aflt,af,agentfleet}
+#   cd ~/github/wwlib/aflt && npm link
+#   # or: npm install -g .
+#   # or: ln -sfn "$(pwd)/bin/af.js" ~/.local/bin/{aflt,af,agentfleet}
 ```
 
 Ensure the npm global bin dir (and `~/.local/bin` if you use clone-backed symlinks) is on `PATH`. **Do not** edit users' shell startup files for them — print PATH instructions only. Until the first `npm publish`, the GitHub install is the working path.
@@ -424,7 +426,7 @@ Long-running phases without a bot waking aflt: each phase runs a prompt in a Cur
 
 ```bash
 aflt loop validate <file.json> [--json]
-aflt loop run <file.json> [--dry-run] [--json] [--fresh]
+aflt loop run <file.json> [--dry-run] [--json] [--fresh] [--force] [--allow-existing]
 aflt loop start <file.json> [--json]   # register active for dashboard scheduler
 aflt loop pause <name> [--json]
 aflt loop status [name] [--json]
@@ -435,7 +437,7 @@ aflt loop approve <name> [--json]      # release gate: "approve"
 
 `--fresh` on `run` starts a new state (0 of N phases) when the loop already completed in this fleethome (without it, completed loops return `loop already completed` and do no work). Prefer `--fresh` over creating a space so the default dashboard Loops view still shows the run.
 
-Definition keys: `name`, `project`, `cwd`, `engine` (optional — omit to follow `AGENTFLEET_ENGINE` / config / cursor), `allow`, `budget` (`maxRuns` / `maxHours` / `maxPhases`), optional `goal` / `acceptance` (or `acceptanceCriteria`) / `acceptanceEval` / `plannedPhaseGate` (`approve`|`none`, default `approve` for phases appended by plan-next), `phases[]` (`id`, optional `type: "run"|"plan-next"`, `engine`, `session`, `prompt`|`promptFile`, `eval.command` string|argv, `eval.passRegex` / `eval.exitCode`, `maxFixAttempts`, `onPass`, optional `gate: "approve"`). Relative `promptFile` (and companion eval scripts like `improve-gate.js` / `seed-m0.js`) resolve against the definition file’s directory first, then the loop cwd. Examples: `examples/loops/hello-eval.json`, `examples/loops/plan-next.json`, `examples/loops/self-improve.json`, `examples/loops/hello-aflt/`. UI-saved definitions: `$AGENTFLEET_HOME/loops/definitions/<name>.json` (override with `config.json` `loop.definitionsDir` / `loop.dir` / `loopsDir`).
+Definition keys: `name`, `project`, `cwd`, `engine` (optional — omit to follow `AGENTFLEET_ENGINE` / config / cursor), `allow`, `budget` (`maxRuns` / `maxHours` / `maxPhases`), optional `goal` / `acceptance` (or `acceptanceCriteria`) / `acceptanceEval` / `plannedPhaseGate` (`approve`|`none`, default `approve` for phases appended by plan-next), `phases[]` (`id`, optional `type: "run"|"plan-next"`, `engine`, `session`, `model`, `prompt`|`promptFile`, `eval.command` string|argv, `eval.passRegex` / `eval.exitCode`, `maxFixAttempts`, `onPass`, optional `force` boolean default **false**, optional `gate: "approve"`). Loop-level `model` and `force` apply when a phase omits them. Resolved model: phase → definition → `COPILOT_MODEL` (Copilot only) → `config.json` `defaultModel` (alias `model`). `loop run` refuses a cwd that is not a clean empty git repo, or that contains the aflt checkout or the definition, unless `--allow-existing`. `--dry-run` prints cwd, permission mode, and model. A non-zero agent exit or timeout fails or retries the phase even when the eval is already green. Relative `promptFile` (and companion eval scripts like `improve-gate.js` / `seed-m0.js`) resolve against the definition file’s directory first, then the loop cwd. Examples: `examples/loops/hello-eval.json`, `examples/loops/plan-next.json`, `examples/loops/self-improve.json`, `examples/loops/hello-aflt/`. UI-saved definitions: `$AGENTFLEET_HOME/loops/definitions/<name>.json` (override with `config.json` `loop.definitionsDir` / `loop.dir` / `loopsDir`).
 
 **hello-aflt quick start (Copilot work Mac):** one command from an empty git repo — no Grok Bot, no `AGENTFLEET_CURSOR_BIN`, no engine pin, no `/tmp` paths. `aflt loop` orchestrates; Copilot/Cursor are workers only:
 

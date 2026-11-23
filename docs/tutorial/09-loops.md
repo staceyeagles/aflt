@@ -11,7 +11,7 @@
 
 ```bash
 aflt --space tutorial loop validate <file.json> [--json]
-aflt --space tutorial loop run <file.json> [--dry-run] [--json] [--fresh]
+aflt --space tutorial loop run <file.json> [--dry-run] [--json] [--fresh] [--force] [--allow-existing]
 aflt --space tutorial loop start <file.json> [--json]    # register active for dashboard scheduler
 aflt --space tutorial loop pause <name> [--json]
 aflt --space tutorial loop status [name] [--json]
@@ -54,16 +54,23 @@ JSON includes `ok`, `path`, `errors`, `warnings`, and `definition` when valid.
 
 Dry-run (plan only; no lock / no phases executed):
 
+`hello-eval.json` sets `"cwd": "."`. From this checkout that folder is the product repo, so the run is refused unless you pass `--allow-existing`. A clean empty `git init` directory is accepted without the flag.
+
 ```bash
-aflt --space tutorial loop run examples/loops/hello-eval.json --dry-run --json
+aflt --space tutorial loop run examples/loops/hello-eval.json --dry-run --allow-existing --json
 ```
 
-Text dry-run:
+Text dry-run (cwd, permission mode, model):
 
 ```text
-dry-run: loop "hello-eval" — 1 phase(s) in …
-  - write-greeting engine=cursor session=loop-hello-eval maxFix=3 onPass=none
+dry-run: loop "hello-eval" — 1 phase(s)
+  cwd: …
+  permissions: force
+  model: (engine default)
+  - write-greeting engine=cursor session=loop-hello-eval maxFix=3 onPass=none force=true permission=force model=-
 ```
+
+`force` defaults to false. hello-eval sets `"force": true` on the phase. `--force` on `loop run` grants tools for every phase in that invocation. Model: phase `model`, definition `model`, `COPILOT_MODEL` (Copilot), then `config.json` `defaultModel`.
 
 ## Approval gates and plan-next
 

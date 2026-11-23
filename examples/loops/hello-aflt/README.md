@@ -15,7 +15,9 @@ Copilot default (once per machine):
 
 ```bash
 export AGENTFLEET_ENGINE=copilot
+export COPILOT_MODEL=auto   # required when the account default model is unavailable
 # or: aflt engine copilot
+# or set config.json defaultModel (COPILOT_MODEL still wins for Copilot)
 ```
 
 Then the same `aflt loop run …/hello-aflt.json` command.
@@ -24,7 +26,7 @@ Already have M5a and want more improve rounds (distinct loop name, no collision 
 
 ```bash
 cd /path/to/existing-game
-aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt-improve.json
+aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt-improve.json --allow-existing
 ```
 
 ### Continue improve after a completed run
@@ -33,7 +35,7 @@ If `hello-aflt-improve` already finished in this fleethome, a plain `aflt loop r
 
 ```bash
 cd /path/to/existing-game
-aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt-improve.json --fresh
+aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt-improve.json --fresh --allow-existing
 ```
 
 ---
@@ -44,8 +46,8 @@ Works on a **work Mac with Copilot CLI** (no Cursor, no Grok Bot required).
 
 ## Prerequisites
 
-- Node ≥ 18
-- `aflt` on `PATH` (`npm install -g aflt` or a linked checkout)
+- Node ≥ 20.10
+- `aflt` on `PATH` (`npm install -g github:wwlib/aflt`, or `npm link` from a checkout). `npm install -g aflt` 404s until the package is published.
 - An engine CLI: **GitHub Copilot CLI** recommended (`npm install -g @github/copilot`). Cursor / OpenCode also work if configured as the default.
 - An empty git repo (or an existing game tree). M0 is seeded automatically when `package.json` is missing.
 

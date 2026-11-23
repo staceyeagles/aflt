@@ -9,7 +9,7 @@
   },
   "type": "commonjs",
   "engines": {
-    "node": ">=18"
+    "node": ">=20.10"
   },
   "scripts": {
     "test": "node --import ./test/_setup.js --test --test-concurrency=1 test/*.test.js",

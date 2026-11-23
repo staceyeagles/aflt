@@ -93,6 +93,11 @@ describe('aflt memory', () => {
       AFLT_MEMORY_REPO: '',
       AGENTFLEET_SESSION: '',
       AGENTFLEET_ID: '',
+      // Temp HOME has no ~/.gitconfig; commits in these tests need an identity.
+      GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || 'aflt test',
+      GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || 'aflt-test@example.com',
+      GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || 'aflt test',
+      GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || 'aflt-test@example.com',
       ...extra,
     };
   }
@@ -1383,7 +1388,16 @@ describe('aflt memory', () => {
       fs.writeFileSync(path.join(memRepo, 'DOC-AGENT.md'), '# stale for commit\n');
       // Initial commit so we have history; leave working tree dirty for config
       const git = (args) =>
-        spawnSync('git', ['-C', memRepo, ...args], { encoding: 'utf8' });
+        spawnSync('git', ['-C', memRepo, ...args], {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || 'aflt test',
+            GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || 'aflt-test@example.com',
+            GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || 'aflt test',
+            GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || 'aflt-test@example.com',
+          },
+        });
       assert.equal(git(['add', '-A']).status, 0);
       assert.equal(git(['commit', '-m', 'seed']).status, 0);
       fs.writeFileSync(path.join(memRepo, 'DOC-AGENT.md'), '# stale again\n');

@@ -426,6 +426,31 @@ describe('aflt dashboard', () => {
     }
   });
 
+  it('rejects a non-local Host on read endpoints', async () => {
+    const dash = loadDashboard(home);
+    const handle = dash.createDashboardServer({
+      collect: () => dash.aggregateDashboard({ sessions: [] }),
+    });
+    handle.server.listen(0, '127.0.0.1');
+    await new Promise((resolve) => handle.server.once('listening', resolve));
+    const port = handle.server.address().port;
+    try {
+      const ok = await httpGet(port, '/api/state');
+      assert.equal(ok.status, 200);
+      const blocked = await httpRequest(port, '/api/state', {
+        headers: { Host: 'untrusted.example' },
+      });
+      assert.equal(blocked.status, 403);
+      assert.match(blocked.body, /Host is not allowed/);
+      const root = await httpRequest(port, '/', {
+        headers: { Host: 'evil.example:80' },
+      });
+      assert.equal(root.status, 403);
+    } finally {
+      await handle.close();
+    }
+  });
+
   it('marks confirmed waiting sessions without confusing idle, stopped or completed sessions', () => {
     const dash = loadDashboard(home);
     const cases = [

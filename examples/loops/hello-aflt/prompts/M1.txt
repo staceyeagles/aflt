@@ -13,7 +13,7 @@ Requirements for M1:
    - Render the tile grid clearly on the HTML5 canvas (walls, floor, player).
    - Keyboard movement via Arrow keys and WASD (prevent default page scroll on arrows/space).
    - Simple crisp HUD showing seed, player coordinates, turn count, and controls.
-   - Keep server.js serving public/ and src/ cleanly on 0.0.0.0 (default PORT 8792). Do not bind 8790 or 8791.
+   - Keep server.js serving public/ and src/ cleanly on 127.0.0.1 (default PORT 8792; HOST overrides). Do not bind 8790 or 8791.
 4. Headless node:test tests in test/ (keep test/smoke.test.js passing too):
    - Verify seeded RNG determinism (same seed -> identical sequence; different seeds -> different sequences).
    - Verify grid creation, player movement in all 4 directions, wall collision blocking movement, and bounds safety.
