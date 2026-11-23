@@ -1,0 +1,349 @@
+# Copilot live test — hello-aflt on a work Mac
+
+Self-contained guide for a human or another assistant on a **work Mac with GitHub Copilot CLI** (no Cursor CLI, no prior chat history). Goal: validate, dry-run, then live-run [`examples/loops/hello-aflt`](../examples/loops/hello-aflt/) with the Copilot engine, then record what success looked like.
+
+Flags and subcommands below match `aflt help` / `bin/af.js` USAGE. Do not invent flags. Prefer `aflt help` if anything looks stale.
+
+Related: [examples/loops/hello-aflt/README.md](../examples/loops/hello-aflt/README.md), [tutorial/09-loops.md](tutorial/09-loops.md), [tutorial/12-token-usage.md](tutorial/12-token-usage.md).
+
+---
+
+## Prerequisites
+
+### Node
+
+```bash
+node -v   # need >= 18 (engines in package.json)
+```
+
+### GitHub Copilot CLI
+
+```bash
+npm install -g @github/copilot
+copilot version          # e.g. GitHub Copilot CLI 1.0.x
+which copilot
+```
+
+Auth (first time, or if headless runs fail with auth errors):
+
+```bash
+copilot login            # browser / device-code OAuth; stores a credential
+# optional smoke: interactive `copilot` then exit, or a short -p prompt
+```
+
+Override binary with `AGENTFLEET_COPILOT_BIN` if needed. Cursor CLI is **not** required.
+
+### aflt install and PATH
+
+From a published package:
+
+```bash
+npm install -g aflt
+```
+
+Or from this checkout (contributors / before registry publish):
+
+```bash
+cd /path/to/aflt
+npm install -g .         # or: npm link / symlink bin/af.js → ~/.local/bin/aflt
+```
+
+Confirm:
+
+```bash
+which aflt
+aflt --version           # e.g. aflt 1.5.0
+aflt --version --json    # {"version":"1.5.0"}
+```
+
+Ensure the npm global bin dir (and `~/.local/bin` if you use clone-backed symlinks) is on `PATH`. Do not edit shell rc files for someone else — print PATH instructions only.
+
+Read-only environment check (never prints secrets):
+
+```bash
+aflt doctor
+aflt doctor --json
+```
+
+Expect a soft warn if Cursor is missing; Copilot should be present when `AGENTFLEET_ENGINE=copilot`.
+
+---
+
+## Isolate the fleet (recommended)
+
+A live hello-aflt run writes sessions under `$AGENTFLEET_HOME`. Use a **named space** so you do not touch the default `~/.agentfleet` home:
+
+```bash
+aflt space create copilot-live   # once; picks a free dashboard port (8788+)
+aflt space current               # or: aflt --space copilot-live space current
+```
+
+Then either export for the shell session:
+
+```bash
+export AFLT_SPACE=copilot-live
+```
+
+or pass `--space copilot-live` on every `aflt` command (flag wins over `AFLT_SPACE`). Explicit `AGENTFLEET_HOME` always wins over spaces.
+
+Default (no space) dashboard port is **8787**. A new space records its own port in that space’s `config.json` (`dashboard.port`). Inspect with:
+
+```bash
+aflt --space copilot-live space current --json
+# or read ~/.agentfleet/spaces/copilot-live/config.json → dashboard.port
+```
+
+---
+
+## Select the Copilot engine
+
+`hello-aflt.json` **omits** `engine`, so phases inherit:
+
+`--engine` (n/a on loop) → `AGENTFLEET_ENGINE` → `$AGENTFLEET_HOME/config.json` `defaultEngine` → builtin `cursor`
+
+On a Copilot-only Mac, set the default **before** the live run:
+
+```bash
+export AGENTFLEET_ENGINE=copilot
+# or persist in the space/home config:
+aflt --space copilot-live engine copilot
+# aliases: aflt --space copilot-live copilot
+```
+
+Confirm:
+
+```bash
+aflt --space copilot-live engine
+```
+
+---
+
+## 1. Validate
+
+From any cwd (path to the definition is absolute or relative to your shell):
+
+```bash
+AFLT_DEF=/path/to/aflt/examples/loops/hello-aflt/hello-aflt.json
+
+aflt --space copilot-live loop validate "$AFLT_DEF"
+aflt --space copilot-live loop validate "$AFLT_DEF" --json
+```
+
+Success (text): `ok: loop "hello-aflt" (… phase(s))`. JSON: `"ok": true` and a `definition` object. Exit 1 on schema/phase/eval errors.
+
+Also valid: `hello-aflt-improve.json` (continue-improve only; distinct loop name).
+
+---
+
+## 2. Dry run
+
+Prints the phase plan; **does not** take the runner lock or execute phases:
+
+```bash
+aflt --space copilot-live loop run "$AFLT_DEF" --dry-run
+aflt --space copilot-live loop run "$AFLT_DEF" --dry-run --json
+```
+
+Expect phase lines for `m0` … improve/`plan-next` with engine resolved to `copilot` when the default is set. No `state.json` runner progress for a dry-run.
+
+---
+
+## 3. Live run (`--fresh`)
+
+Create an empty game repo (or use an existing one). `"cwd": "."` in the definition follows **your shell cwd**:
+
+```bash
+mkdir -p ~/tmp/tile-dungeon-live && cd ~/tmp/tile-dungeon-live
+git init
+
+export AGENTFLEET_ENGINE=copilot
+export AFLT_SPACE=copilot-live
+
+# First run in this fleethome — --fresh is optional but safe.
+# Re-running after status=completed REQUIRES --fresh (else: "loop already completed").
+aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt.json --fresh
+# or with explicit space flag:
+# aflt --space copilot-live loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt.json --fresh --json
+```
+
+What this does (see example README):
+
+- Seeds portable M0 when `package.json` is missing (`m0-seed/` + `seed-m0.js`)
+- Runs M1–M4, M5a, then up to 3 plan-next improve rounds gated by `improve-gate.js` (HEAD vs working tree)
+- `aflt loop` is the orchestrator; Copilot is only the worker engine
+- Relative `promptFile` / `improve-gate.js` / `seed-m0.js` resolve against the **definition directory**, not the game cwd
+
+Budget (from the definition): `maxRuns` 40, `maxHours` 8, `maxPhases` 16. This can take a long time — leave the process running; do not `pkill`/`killall`. To stop: `aflt --space copilot-live loop stop hello-aflt` (exact name).
+
+Optional second terminal — live UI (port from the space config, default 8787 if not using a space):
+
+```bash
+aflt --space copilot-live dashboard --serve
+# open http://127.0.0.1:<port>/  → Loops view
+```
+
+`--port N` overrides. Bind defaults to `127.0.0.1`.
+
+---
+
+## What success looks like
+
+### Loop status (CLI)
+
+```bash
+aflt --space copilot-live loop status hello-aflt
+aflt --space copilot-live loop status hello-aflt --json
+```
+
+Prefer **`--json`** for metrics. Human text is a short summary; JSON includes (from `lib/loop.js` `statusReport` / `summarizeLoopState` / `buildPhasePipeline`):
+
+| Field | Meaning |
+|-------|---------|
+| `status` | e.g. `running` → `completed` (or `failed` / `stopped` / `paused` / `waiting`) |
+| `elapsedMs` | Wall time since `startedAt` (frozen at completed/failed/stopped/paused) |
+| `budget.hoursUsed` / `runsUsed` | Hours and run counts vs definition caps |
+| `usage` | Per-loop token rollup (from phase `usage-summary.json`; never invents USD) |
+| `pipeline[].id` / `status` / `evalScore` | Phase tree; `evalScore` from stored phase results (`overall` / `after` parsed before `lastEval` truncation) |
+| `phases.<id>.evalScore` | Same scores on raw phase state |
+| `loopRootSessionId` | Master session for History nesting (`loop-hello-aflt`) |
+
+### Dashboard Loops view
+
+With `aflt dashboard --serve` on the space’s port:
+
+- **List row:** name, status, current phase, attempt, elapsed, budget (`N/M runs · H/h`)
+- **Detail:** step pipeline, phase tree with **eval scores**, eval output tails, History session links, **Tokens** rollup (`formatLoopUsage`: e.g. `12.3k tok · 8 turns · reported` or `~… · estimated`; shows `cost unknown` when `cost` is null)
+- History view: phase workers nest under the loop master; session rows show compact token meta
+
+### Token / cost honesty
+
+- Copilot `cost` stays **`null`** (provider “cost” on usage records is stored as `premiumRequests`, not USD). Dashboard may show **cost unknown**.
+- Some turns are **`accuracy: "estimated"`** (char/4 fallback) or rollups **`partial`** when mixed with reported turns. Do not treat estimates as API-reported.
+- Planner / loop-root sessions on a **fresh** run mint **new** session ids (no title reuse of completed/failed peers). Mid-run resume still reuses bound `sessionId`s.
+
+---
+
+## Recording results
+
+### Files to capture
+
+Under the space home (example: `~/.agentfleet/spaces/copilot-live/`):
+
+| Path | What |
+|------|------|
+| `loops/hello-aflt/state.json` | Full loop state: phases, `evalScore`, `usage`, timestamps, history |
+| `loops/hello-aflt/plan-next.json` | Last planner output (when plan-next ran) |
+| `runs/<phase-session-id>/usage-summary.json` | Per-session token rollup |
+| `runs/<phase-session-id>/turns.jsonl` | Per-turn usage rows (optional deep dive) |
+| `sessions.json` | Registry (loop master + phase workers) |
+
+Game repo (shell cwd): `eval/history.jsonl`, `eval/latest-score.json`, optional `eval/plateau.json` from `improve-gate.js`.
+
+### Commands to archive
+
+```bash
+SPACE=copilot-live
+HOME_DIR="$HOME/.agentfleet/spaces/$SPACE"
+OUT=~/Desktop/aflt-copilot-live-$(date +%Y%m%d)
+
+mkdir -p "$OUT"
+aflt --space "$SPACE" loop status hello-aflt --json > "$OUT/loop-status.json"
+aflt --space "$SPACE" --version --json > "$OUT/aflt-version.json"
+cp "$HOME_DIR/loops/hello-aflt/state.json" "$OUT/state.json"
+# optional: copy phase usage summaries
+find "$HOME_DIR/runs" -name usage-summary.json -print0 | while IFS= read -r -d '' f; do
+  id=$(basename "$(dirname "$f")")
+  cp "$f" "$OUT/usage-summary-$id.json"
+done
+
+copilot version > "$OUT/copilot-version.txt" 2>&1
+node -v > "$OUT/node-version.txt"
+uname -a > "$OUT/uname.txt"
+```
+
+### Results template
+
+Fill in after the run (paste into `$OUT/RESULTS.md` or a ticket):
+
+```markdown
+# Copilot live test — hello-aflt
+
+- Date (local):
+- Machine:
+- Node (`node -v`):
+- Copilot CLI (`copilot version`):
+- aflt (`aflt --version`):
+- Space / AGENTFLEET_HOME:
+- Dashboard URL / port:
+- Engine selection: AGENTFLEET_ENGINE= / `aflt engine` output:
+- Definition path:
+- Game cwd:
+- Command: `aflt loop run … --fresh` (exact argv):
+
+## Outcome
+
+- Final `status` (from `loop status --json`):
+- `elapsedMs` / human elapsed:
+- `budget.runsUsed` / `budget.hoursUsed`:
+- Phases passed / failed (ids):
+- Per-phase `evalScore` (from `pipeline` or `state.phases`):
+  - m0:
+  - m1:
+  - m2:
+  - m3:
+  - m4:
+  - m5a:
+  - improve-* (if any):
+- Loop `usage.totalTokens` / `accuracy` / `turnCount`:
+- `usage.cost` (expect null / “cost unknown”):
+- Estimated vs reported notes:
+- Planner / loop-root session ids (confirm fresh per `--fresh` run):
+
+## Artifacts
+
+- [ ] loop-status.json
+- [ ] state.json
+- [ ] usage-summary-*.json
+- [ ] screenshot of Loops view (optional)
+
+## Issues / gaps observed
+
+-
+```
+
+---
+
+## Known gaps (do not “fix” in the write-up)
+
+1. **USD cost unknown** — Copilot path keeps `cost: null`; never derive dollars from tokens.
+2. **Estimated usage** — some turns/rollups are `estimated` or `partial`, not fully API-reported.
+3. **Fresh planner sessions** — `--fresh` / new runs mint new planner + loop-root sessions; do not expect title reuse of completed peers.
+4. **Long wall clock** — budget allows up to 8 hours; success is green phases + scores, not a short runtime.
+5. **No Cursor** — if `aflt doctor` warns about missing Cursor, that is expected on a Copilot-only Mac.
+
+---
+
+## Quick command checklist
+
+```bash
+# prereqs
+node -v && copilot version && aflt --version && aflt doctor
+
+# space + engine
+aflt space create copilot-live
+export AFLT_SPACE=copilot-live AGENTFLEET_ENGINE=copilot
+aflt engine copilot
+
+# validate → dry-run → live
+DEF=/path/to/aflt/examples/loops/hello-aflt/hello-aflt.json
+aflt loop validate "$DEF" --json
+aflt loop run "$DEF" --dry-run --json
+mkdir -p ~/tmp/tile-dungeon-live && cd ~/tmp/tile-dungeon-live && git init
+aflt loop run "$DEF" --fresh
+
+# observe
+aflt loop status hello-aflt --json
+aflt dashboard --serve   # Loops view @ space dashboard.port
+```
+
+Stop a runaway runner with `aflt loop stop hello-aflt` only (exact name). Never use `pkill` / `killall` or pattern-matched kills.

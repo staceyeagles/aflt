@@ -11,7 +11,7 @@
 
 ```bash
 aflt --space tutorial loop validate <file.json> [--json]
-aflt --space tutorial loop run <file.json> [--dry-run] [--json]
+aflt --space tutorial loop run <file.json> [--dry-run] [--json] [--fresh]
 aflt --space tutorial loop start <file.json> [--json]    # register active for dashboard scheduler
 aflt --space tutorial loop pause <name> [--json]
 aflt --space tutorial loop status [name] [--json]

@@ -142,6 +142,10 @@ describe('aflt run CLI dry-run', () => {
     assert.ok(r.stdout.includes('aflt master'));
     assert.ok(r.stdout.includes('aflt children'));
     assert.ok(r.stdout.includes('aflt result'));
+    assert.ok(
+      /aflt result <id\|title> \[--path\] \[--json\] \[--require-fresh\]/.test(r.stdout),
+      'USAGE should document aflt result --json and --require-fresh'
+    );
     assert.ok(r.stdout.includes('aflt wait'));
     assert.ok(r.stdout.includes('--parent'));
     assert.ok(r.stdout.includes('--send-grace'));
