@@ -378,6 +378,14 @@ exit 0
   it('stop sets stopRequested; resume continues from state', async () => {
     const loop = require('../lib/loop');
     let gate = null;
+    let sessSeq = 0;
+    const ensureSession = async (phase) => ({
+      id: `sess-stop-${++sessSeq}`,
+      title: phase.session,
+      engine: 'cursor',
+      cwd,
+      status: 'active',
+    });
     const def = baseDef({
       name: 'stop-loop',
       phases: [
@@ -401,6 +409,7 @@ exit 0
 
     const runPromise = loop.runFromFile(file, {
       env: afEnv(),
+      ensureSession,
       runPrompt: async () => {
         await new Promise((resolve) => {
           gate = resolve;
@@ -409,16 +418,18 @@ exit 0
       },
     });
 
-    // Wait until state exists / lock held
-    for (let i = 0; i < 50; i++) {
-      if (fs.existsSync(path.join(home, 'loops', 'stop-loop', 'state.json'))) break;
+    // Wait until runPrompt is parked (gate assigned). State.json alone is too early —
+    // loop-root creation writes state before the phase prompt runs.
+    for (let i = 0; i < 200; i++) {
+      if (typeof gate === 'function') break;
       await new Promise((r) => setTimeout(r, 20));
     }
+    assert.equal(typeof gate, 'function', 'runPrompt should have parked on the gate');
     const stop = loop.requestStop('stop-loop');
     assert.equal(stop.ok, true);
     assert.equal(stop.stopRequested || stop.status === 'stopped', true);
 
-    if (typeof gate === 'function') gate();
+    gate();
     const result = await runPromise;
     assert.ok(result.status === 'stopped' || result.status === 'completed');
 
@@ -429,6 +440,7 @@ exit 0
     let evalN = 0;
     const seeded = await loop.runFromFile(writeLoopFile(cwd, 'resume.json', def2), {
       env: afEnv(),
+      ensureSession,
       runPrompt: async () => ({
         code: 0,
         timedOut: false,
@@ -453,6 +465,7 @@ exit 0
 
     const resumed = await loop.resumeLoop('resume-loop', {
       env: afEnv(),
+      ensureSession,
       runPrompt: async () => ({
         code: 0,
         timedOut: false,
@@ -474,16 +487,25 @@ exit 0
     const blocked = new Promise((r) => {
       release = r;
     });
+    let entered = false;
     const first = loop.runFromFile(file, {
       env: afEnv(),
+      ensureSession: async (phase) => ({
+        id: 'sess-busy',
+        title: phase.session,
+        engine: 'cursor',
+        cwd,
+        status: 'active',
+      }),
       runPrompt: async () => {
+        entered = true;
         await blocked;
         return { code: 0, timedOut: false, stdout: '', stderr: '', outPath: null, runId: '1' };
       },
       runEval: async () => ({ code: 0, timedOut: false, stdout: '', stderr: '', cwd }),
     });
-    for (let i = 0; i < 50; i++) {
-      if (fs.existsSync(path.join(home, 'loops', 'busy-loop', 'runner.lock'))) break;
+    for (let i = 0; i < 200; i++) {
+      if (entered && fs.existsSync(path.join(home, 'loops', 'busy-loop', 'runner.lock'))) break;
       await new Promise((r) => setTimeout(r, 20));
     }
     const second = await loop.runFromFile(file, { env: afEnv() });

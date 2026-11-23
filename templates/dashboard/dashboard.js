@@ -774,6 +774,52 @@ function renderLoopsListHtml(loops, selectedName) {
   return html;
 }
 
+/** Strip plan-mode / pkill safety preamble from prompt teasers (display only). */
+function stripPromptPreamble(text) {
+  const raw = String(text == null ? '' : text);
+  if (!raw) return '';
+  const prefixes = [
+    /^do not switch to plan mode\.\s*/i,
+    /^never use pkill\/killall or pattern-matched kills; only stop pids you started\.\s*/i,
+  ];
+  function stripLine(line) {
+    let s = String(line || '').trim();
+    for (let n = 0; n < 4 && s; n++) {
+      let hit = false;
+      for (let i = 0; i < prefixes.length; i++) {
+        if (prefixes[i].test(s)) {
+          s = s.replace(prefixes[i], '').trim();
+          hit = true;
+          break;
+        }
+      }
+      if (hit) continue;
+      if (/^do not switch to plan mode\.?$/i.test(s)) return '';
+      if (/^never use pkill\/killall\b[^.]*\.?$/i.test(s)) return '';
+      break;
+    }
+    return s;
+  }
+  const lines = raw.split(/\r?\n/);
+  let i = 0;
+  while (i < lines.length && !String(lines[i]).trim()) i += 1;
+  let stripped = 0;
+  while (i < lines.length && stripped < 4) {
+    const trimmed = String(lines[i]).trim();
+    if (!trimmed) break;
+    const rest = stripLine(trimmed);
+    if (rest === trimmed) break;
+    stripped += 1;
+    if (rest) {
+      lines[i] = rest;
+      break;
+    }
+    i += 1;
+  }
+  while (i < lines.length && !String(lines[i]).trim()) i += 1;
+  return lines.slice(i).join('\n');
+}
+
 /** Compact token rollup for Loops detail (never invents USD). */
 function formatLoopUsage(usage) {
   if (!usage || typeof usage !== 'object') return '—';
@@ -801,8 +847,14 @@ function formatLoopUsage(usage) {
   if (total != null) parts.push(approx + fmtTok(total) + ' tok');
   if (usage.turnCount) parts.push(usage.turnCount + ' turn' + (usage.turnCount === 1 ? '' : 's'));
   if (usage.accuracy) parts.push(String(usage.accuracy));
+  const estN = Number(usage.estimatedTurns) || 0;
+  if (estN > 0 && usage.accuracy !== 'estimated') {
+    parts.push(estN + ' estimated');
+  }
   if (usage.cost != null && Number.isFinite(Number(usage.cost))) {
     parts.push('$' + Number(usage.cost).toFixed(4));
+  } else if (usage.cost == null && total != null) {
+    parts.push('cost unknown');
   }
   return parts.length ? parts.join(' · ') : '—';
 }
@@ -2710,7 +2762,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
           markerPayload.set(mid, {
             state: m.state,
             at: m.at,
-            prompt: m.prompt || '',
+            prompt: stripPromptPreamble(m.prompt || ''),
             reply: m.reply || '',
             sessionId: m.sessionId || null,
             groupId: item.groupId || null,
@@ -3361,6 +3413,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     }
 
     function formatUsageTooltipLine(u) {
+      // Note: incomplete/estimated gaps stay visible (never invent reported USD).
       if (!u) return '';
       const inn = u.totalInput != null ? u.totalInput : u.inputTokens;
       const out = u.outputTokens;
@@ -3375,6 +3428,10 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         line += ' (' + (ratio >= 10 ? String(Math.round(ratio)) : String(ratio)) + ':1)';
       }
       if (u.accuracy) line += ' · ' + u.accuracy;
+      if (u.accuracy === 'estimated' && !(u.outputTokens > 0)) {
+        line += ' · incomplete';
+      }
+      if (u.cost == null) line += ' · cost unknown';
       return line;
     }
 
@@ -3399,6 +3456,11 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         bits.push((ratio >= 10 ? String(Math.round(ratio)) : String(ratio)) + ':1');
       }
       if (summary.cost != null) bits.push('$' + Number(summary.cost).toFixed(4));
+      else bits.push('cost unknown');
+      if ((Number(summary.estimatedTurns) || 0) > 0) {
+        bits.push(Number(summary.estimatedTurns) + ' estimated turn' +
+          (Number(summary.estimatedTurns) === 1 ? '' : 's'));
+      }
       if (summary.premiumRequests != null) bits.push(summary.premiumRequests + ' premium');
       return (
         '<div class="usage-summary">' +

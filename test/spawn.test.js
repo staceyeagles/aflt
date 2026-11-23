@@ -305,14 +305,27 @@ exit 0
     const deadline = Date.now() + 15000;
     while (Date.now() < deadline) {
       worker = registry.find(body.worker.id);
-      if (worker && worker.workerStatus === 'done') break;
+      // Wait for terminal status AND handoff attribution (same critical write).
+      if (
+        worker &&
+        worker.workerStatus === 'done' &&
+        (worker.resultRunId || worker.resultSource === 'worker' || worker.resultSource === 'af-fallback')
+      ) {
+        break;
+      }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     assert.ok(worker, 'worker missing');
     assert.equal(worker.workerStatus, 'done', JSON.stringify(worker));
     assert.equal(worker.lastExit, 0);
     assert.equal(worker.runPid, null);
-    assert.ok(worker.resultRunId || worker.resultSource === 'worker');
+    assert.ok(
+      worker.resultRunId || worker.resultSource === 'worker' || worker.resultSource === 'af-fallback',
+      JSON.stringify({
+        resultRunId: worker.resultRunId,
+        resultSource: worker.resultSource,
+      })
+    );
     assert.ok(fs.existsSync(worker.result));
     assert.match(fs.readFileSync(worker.result, 'utf8'), /detached ok/);
   });

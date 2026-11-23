@@ -613,6 +613,147 @@ describe('interactive turn capture', () => {
     assert.equal(turns.readTurns(session.id).length, 1);
   });
 
+  it('aggregates multi-step Cursor assistant + tool_use into one turn', () => {
+    const turns = loadTurns(home);
+    const chatId = 'eeeeeeee-ffff-0000-1111-222222222222';
+    const cursorHome = path.join(home, '.cursor');
+    process.env.AGENTFLEET_CURSOR_HOME = cursorHome;
+    const dir = path.join(cursorHome, 'projects', 'Users-test-proj', 'agent-transcripts', chatId);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, `${chatId}.jsonl`),
+      [
+        JSON.stringify({
+          role: 'user',
+          id: 'u-multi',
+          timestamp: '2026-11-23T02:10:18.000Z',
+          message: { content: [{ type: 'text', text: 'Improve round 2' }] },
+        }),
+        JSON.stringify({
+          role: 'assistant',
+          id: 'a1',
+          timestamp: '2026-11-23T02:10:19.000Z',
+          message: {
+            content: [
+              { type: 'text', text: 'Looking at items first.' },
+              { type: 'tool_use', name: 'Read', input: { path: 'src/items.js' } },
+            ],
+          },
+        }),
+        JSON.stringify({
+          role: 'assistant',
+          id: 'a2',
+          timestamp: '2026-11-23T02:11:00.000Z',
+          message: {
+            content: [
+              { type: 'text', text: 'Applying DEF +1.' },
+              {
+                type: 'tool_use',
+                name: 'StrReplace',
+                input: { path: 'src/items.js', old_string: 'a', new_string: 'b' },
+              },
+            ],
+          },
+        }),
+        JSON.stringify({ type: 'turn_ended', status: 'error', error: 'resource_exhausted' }),
+      ].join('\n') + '\n'
+    );
+
+    const walked = turns.iterCursorTranscriptTurns(dir, { source: 'cursor-transcript' });
+    assert.equal(walked.records.length, 1);
+    assert.match(walked.records[0].reply, /Looking at items first/);
+    assert.match(walked.records[0].reply, /Applying DEF \+1/);
+    assert.match(walked.records[0].reply, /\[tool_use Read\]/);
+    assert.match(walked.records[0].reply, /\[tool_use StrReplace\]/);
+    assert.equal(walked.records[0].usage.accuracy, 'estimated');
+    assert.ok(walked.records[0].usage.outputTokens > 0);
+  });
+
+  it('upgrades sparse headless estimated turn from Cursor transcript aggregate', () => {
+    const turns = loadTurns(home);
+    const usage = require('../lib/usage');
+    const chatId = 'ffffffff-0000-1111-2222-333333333333';
+    const cursorHome = path.join(home, '.cursor');
+    process.env.AGENTFLEET_CURSOR_HOME = cursorHome;
+    const dir = path.join(cursorHome, 'projects', 'Users-test-proj', 'agent-transcripts', chatId);
+    fs.mkdirSync(dir, { recursive: true });
+
+    const barePrompt = 'Do not switch to plan mode. You are running improve-r2.';
+    const session = { id: 'cur-sparse-r2', title: 'Sparse', engine: 'cursor', chatId };
+    const sparse = usage.estimateUsageFromText({
+      prompt: barePrompt,
+      reply: '',
+      cli: 'cursor',
+    });
+    assert.equal(sparse.outputTokens, 0);
+
+    turns.appendTurn({
+      sessionId: session.id,
+      chatId,
+      engine: 'cursor',
+      source: 'headless-run',
+      at: '2026-11-23T02:10:18.610Z',
+      prompt: barePrompt,
+      reply: '',
+      promptSource: 'headless-prompt',
+      replySource: 'headless-stdout',
+      engineEventId: `headless:${session.id}:run-1`,
+      usage: sparse,
+    });
+
+    const wrapped =
+      '<user_query>\n' + barePrompt + '\n</user_query>';
+    fs.writeFileSync(
+      path.join(dir, `${chatId}.jsonl`),
+      [
+        JSON.stringify({
+          role: 'user',
+          id: 'u-s',
+          timestamp: '2026-11-23T02:10:20.000Z',
+          message: { content: [{ type: 'text', text: wrapped }] },
+        }),
+        JSON.stringify({
+          role: 'assistant',
+          id: 'a-s1',
+          timestamp: '2026-11-23T02:10:21.000Z',
+          message: {
+            content: [
+              { type: 'text', text: 'Baseline first.' },
+              { type: 'tool_use', name: 'Shell', input: { command: 'node scripts/eval/eval.js --json' } },
+            ],
+          },
+        }),
+        JSON.stringify({
+          role: 'assistant',
+          id: 'a-s2',
+          timestamp: '2026-11-23T02:15:00.000Z',
+          message: { content: [{ type: 'text', text: 'Done with items tweak.' }] },
+        }),
+        JSON.stringify({ type: 'turn_ended', status: 'error' }),
+      ].join('\n') + '\n'
+    );
+
+    const sync = turns.syncCursorSession(session, {
+      env: process.env,
+      apply: true,
+      fullScan: true,
+      headlessMatchWindowMs: 60 * 60 * 1000,
+    });
+    assert.equal(sync.written, 0, 'must not insert a duplicate turn');
+    assert.ok((sync.updated || 0) >= 1);
+
+    const rows = turns.readTurns(session.id);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].source, 'headless-run');
+    assert.match(rows[0].reply, /Baseline first/);
+    assert.match(rows[0].reply, /\[tool_use Shell\]/);
+    assert.equal(rows[0].usage.accuracy, 'estimated');
+    assert.ok(rows[0].usage.outputTokens > 0);
+    assert.ok(rows[0].usage.totalTokens > sparse.totalTokens);
+    // Never invent reported tokens from a transcript estimate.
+    assert.notEqual(rows[0].usage.accuracy, 'reported');
+  });
+
   it('OSC candidate never invents prompt/reply text', () => {
     const turns = loadTurns(home);
     const session = { id: 'osc-1', engine: 'copilot', chatId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' };

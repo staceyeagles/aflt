@@ -45,6 +45,7 @@ Regenerate with `npm run screenshots` (needs Google Chrome, Node ≥18, and a da
 
 ## What's new (2026-11-22)
 
+- **hello-aflt audit follow-ups** — fresh loop runs mint new planner/root sessions; Cursor transcript sync aggregates multi-step tool turns and can enrich sparse estimated usage; prompt teasers strip same-line plan-mode preambles; completed loops freeze the step pipeline.
 - **`aflt loop` fixes + portable hello-aflt** — freeze elapsed time on finished loops; per-loop token rollup on status/Loops UI; phase sessions nest under a loop master in History; phase tree shows eval scores; prompt previews skip plan-mode boilerplate; `promptFile` resolves next to the definition. Example: [`examples/loops/hello-aflt/`](examples/loops/hello-aflt/) (Copilot-friendly improve gate).
 
 ## What's new (2026-11-21)

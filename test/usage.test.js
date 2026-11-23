@@ -138,6 +138,21 @@ describe('usage normalization', () => {
     assert.equal(usage.shouldReplaceUsage(null, estimated), true);
     assert.equal(usage.shouldReplaceUsage(estimated, estimated), false);
     assert.equal(usage.shouldReplaceUsage(reported, reported), false);
+    // Richer estimated (non-zero output / more tokens) may replace sparse estimated.
+    const sparse = usage.estimateUsageFromText({
+      prompt: 'x'.repeat(400),
+      reply: '',
+      cli: 'cursor',
+    });
+    const richer = usage.estimateUsageFromText({
+      prompt: 'x'.repeat(400),
+      reply: 'y'.repeat(2000),
+      cli: 'cursor',
+    });
+    assert.equal(sparse.outputTokens, 0);
+    assert.ok(richer.outputTokens > 0);
+    assert.equal(usage.shouldReplaceUsage(sparse, richer), true);
+    assert.equal(usage.shouldReplaceUsage(richer, sparse), false);
   });
 
   it('summarizes session usage across turns', () => {

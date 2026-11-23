@@ -4627,11 +4627,6 @@ async function cmdSpawn(argv) {
   if (stopped) workerStatus = 'stopped';
   else if (!timedOut && code === 0) workerStatus = 'done';
   else workerStatus = 'failed';
-  try {
-    worker = registry.update(worker.id, { workerStatus, runPid: null, runPgid: null });
-  } catch (_) {
-    /* ignore */
-  }
   worker = applyResultHandoffFallback(worker, {
     code,
     timedOut,
@@ -4639,6 +4634,8 @@ async function cmdSpawn(argv) {
     stdout: result && result.stdout,
     resultPath: finalResult,
     runId,
+    workerStatus,
+    clearRunPid: true,
   });
 
   if (asJson) {
@@ -4649,7 +4646,7 @@ async function cmdSpawn(argv) {
         title: worker.title,
         engine: worker.engine,
         result: finalResult,
-        workerStatus,
+        workerStatus: worker.workerStatus || workerStatus,
         resultSource: worker.resultSource || null,
         lastExit: timedOut ? 124 : code,
         lastOutput: outPath,
@@ -4727,11 +4724,7 @@ async function cmdSuperviseHeadless(argv) {
   if (stopped) workerStatus = 'stopped';
   else if (!timedOut && code === 0) workerStatus = 'done';
   else workerStatus = 'failed';
-  try {
-    session = registry.update(session.id, { workerStatus, runPid: null, runPgid: null });
-  } catch (_) {
-    /* ignore */
-  }
+  // One atomic after-exit write: never publish done before resultSource/resultRunId.
   applyResultHandoffFallback(session, {
     code,
     timedOut,
@@ -4739,6 +4732,8 @@ async function cmdSuperviseHeadless(argv) {
     stdout: result && result.stdout,
     resultPath,
     runId,
+    workerStatus,
+    clearRunPid: true,
   });
   process.exitCode = code;
 }
@@ -5045,11 +5040,6 @@ async function cmdMaster(argv) {
   if (stopped) workerStatus = 'stopped';
   else if (!timedOut && code === 0) workerStatus = 'done';
   else workerStatus = 'failed';
-  try {
-    master = registry.update(master.id, { workerStatus, runPid: null, runPgid: null });
-  } catch (_) {
-    /* ignore */
-  }
   master = applyResultHandoffFallback(master, {
     code,
     timedOut,
@@ -5057,6 +5047,8 @@ async function cmdMaster(argv) {
     stdout: result && result.stdout,
     resultPath: finalResult,
     runId,
+    workerStatus,
+    clearRunPid: true,
   });
 
   let docsResult = null;
@@ -5426,11 +5418,6 @@ async function runDocsForProject(projectRoot, opts = {}) {
   if (stopped) workerStatus = 'stopped';
   else if (!timedOut && code === 0) workerStatus = 'done';
   else workerStatus = 'failed';
-  try {
-    session = registry.update(session.id, { workerStatus, runPid: null, runPgid: null });
-  } catch (_) {
-    /* ignore */
-  }
   session = applyResultHandoffFallback(session, {
     code,
     timedOut,
@@ -5438,6 +5425,8 @@ async function runDocsForProject(projectRoot, opts = {}) {
     stdout: result && result.stdout,
     resultPath: finalResult,
     runId,
+    workerStatus,
+    clearRunPid: true,
   });
 
   const { changed } = docs.changedPathsSince(projectRoot, beforeSnap);
@@ -6692,22 +6681,38 @@ async function triggerDocsAfterWait(master, flags, { asJson } = {}) {
 /**
  * After a successful headless worker/master run, ensure a result handoff exists
  * (af writes a fallback from stdout when the agent did not).
+ *
+ * When `workerStatus` is provided, status + handoff attribution are written in
+ * one critical update so pollers never observe `done` without resultSource /
+ * resultRunId (detach supervisor race).
  */
-function applyResultHandoffFallback(session, { code, timedOut, stopped, stdout, resultPath, runId }) {
-  if (stopped || timedOut || code !== 0) return session;
-  const dest = resultPath || session.result;
-  const source = orchestrate.ensureResultHandoff(session, {
-    code,
-    timedOut,
-    stdout,
-    resultPath: dest,
-    runId: runId || session.runId,
-  });
-  if (!source) return session;
-  const patch = { resultSource: source };
-  if (source === 'worker' || source === 'af-fallback') {
-    patch.resultRunId = runId || session.runId || null;
+function applyResultHandoffFallback(
+  session,
+  { code, timedOut, stopped, stdout, resultPath, runId, workerStatus, clearRunPid } = {}
+) {
+  const patch = {};
+  if (workerStatus != null) patch.workerStatus = workerStatus;
+  if (clearRunPid) {
+    patch.runPid = null;
+    patch.runPgid = null;
   }
+  if (!stopped && !timedOut && code === 0) {
+    const dest = resultPath || session.result;
+    const source = orchestrate.ensureResultHandoff(session, {
+      code,
+      timedOut,
+      stdout,
+      resultPath: dest,
+      runId: runId || session.runId,
+    });
+    if (source) {
+      patch.resultSource = source;
+      if (source === 'worker' || source === 'af-fallback') {
+        patch.resultRunId = runId || session.runId || null;
+      }
+    }
+  }
+  if (!Object.keys(patch).length) return session;
   const wr = registry.criticalUpdate(session.id, patch, { phase: 'after-exit' });
   return wr.ok && wr.session ? wr.session : session;
 }
@@ -7046,7 +7051,7 @@ async function cmdSend(argv) {
   const { args, flags } = parseArgs(argv);
   const asJsonEarly = Boolean(flags.json);
   if (args.length < 2) fail('usage: aflt send <id|title> "text" [--timeout SEC] [--force] [--json]', { json: asJsonEarly });
-  const session = requireSession(args[0]);
+  let session = requireSession(args[0]);
   const text = args.slice(1).join(' ');
   if (!text) fail('usage: aflt send <id|title> "text" [--timeout SEC] [--force] [--json]', { json: asJsonEarly });
   const forceFlag = flags.force != null ? Boolean(flags.force) : null;
@@ -7143,19 +7148,17 @@ async function cmdSend(argv) {
     if (stopped) workerStatus = 'stopped';
     else if (!timedOut && code === 0) workerStatus = 'done';
     else workerStatus = 'failed';
-    try {
-      registry.update(session.id, { workerStatus, runPid: null, runPgid: null });
-    } catch (_) {
-      /* ignore */
-    }
-    applyResultHandoffFallback(session, {
+    session = applyResultHandoffFallback(session, {
       code,
       timedOut,
       stopped,
       stdout: result && result.stdout,
       resultPath,
       runId,
+      workerStatus,
+      clearRunPid: true,
     });
+    workerStatus = session.workerStatus || workerStatus;
     if (session.role === 'worker' && !asJson) {
       process.stderr.write(`send: ${session.title} → ${workerStatus} (log ${outPath})\n`);
     }
