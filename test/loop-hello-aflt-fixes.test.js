@@ -117,6 +117,7 @@ describe('hello-aflt loop fixes', () => {
   it('promptExcerpt strips plan-mode + pkill preamble', () => {
     const loop = require('../lib/loop');
     const rh = require('../lib/run-history');
+    const timeline = require('../lib/timeline');
     const full = [
       'Do not switch to plan mode.',
       'Never use pkill/killall or pattern-matched kills; only stop PIDs you started.',
@@ -125,8 +126,34 @@ describe('hello-aflt loop fixes', () => {
     assert.match(loop._test.stripPromptPreamble(full), /^Build Milestone 1/);
     assert.match(loop._test.promptExcerpt(full, 80), /^Build Milestone 1/);
     assert.match(rh.promptExcerpt(full, 80), /^Build Milestone 1/);
+    // Same-line preamble (improve-r* prompts).
+    const sameLine =
+      'Do not switch to plan mode. You are running improve-r1 for loop hello-aflt-improve on the repo.';
+    assert.match(loop._test.stripPromptPreamble(sameLine), /^You are running improve-r1/);
+    assert.match(rh.promptExcerpt(sameLine, 120), /^You are running improve-r1/);
+    assert.match(
+      timeline.promptSummary({ prompt: sameLine }, 120),
+      /^You are running improve-r1/
+    );
     // Full prompt must remain available for engine runs (helper does not mutate).
     assert.match(full, /^Do not switch to plan mode/);
+  });
+
+  it('buildStepPipeline freezes active stages on completed loops', () => {
+    const loop = require('../lib/loop');
+    const completed = {
+      status: 'completed',
+      step: 'run',
+      phaseIndex: 0,
+      definition: { phases: [{ id: 'm1' }] },
+      phases: { m1: { status: 'passed' } },
+    };
+    const stages = loop.buildStepPipeline(completed);
+    assert.ok(stages.every((s) => s.active === false));
+    assert.ok(stages.every((s) => s.done === true));
+    const failed = { ...completed, status: 'failed' };
+    const failedStages = loop.buildStepPipeline(failed);
+    assert.ok(failedStages.every((s) => s.active === false));
   });
 
   it('planDryRun promptPreview skips the preamble', () => {
@@ -334,7 +361,7 @@ describe('hello-aflt loop fixes', () => {
     assert.equal(pipe[1].evalScore, 92.4);
   });
 
-  it('ensureSession sets parent/role under loop root for new sessions', async () => {
+  it('ensureSession sets parent/role under loop root for bound sessions', async () => {
     const loop = require('../lib/loop');
     const registry = require('../lib/registry');
     const root = registry.add({
@@ -346,14 +373,6 @@ describe('hello-aflt loop fixes', () => {
       tags: ['loop', 'parent-test', 'loop-root'],
       status: 'active',
     });
-    const phase = {
-      id: 'm1',
-      session: 'hello-phase-child',
-      engine: 'cursor',
-    };
-    // Bypass create-chat by pre-seeding? ensureSession calls createEngineChatId.
-    // Inject via monkeypatch of create path: add a fake by calling registry after stubbing.
-    // Use opts with a pre-existing session instead:
     const existing = registry.add({
       title: 'hello-phase-existing',
       chatId: 'chat-phase',
@@ -361,14 +380,75 @@ describe('hello-aflt loop fixes', () => {
       engine: 'cursor',
       status: 'active',
     });
+    // Within a run, reuse phaseState.sessionId (existingSessionId) — not title find.
     const got = await loop.ensureSession(
       { id: 'm1', session: 'hello-phase-existing', engine: 'cursor' },
       { name: 'parent-test', cwd, engine: 'cursor', project: 'demo' },
-      { loopRoot: root }
+      { loopRoot: root, existingSessionId: existing.id }
     );
     assert.equal(got.id, existing.id);
     assert.equal(got.parent, root.id);
     assert.equal(got.role, 'worker');
+  });
+
+  it('ensureSession / ensureLoopRootSession do not reuse completed peers by title', async () => {
+    const loop = require('../lib/loop');
+    const registry = require('../lib/registry');
+    const oldRoot = registry.add({
+      title: 'loop-fresh-reuse',
+      chatId: 'chat-old-root',
+      cwd,
+      engine: 'cursor',
+      role: 'master',
+      status: 'done',
+      tags: ['loop', 'fresh-reuse', 'loop-root'],
+    });
+    const oldPhase = registry.add({
+      title: 'fresh-reuse-planner',
+      chatId: 'chat-old-phase',
+      cwd,
+      engine: 'cursor',
+      status: 'done',
+      parent: oldRoot.id,
+      role: 'worker',
+    });
+    // Fresh run: no existingSessionId → create new (stub createEngineChatId via add after
+    // injecting by calling ensure* with a fake create — use registry.add through monkeypatch).
+    const cursor = require('../lib/cursor');
+    const prev = cursor.createChat;
+    let created = 0;
+    cursor.createChat = async () => {
+      created += 1;
+      return `chat-new-${created}`;
+    };
+    try {
+      const root = await loop.ensureLoopRootSession(
+        { name: 'fresh-reuse', cwd, engine: 'cursor', project: 'demo' },
+        { existingSessionId: null }
+      );
+      assert.notEqual(root.id, oldRoot.id);
+      assert.equal(root.title, 'loop-fresh-reuse');
+      assert.equal(root.status, 'active');
+
+      const phase = await loop.ensureSession(
+        { id: 'plan-next', session: 'fresh-reuse-planner', engine: 'cursor' },
+        { name: 'fresh-reuse', cwd, engine: 'cursor', project: 'demo' },
+        { loopRoot: root, existingSessionId: null }
+      );
+      assert.notEqual(phase.id, oldPhase.id);
+      assert.equal(phase.title, 'fresh-reuse-planner');
+      assert.equal(phase.parent, root.id);
+
+      // Mid-run reuse: bound id returns the same session.
+      const again = await loop.ensureSession(
+        { id: 'plan-next', session: 'fresh-reuse-planner', engine: 'cursor' },
+        { name: 'fresh-reuse', cwd, engine: 'cursor', project: 'demo' },
+        { loopRoot: root, existingSessionId: phase.id }
+      );
+      assert.equal(again.id, phase.id);
+    } finally {
+      cursor.createChat = prev;
+    }
   });
 
   it('resolves promptFile relative to the definition directory', () => {
