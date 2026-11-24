@@ -139,10 +139,10 @@ When you open the live UI (`aflt dashboard --serve` — see [03 — Dashboard](0
 
 - **Tree rows** — compact token meta (`10.2k tok · 254:1`, with `~` when estimated/partial)
 - **Gantt marker hover** — a usage line like `10,155 in → 40 out (254:1) · reported`
-- **Session / project detail** — usage summary badge (`reported` / `estimated` / `partial`) with totals, uncached + cached breakdown when present, output (+ reasoning), ratio; OpenCode may show provider `$cost`; Copilot may show `premium` counts (credits / $ are shown on the making-of page, not yet in the dashboard)
+- **Session / project detail** — usage summary badge (`reported` / `estimated` / `partial`) with totals, uncached + cached breakdown when present, output (+ reasoning), ratio; OpenCode may show provider `$cost`; Copilot may show `premium` counts and, for sessions synced after credits were recorded, `credits · $`
 - **Per-turn bar chart** — input (top) vs output (bottom) for recent turns; estimated/partial bars are dashed / faded
 
-The Loops view shows the per-loop token rollup (`… tok · N turns · reported · cost unknown`); it does not show Copilot credits yet, and a loop's stored rollup is not recomputed for runs recorded before the double-count fix — use `aflt making-of` for per-call and per-phase figures.
+The Loops view shows the per-loop token rollup and recorded cost in each row and in the detail (`6.1m tok · 9 turns · reported · 278.8 credits · $2.79` for the Copilot Sonnet hello-aflt run; Cursor loops say `cost unknown` because Cursor records no cost). The rollup is recomputed at read time from the phase sessions' turns, de-duplicated, so loops recorded before the double-count fix show corrected totals (that Sonnet run's stored rollup said 10.4M tokens; it is 6.1M) with a note in the detail; `state.json` is not rewritten. Copilot credits come from the same per-call usage records as the making-of page when older turns lack them. Use `aflt making-of` for per-call and per-phase figures.
 
 ## Memory rollup
 

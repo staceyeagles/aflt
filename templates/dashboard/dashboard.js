@@ -787,6 +787,7 @@ function renderLoopsListHtml(loops, selectedName) {
       loop.attempt != null ? 'attempt ' + loop.attempt : null,
       formatLoopElapsed(loop.elapsedMs),
       formatLoopBudget(loop.budget),
+      formatLoopRowUsage(loop.usage) || null,
     ]
       .filter(Boolean)
       .join(' · ');
@@ -891,12 +892,63 @@ function formatLoopUsage(usage) {
   if (estN > 0 && usage.accuracy !== 'estimated') {
     parts.push(estN + ' estimated');
   }
-  if (usage.cost != null && Number.isFinite(Number(usage.cost))) {
-    parts.push('$' + Number(usage.cost).toFixed(4));
-  } else if (usage.cost == null && total != null) {
-    parts.push('cost unknown');
-  }
+  const cost = formatUsageCost(usage);
+  if (cost) parts.push(cost);
+  else if (total != null) parts.push('cost unknown');
   return parts.length ? parts.join(' · ') : '—';
+}
+
+/**
+ * Recorded cost of a usage rollup: Copilot AI credits and dollars
+ * ("278.8 credits · $2.79"), else a reported USD cost. '' when the engine
+ * recorded no cost (Cursor). Never derived from tokens.
+ */
+function formatUsageCost(usage) {
+  if (!usage || typeof usage !== 'object') return '';
+  const credits = usage.credits != null ? Number(usage.credits) : NaN;
+  if (Number.isFinite(credits)) {
+    const c = credits < 10 ? credits.toFixed(2) : credits.toFixed(1);
+    const usd = usage.usd != null ? Number(usage.usd) : NaN;
+    return c + ' credits' + (Number.isFinite(usd) ? ' · $' + usd.toFixed(2) : '');
+  }
+  if (usage.usd != null && Number.isFinite(Number(usage.usd))) return '$' + Number(usage.usd).toFixed(2);
+  if (usage.cost != null && Number.isFinite(Number(usage.cost))) return '$' + Number(usage.cost).toFixed(4);
+  return '';
+}
+
+/** Short token + cost bit for a loop row ("6.1m tok · 278.8 credits · $2.79"). */
+function formatLoopRowUsage(usage) {
+  if (!usage || typeof usage !== 'object') return '';
+  const total = usage.totalTokens != null ? Number(usage.totalTokens) : NaN;
+  const bits = [];
+  if (Number.isFinite(total)) {
+    bits.push(
+      (total >= 1e6 ? (Math.round(total / 1e5) / 10) + 'm' : total >= 1e3 ? Math.round(total / 1e3) + 'k' : String(total)) +
+        ' tok'
+    );
+  }
+  const cost = formatUsageCost(usage);
+  if (cost) bits.push(cost);
+  return bits.join(' · ');
+}
+
+/** Note when the read-time recompute disagrees with the stored rollup. */
+function formatLoopUsageNote(usage) {
+  if (!usage || typeof usage !== 'object') return '';
+  const notes = [];
+  if (usage.storedTotalTokens != null && usage.recomputed) {
+    notes.push(
+      'Recomputed from per-session turns (de-duplicated); the stored rollup said ' +
+        Number(usage.storedTotalTokens).toLocaleString('en-US') +
+        ' tok, recorded before the double-count fix.'
+    );
+  }
+  if (usage.creditsSource === 'per-call' && usage.calls) {
+    notes.push(
+      'Credits from ' + usage.callsWithCost + ' of ' + usage.calls + ' per-call usage records (as the engine recorded them).'
+    );
+  }
+  return notes.join(' ');
 }
 
 /**
@@ -1091,6 +1143,8 @@ function renderLoopDetailHtml(detail) {
       '</span></div>';
   }
   html += '</div>';
+  const usageNote = formatLoopUsageNote(detail.usage);
+  if (usageNote) html += '<p class="loops-row-meta loops-usage-note">' + escapeHtml(usageNote) + '</p>';
 
   html += '<div class="label">Step pipeline</div>';
   html += renderLoopStepPipeline(detail.steps);
@@ -1169,6 +1223,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     graphViewTransform, clampTimelineWindow, resolveTimelineWindow, formatTimelineAxisLabel,
     zoomTimelineWindow, panTimelineWindow, layoutTimelineMarkers, maxTimelineLaneCount,
     formatLoopElapsed, formatLoopBudget, formatLoopUsage, loopStatusClass, renderLoopStepPipeline,
+    formatUsageCost, formatLoopRowUsage, formatLoopUsageNote,
     loopIsFinished,
     loopSyncSignature, loopDetailNeedsSync,
     renderLoopsListHtml, renderLoopPhaseTree, renderLoopPhaseCards, renderLoopDetailHtml,
@@ -3532,7 +3587,8 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       if (u.accuracy === 'estimated' && !(u.outputTokens > 0)) {
         line += ' · incomplete';
       }
-      if (u.cost == null) line += ' · cost unknown';
+      const costBit = formatUsageCost(u);
+      line += ' · ' + (costBit || 'cost unknown');
       return line;
     }
 
@@ -3556,8 +3612,8 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         const ratio = Number(summary.promptToResponse);
         bits.push((ratio >= 10 ? String(Math.round(ratio)) : String(ratio)) + ':1');
       }
-      if (summary.cost != null) bits.push('$' + Number(summary.cost).toFixed(4));
-      else bits.push('cost unknown');
+      const costBit = formatUsageCost(summary);
+      bits.push(costBit || 'cost unknown');
       if ((Number(summary.estimatedTurns) || 0) > 0) {
         bits.push(Number(summary.estimatedTurns) + ' estimated turn' +
           (Number(summary.estimatedTurns) === 1 ? '' : 's'));
