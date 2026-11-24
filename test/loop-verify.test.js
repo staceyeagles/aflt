@@ -60,6 +60,31 @@ describe('loop-verify helpers', () => {
     assert.equal(phaseState.verification.filter((v) => v.tier === 'tier2').length, 0);
   });
 
+  it('mergeVerify honors explicit null to skip inherited tiers', () => {
+    const merged = loopVerify.mergeVerify(
+      {
+        tier1: { command: ['npm', 'test'] },
+        tier2: { loop: 'x.json' },
+        tier3: { tileDungeon: true, trials: 2 },
+      },
+      { tier3: null }
+    );
+    assert.ok(merged.tier1);
+    assert.ok(merged.tier2);
+    assert.equal(merged.tier3, null);
+    const onlyT3 = loopVerify.mergeVerify(
+      {
+        tier1: { command: ['npm', 'test'] },
+        tier2: { loop: 'x.json' },
+        tier3: { tileDungeon: true, trials: 2 },
+      },
+      { tier1: null, tier2: null, tier3: { tileDungeon: true, trials: 1 } }
+    );
+    assert.equal(onlyT3.tier1, null);
+    assert.equal(onlyT3.tier2, null);
+    assert.equal(onlyT3.tier3.trials, 1);
+  });
+
   it('checkpoint skip on resume for same SHA', async () => {
     const sha = 'abc123def456789012345678901234567890';
     const state = {

@@ -16,7 +16,7 @@
 
 **For AI agents:** [AGENTS.md](AGENTS.md) — install, commands, engines, and how to delegate or orchestrate work from Cursor, Copilot, or OpenCode CLI.
 
-**New to aflt?** Start with the [tutorial](docs/tutorial/README.md) (throwaway `--space tutorial`, beginner → advanced). Copilot-only work Mac live test of `hello-aflt`: [docs/copilot-live-test.md](docs/copilot-live-test.md).
+**New to aflt?** Start with the [tutorial](docs/tutorial/README.md) (throwaway `--space tutorial`, beginner → advanced). Copilot-only work Mac live test of `hello-aflt`: [docs/copilot-live-test.md](docs/copilot-live-test.md). CLI loop quick start (hello-aflt): [docs/cli-quickstart-loops.md](docs/cli-quickstart-loops.md). Self-improve worktree runbook: [docs/self-improve-runbook.md](docs/self-improve-runbook.md).
 
 Zero npm runtime dependencies beyond **Node ≥20.10**. The npm name `aflt` is not published yet (`npm install -g aflt` 404s). Install from GitHub or a checkout (`npm install -g github:wwlib/aflt`, or `npm link` / `npm install -g .`), then optionally run `aflt setup` for machine config. Engine × mode behavior (liveness, completion, handoffs, `aflt wait`): [docs/CAPABILITIES.md](docs/CAPABILITIES.md). Setup deep-dive: [docs/SETUP.md](docs/SETUP.md). Full history: [CHANGELOG.md](CHANGELOG.md).
 
