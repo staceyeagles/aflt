@@ -72,6 +72,12 @@ dry-run: loop "hello-eval" — 1 phase(s)
 
 `force` defaults to false. hello-eval sets `"force": true` on the phase. `--force` on `loop run` grants tools for every phase in that invocation. Model: phase `model`, definition `model`, `COPILOT_MODEL` (Copilot), then `config.json` `defaultModel`.
 
+## Engine selection and failover
+
+Primary engine precedence: phase `engine` > definition `engine` > `AGENTFLEET_ENGINE` > `engines[0]` > `config.json` `defaultEngine` > `cursor`. `examples/loops/self-improve.json` pins no engine, so `AGENTFLEET_ENGINE=copilot` moves the whole loop.
+
+Optional `"engines": ["copilot", "cursor", "opencode"]` adds ordered failover. A phase moves to the next installed engine in the list (and reruns the same attempt, not a fix attempt) when a worker run hits a non-retryable infrastructure error: `cli_missing`, `auth_required`, `usage_limit`, `rate_limit`, or `model_unavailable`. A failing eval never fails over. Sessions are engine-bound, so the new engine uses `<session>-<engine>` (phase-level `model` is dropped; model names are engine-specific). A primary whose CLI is not installed is skipped up front. The engine actually used is stored on the phase (`engine`, `failovers[]`) and recorded as history/notify event `loop.engine.failover`. With no engines left, the phase fails as before.
+
 ## Approval gates and plan-next
 
 - Phase `gate: "approve"` → runner `status=waiting`, notify `loop.gate.waiting`; release with `aflt loop approve` or dashboard `POST /api/loops/:name/approve`
