@@ -6,18 +6,20 @@
 - Know CLI vs dashboard scheduler / Loops UI at a high level
 - Recognize approval gates and plan-next
 - Inspect the shipped examples under `examples/loops/`
+- Know `type: "script"` phases and how to review a run with `aflt making-of`
 
 ## Commands
 
 ```bash
 aflt --space tutorial loop validate <file.json> [--json]
-aflt --space tutorial loop run <file.json> [--dry-run] [--json] [--fresh] [--force] [--allow-existing]
+aflt --space tutorial loop run <file.json> [--dry-run] [--json] [--fresh] [--force] [--allow-existing] [--create-worktree]
 aflt --space tutorial loop start <file.json> [--json]    # register active for dashboard scheduler
 aflt --space tutorial loop pause <name> [--json]
 aflt --space tutorial loop status [name] [--json]
 aflt --space tutorial loop stop <name> [--json]
 aflt --space tutorial loop resume <name> [--json]        # runs in this process from saved state
 aflt --space tutorial loop approve <name> [--json]       # release gate: "approve"
+aflt --space tutorial making-of <name> [--out file.html] [--serve] [--with-files] [--json]
 ```
 
 State lives under `$AGENTFLEET_HOME/loops/<name>/` (`state.json` + runner lock). Definitions you save from the UI go only under `$AGENTFLEET_HOME/loops/definitions` (or configured loops dir).
@@ -29,7 +31,7 @@ State lives under `$AGENTFLEET_HOME/loops/<name>/` (`state.json` + runner lock).
 | `examples/loops/hello-eval.json` | Single phase: write HELLO.txt, grep eval |
 | `examples/loops/plan-next.json` | Seed phases + `type: "plan-next"` planner |
 | `examples/loops/self-improve.json` | Eval measure → score/baseline → plan-next → gate `--improve` |
-| `examples/loops/hello-aflt/` | Portable tile-dungeon: empty-repo M0 seed → M1–M5a → ≤3 improve rounds (Copilot-friendly) |
+| `examples/loops/hello-aflt/` | Portable tile-dungeon: empty-repo M0 seed (script phase, no AI call) → M1–M5a → ≤3 improve rounds (Copilot-friendly) |
 | `examples/loops/hello-aflt-scratch/` | Same milestones from a docs-only seed (AGENTS.md + SPEC.md, no code/HTML); M0 is a real agent build checked by `m0-check.js` |
 | `examples/loops/hello-aflt/hello-aflt-improve.json` | Continue improve-only on an existing M5a game (loop name `hello-aflt-improve`) |
 
@@ -41,6 +43,7 @@ aflt --space tutorial loop validate examples/loops/plan-next.json --json
 aflt --space tutorial loop validate examples/loops/self-improve.json --json
 aflt --space tutorial loop validate examples/loops/hello-aflt/hello-aflt.json --json
 aflt --space tutorial loop validate examples/loops/hello-aflt/hello-aflt-improve.json --json
+aflt --space tutorial loop validate examples/loops/hello-aflt-scratch/hello-aflt-scratch.json --json
 ```
 
 **hello-aflt one-liner** (work Mac / Copilot; no Grok Bot): create a folder, `git init`, then `aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt.json` — see [`examples/loops/hello-aflt/README.md`](../../examples/loops/hello-aflt/README.md). Optional once: `export AGENTFLEET_ENGINE=copilot`.
@@ -86,15 +89,36 @@ Before an unattended run, `aflt doctor --strict --loop <def.json>` checks that t
 - Optional `escalation: { "afterFailedRounds": 3, "event": "loop.needs_human" }` — after a non-retryable phase failure (exhausted fix attempts, protected-path violation, commit-gate refusal, or non-retryable engine error), the runner sets `status=needs_human` instead of `failed`, writes `$AGENTFLEET_HOME/loops/<name>/needs-human.json`, and emits `loop.needs_human` plus `loop.gate.waiting` with a diagnostic bundle. Resume with `aflt loop resume <name>` (fresh attempt on the failed phase) or `aflt loop stop <name>`. Plan-next improve loops also count consecutive failed rounds toward `afterFailedRounds`. Without `escalation`, behavior is unchanged (`failed`).
 - Phase `gate: "approve"` → runner `status=waiting`, notify `loop.gate.waiting`; release with `aflt loop approve` or dashboard `POST /api/loops/:name/approve`
 - `type: "plan-next"`: planner must write `$AGENTFLEET_HOME/loops/<name>/plan-next.json` as `{ "done": true }` or `{ "phases": [ … ] }`
-- `type: "script"`: no AI call — the phase's `eval.command` is the step (seed a scaffold, run a setup script). No prompt, no session, no fix attempts, not counted in `budget.maxRuns`; `onPass` still applies. hello-aflt's `m0` uses this.
-- `aflt making-of <name>`: one self-contained page with every AI call (prompt, reply, tool calls + results, tokens, recorded cost), every commit + diff, and artifacts; also at `/making-of/<name>` on `aflt dashboard --serve`
+- `type: "script"`: no AI call — the phase's `eval.command` is the step (seed a scaffold, run a setup script). No prompt, no session, no fix attempts, not counted in `budget.maxRuns`; `onPass` still applies. hello-aflt's `m0` and hello-aflt-scratch's `seed-docs` use this; dry-run shows them as `engine=null session=null maxFix=0 … permission=no-agent`.
 - Newly planned phases get `gate: "approve"` unless the phase sets `gate` or the loop sets `plannedPhaseGate: "none"`
 - Cap growth with `budget.maxPhases`
 - `onPass` (`none`|`commit`|`merge`|`push`) only runs when loop-level `allow` flags permit (default all false)
 
 ## Dashboard scheduler / Loops UI
 
-`aflt loop start` registers a loop as `active` without running phases in that process. `aflt dashboard --serve` hosts an in-process scheduler (one runner per name; lock respected). Loops view: list, phase pipeline, eval tails, History links, start/pause/resume/stop/approve, define/edit form.
+`aflt loop start` registers a loop as `active` without running phases in that process. `aflt dashboard --serve` hosts an in-process scheduler (one runner per name; lock respected). Loops view: list, phase pipeline, eval tails, History links, start/pause/resume/stop/approve, define/edit form, and a **Making of** button.
+
+![Loops view: a completed hello-aflt-scratch run with eval scores per phase](../images/dashboard-loops.png)
+
+`budget.hoursUsed` (and the Loops “budget” hours) is wall time since the loop started, so a loop that is stopped and resumed hours later counts the idle gap too.
+
+## Review a run: making of
+
+After (or during) a real loop run, `aflt making-of <name>` writes one self-contained HTML page (default `$AGENTFLEET_HOME/loops/<name>/making-of.html`) with:
+
+- every AI call in order: prompt, reply, reasoning, tool calls with results, tokens, and for Copilot the AI credits and dollars Copilot recorded (Cursor reports tokens only, so no cost is shown);
+- every commit in the loop's repo with its phase, files and diff;
+- artifacts: seed files, files changed per phase, eval outputs, the final tree, and an optional `--build-url` link to the playable build.
+
+`--serve [--port 8797]` serves it live; `aflt dashboard --serve` also serves it at `/making-of/<name>`. `--with-files` writes every diff and artifact as small linked pages next to the HTML for static hosting. `--json` prints a summary (calls, tool calls, tokens, credits / $, commits).
+
+```bash
+aflt --space tutorial making-of hello-eval --json   # after a real hello-eval run in this space
+```
+
+The data comes from what each phase recorded under `runs/<session>/`: `engine/` (archived Copilot `events.jsonl` / Cursor stream-json + transcript), `calls.jsonl` (one line per model call) and `session-context.json`. See [12 — Token usage](12-token-usage.md#recorded-calls-for-loop-phases).
+
+![Making-of page: summary tiles, phase timeline and per-phase table](../images/making-of.png)
 
 This tutorial stops at **validate / dry-run / status**. Do not start an unattended loop against a production fleet from these pages.
 
@@ -103,8 +127,10 @@ This tutorial stops at **validate / dry-run / status**. Do not start an unattend
 ```bash
 aflt space create tutorial   # if needed
 aflt --space tutorial loop validate examples/loops/hello-eval.json
-aflt --space tutorial loop run examples/loops/hello-eval.json --dry-run
+aflt --space tutorial loop run examples/loops/hello-eval.json --dry-run --allow-existing
 aflt --space tutorial loop status --json
 ```
+
+From this checkout, `--allow-existing` is required (the repo is not an empty dedicated git repo); without it the dry-run lists the reasons and exits 1.
 
 Confirm validate exits 0 and dry-run does not create a runner lock under a real default home (you are on `--space tutorial`).

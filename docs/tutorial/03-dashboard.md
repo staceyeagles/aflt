@@ -3,11 +3,11 @@
 **Goals**
 
 - Start `aflt dashboard --serve` on the right host/port for your space
-- Know History vs Graph vs the Gantt timeline
+- Know History vs Graph vs Loops, and the Gantt timeline
 - Distinguish the live UI from `aflt memory dashboard`
 - Optionally install the macOS LaunchAgent via `aflt service`
 
-Screenshots: [dashboard-graph.png](../images/dashboard-graph.png), [dashboard-history.png](../images/dashboard-history.png), [dashboard-sessions.png](../images/dashboard-sessions.png).
+Screenshots: [dashboard-graph.png](../images/dashboard-graph.png), [dashboard-history.png](../images/dashboard-history.png), [dashboard-sessions.png](../images/dashboard-sessions.png), [dashboard-loops.png](../images/dashboard-loops.png) (Loops view), [dashboard-history-loop.png](../images/dashboard-history-loop.png) (a loop's phase sessions in History).
 
 ## Serve
 
@@ -33,6 +33,12 @@ Blocks until SIGINT/SIGTERM.
 Default UI is **History**: collapsible project/session tree plus an **activity-only** Gantt (completed/failed turn markers). Toggle **Graph** for the star view (zoom/pan, Fit, Spread).
 
 Shared state vocabulary and colors: **Working** (green), **Waiting** (orange), **Idle** (gray), **Completed** (blue), **Failed** (red). Timeline presets: 24h / 7d / 30d / all; zoom and pan supported.
+
+The third tab, **Loops**, lists `aflt loop` runs in this space: status, engine/model, budget, token rollup, step pipeline, phase tree with eval scores, eval tails, and start / pause / resume / stop / approve. Each loop has a **Making of** button that opens `/making-of/<loop>` (every AI call, commit, diff and artifact). See [09 — Loops](09-loops.md).
+
+![Loops view of a completed hello-aflt-scratch run](../images/dashboard-loops.png)
+
+Known display quirk: the **Recent** list in the side panel shows times in UTC (for example `2026-11-24 19:51:06`), while History rows and tooltips use local time.
 
 This is **not** `aflt memory dashboard`, which only regenerates the memory-repo root `DASHBOARD.md`.
 
