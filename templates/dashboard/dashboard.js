@@ -969,6 +969,17 @@ function renderLoopPhaseCards(pipeline) {
 }
 
 /**
+ * True when a loop has finished (completed / failed / stopped) and no runner
+ * is live, so Stop and Pause have nothing to act on.
+ */
+function loopIsFinished(loop) {
+  if (!loop || typeof loop !== 'object') return false;
+  const s = String(loop.status || '').toLowerCase();
+  if (s !== 'completed' && s !== 'failed' && s !== 'stopped') return false;
+  return !loop.runnerPid && !loop.schedulerRunning;
+}
+
+/**
  * Detail panel HTML for a loop status payload from GET /api/loops/:name.
  */
 function renderLoopDetailHtml(detail) {
@@ -986,18 +997,30 @@ function renderLoopDetailHtml(detail) {
       escapeHtml(detail.name) +
       '">Approve</button>';
   }
+  const finished = loopIsFinished(detail);
+  const finishedTitle = finished
+    ? ' disabled aria-disabled="true" title="Loop is ' + escapeHtml(status) + '; nothing to '
+    : '';
   html +=
     '<button type="button" class="loops-btn subtle" data-loop-action="pause" data-loop-name="' +
     escapeHtml(detail.name) +
-    '">Pause</button>';
+    '"' +
+    (finished ? finishedTitle + 'pause"' : '') +
+    '>Pause</button>';
   html +=
     '<button type="button" class="loops-btn subtle" data-loop-action="resume" data-loop-name="' +
     escapeHtml(detail.name) +
     '">Resume</button>';
+  // Stop is the destructive (red) action only while there is something to
+  // stop; a completed / failed / stopped loop gets a neutral disabled button.
   html +=
-    '<button type="button" class="loops-btn danger" data-loop-action="stop" data-loop-name="' +
+    '<button type="button" class="loops-btn ' +
+    (finished ? 'subtle' : 'danger') +
+    '" data-loop-action="stop" data-loop-name="' +
     escapeHtml(detail.name) +
-    '">Stop</button>';
+    '"' +
+    (finished ? finishedTitle + 'stop"' : '') +
+    '>Stop</button>';
   html +=
     '<button type="button" class="loops-btn subtle" data-loop-action="edit" data-loop-name="' +
     escapeHtml(detail.name) +
@@ -1107,6 +1130,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     graphViewTransform, clampTimelineWindow, resolveTimelineWindow, formatTimelineAxisLabel,
     zoomTimelineWindow, panTimelineWindow, layoutTimelineMarkers, maxTimelineLaneCount,
     formatLoopElapsed, formatLoopBudget, formatLoopUsage, loopStatusClass, renderLoopStepPipeline,
+    loopIsFinished,
     loopSyncSignature, loopDetailNeedsSync,
     renderLoopsListHtml, renderLoopPhaseTree, renderLoopPhaseCards, renderLoopDetailHtml,
     emptyLoopPhaseForm, escapeHtml,
