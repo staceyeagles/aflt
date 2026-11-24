@@ -397,7 +397,10 @@ exit 1
     });
     assert.equal(result.ok, false);
     assert.doesNotMatch(fs.readFileSync(log, 'utf8'), /--model/);
-    assert.match(loop.loadState('model-nofallback').lastError || '', /agent exited 1/);
+    assert.match(
+      loop.loadState('model-nofallback').lastError || '',
+      /model_unavailable.*is not available/
+    );
   });
 
   it('refuses a live run with a clear message when the engine CLI is missing', async () => {
