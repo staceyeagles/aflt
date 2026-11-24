@@ -247,8 +247,8 @@ Prefer **`--json`** for metrics. Human text is a short summary; JSON includes (f
 | Field | Meaning |
 |-------|---------|
 | `status` | e.g. `running` → `completed` (or `failed` / `stopped` / `paused` / `waiting`) |
-| `elapsedMs` | Wall time since `startedAt` (frozen at completed/failed/stopped/paused) |
-| `budget.hoursUsed` / `runsUsed` | Hours and run counts vs definition caps (`hoursUsed` is wall time since start, so a stopped-then-resumed loop counts the idle gap) |
+| `elapsedMs` | Active run time: sum of run segments (start/resume → completed/failed/stopped/paused/gate wait); idle gaps between runs are not counted. `wallElapsedMs` is wall time since `startedAt` |
+| `budget.hoursUsed` / `runsUsed` | Hours and run counts vs definition caps (`hoursUsed` is active run time, the same number `maxHours` is enforced on) |
 | `usage` | Per-loop token rollup (from phase `usage-summary.json`; never estimates USD from tokens) |
 | `pipeline[].id` / `status` / `evalScore` | Phase tree; `evalScore` from stored phase results (`overall` / `after` parsed before `lastEval` truncation) |
 | `phases.<id>.evalScore` | Same scores on raw phase state |

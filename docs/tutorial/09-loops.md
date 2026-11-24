@@ -100,7 +100,7 @@ Before an unattended run, `aflt doctor --strict --loop <def.json>` checks that t
 
 ![Loops view: a completed hello-aflt-scratch run with eval scores per phase](../images/dashboard-loops.png)
 
-`budget.hoursUsed` (and the Loops “budget” hours) is wall time since the loop started, so a loop that is stopped and resumed hours later counts the idle gap too.
+`budget.hoursUsed`, `elapsedMs` and the Loops “Elapsed” / “budget” hours are **active run time**: the sum of run segments from each start or resume until the loop completes, fails, stops, pauses or waits at a gate. A loop that finishes and is resumed hours later does not count the idle gap, and `budget.maxHours` is enforced on the same number. `wallElapsedMs` (in `aflt loop status --json`) keeps the wall time since `startedAt`. Loop state written before this change has no `activeMs`; its active time is rebuilt from the loop's history at read time (the state file is not rewritten until the loop runs again).
 
 ## Review a run: making of
 
