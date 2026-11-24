@@ -55,7 +55,7 @@ aflt doctor --strict
 Precedence for loop workers: phase `model` → definition `model` → `COPILOT_MODEL` (Copilot only) → `config.json` `defaultModel`. Example:
 
 ```bash
-export COPILOT_MODEL=claude-sonnet-4.5
+export COPILOT_MODEL=claude-sonnet-5.5   # any model your Copilot plan offers; `auto` when the account default is unavailable
 # or set "model" on the loop JSON / phase
 ```
 
@@ -118,7 +118,17 @@ Status: `aflt loop status hello-aflt-scratch --json`. Details:
 AFLT_SPACE=td-copilot aflt dashboard --serve --port 8787
 ```
 
-Open `http://127.0.0.1:8787/` → Loops tab. Each loop has a **Making of** button (`http://127.0.0.1:8787/making-of/hello-aflt`).
+Open `http://127.0.0.1:8787/` → Loops tab. Each loop has a **Making of** button (`http://127.0.0.1:8787/making-of/hello-aflt`). If another dashboard already listens on 8787 (for example the default space's), pass a free `--port`; each named space also records its own port (`aflt space ls`).
+
+![Loops tab: hello-aflt-scratch completed with eval scores per phase](images/dashboard-loops.png)
+
+History shows the loop master with one session per phase:
+
+![History tab: the loop master and its phase sessions](images/dashboard-history-loop.png)
+
+The game itself runs from the game repo (`npm start`, default `http://127.0.0.1:8792/`; `?seed=42` gives a repeatable map):
+
+![The tile dungeon built by hello-aflt-scratch](images/tile-dungeon-scratch.png)
 
 ## 7. See exactly how it was built (making of)
 
@@ -134,7 +144,20 @@ AFLT_SPACE=td-copilot aflt making-of hello-aflt --serve --port 8797   # live pag
 AFLT_SPACE=td-copilot aflt making-of hello-aflt --out site/making-of.html --with-files
 # → site/making-of.html + site/making-of-files/ (every commit diff and seed/eval/tracked file
 #   as a small HTML page, all linked) for any static host
+AFLT_SPACE=td-copilot aflt making-of hello-aflt --json    # summary: calls, tokens, credits/$, commits
 ```
+
+The top of the page: totals, a phase timeline and one row per phase with calls, tokens, credits, dollars, wall time and its commit. Copilot run:
+
+![Making-of summary for a Copilot hello-aflt run with credits and dollars per phase](images/making-of-copilot-costs.png)
+
+Below that, every call in order; expand one to see what was new in the request, what the model returned (text and tool calls with results) and its token and credit table:
+
+![An expanded call: tool calls, results and the per-call token table](images/making-of-call.png)
+
+Then every commit with its phase, size and the calls that produced it, followed by PRs and artifacts (final tree, seed inputs, files per phase):
+
+![Commits with phase, files changed and linked calls](images/making-of-commits.png)
 
 What aflt records for this (per phase session, `$AGENTFLEET_HOME/runs/<session>/`):
 

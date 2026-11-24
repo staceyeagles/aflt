@@ -16,6 +16,21 @@ agent writes every file, including the M0 scaffold.
 Use it to see what an engine builds with nothing but a spec, and to compare
 engines/models on the same docs-only starting point.
 
+![The game a hello-aflt-scratch run built (Cursor composer-2.5), seed 42](../../../docs/images/tile-dungeon-scratch.png)
+
+## Example run
+
+One run on Cursor `composer-2.5` (space `scratch-composer`): every phase
+passed on the way through, the eval scored 85.2 after M5a, and three improve
+rounds took it to 87.9, 89.6 and 89.9 (crash-free and solvability at 100;
+weakest metric `avg_depth`). M2 through improve-r3 took about 19 minutes of
+agent time; the whole run used 9.30M input tokens over 227 agent steps.
+Cursor reports tokens only, so no cost is recorded.
+
+![Loops view of that run: phase tree with eval scores](../../../docs/images/dashboard-loops.png)
+
+![Making-of page of that run](../../../docs/images/making-of.png)
+
 ## Quick start
 
 ```bash
@@ -64,6 +79,13 @@ problems unless:
 - `node server.js` on a free port answers `/health` with `{"ok":true}`, `/` with the canvas page, and `/src/main.js` with 200 (it stops only the PID it started).
 
 A failure goes back to the M0 agent as a fix attempt (up to 3).
+
+## Making of
+
+`aflt making-of hello-aflt-scratch` (same `AFLT_SPACE`) writes a page with
+every AI call, commit, diff and artifact of the run; the dashboard Loops tab
+links to it (**Making of**). See
+[docs/cli-quickstart-loops.md](../../../docs/cli-quickstart-loops.md#7-see-exactly-how-it-was-built-making-of).
 
 ## More improve rounds
 

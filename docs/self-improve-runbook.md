@@ -1,6 +1,6 @@
 # Self-improving loop runbook
 
-Short guide to run `examples/loops/self-improve.json` in a dedicated git worktree with isolated AgentFleet state. Design background: [self-improving-loop-design.md](self-improving-loop-design.md) (unchanged status line).
+Short guide to run `examples/loops/self-improve.json` in a dedicated git worktree with isolated AgentFleet state. Design background and implementation status: [self-improving-loop-design.md](self-improving-loop-design.md).
 
 **CLI-only quick start** (hello-aflt tile dungeon on a fresh Mac): [cli-quickstart-loops.md](cli-quickstart-loops.md).
 
@@ -108,7 +108,7 @@ After three failed improve rounds (or a non-retryable failure with `escalation` 
 | Stop | `AFLT_SPACE=self-improve aflt loop stop self-improve` |
 | Pause | `AFLT_SPACE=self-improve aflt loop pause self-improve` |
 
-Verify tier checkpoints are stored by commit SHA in loop state; resume can skip tiers already green at the same SHA.
+Verify tier checkpoints are stored in loop state keyed by commit SHA, plus a fingerprint of uncommitted work when the tree is dirty (`<sha>+dirty-<fingerprint>`); resume skips only tiers already green for exactly that tree.
 
 ## 7. What the definition runs
 

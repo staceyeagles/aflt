@@ -215,7 +215,7 @@ aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt-improve.json --
 
 What this does (see example README):
 
-- Seeds portable M0 when `package.json` is missing (`m0-seed/` + `seed-m0.js`)
+- Seeds portable M0 when `package.json` is missing (`m0-seed/` + `seed-m0.js`, run as a `type: "script"` phase — no Copilot call)
 - Runs M1–M4, M5a, then up to 3 plan-next improve rounds gated by `improve-gate.js` (HEAD vs working tree)
 - `aflt loop` is the orchestrator; Copilot is only the worker engine
 - Relative `promptFile` / `improve-gate.js` / `seed-m0.js` resolve against the **definition directory**, not the game cwd
@@ -248,8 +248,8 @@ Prefer **`--json`** for metrics. Human text is a short summary; JSON includes (f
 |-------|---------|
 | `status` | e.g. `running` → `completed` (or `failed` / `stopped` / `paused` / `waiting`) |
 | `elapsedMs` | Wall time since `startedAt` (frozen at completed/failed/stopped/paused) |
-| `budget.hoursUsed` / `runsUsed` | Hours and run counts vs definition caps |
-| `usage` | Per-loop token rollup (from phase `usage-summary.json`; never invents USD) |
+| `budget.hoursUsed` / `runsUsed` | Hours and run counts vs definition caps (`hoursUsed` is wall time since start, so a stopped-then-resumed loop counts the idle gap) |
+| `usage` | Per-loop token rollup (from phase `usage-summary.json`; never estimates USD from tokens) |
 | `pipeline[].id` / `status` / `evalScore` | Phase tree; `evalScore` from stored phase results (`overall` / `after` parsed before `lastEval` truncation) |
 | `phases.<id>.evalScore` | Same scores on raw phase state |
 | `loopRootSessionId` | Master session for History nesting (`loop-hello-aflt`) |
@@ -265,6 +265,8 @@ With `aflt dashboard --serve` on the space’s port:
 ### Token / cost honesty
 
 - Copilot `cost` stays **`null`** (provider “cost” on usage records is stored as `premiumRequests`, not USD). Dashboard may show **cost unknown**.
+- Copilot AI credits are recorded separately: `credits` / `usd` / `costBasis: "copilot-nano-aiu"` from `copilotUsage.totalNanoAiu` (1e9 nano-AIU = 1 credit = $0.01). The dashboard does not show them yet; `aflt --space copilot-live making-of hello-aflt` shows credits and dollars per call, per phase and for the whole run.
+- `usage-summary.json` counts a headless run once (`dedupedTurns`); loop rollups stored in `state.json` before this fix may still show the double-counted totals.
 - Some turns are **`accuracy: "estimated"`** (char/4 fallback) or rollups **`partial`** when mixed with reported turns. Do not treat estimates as API-reported.
 - Planner / loop-root sessions on a **fresh** run mint **new** session ids (no title reuse of completed/failed peers). Mid-run resume still reuses bound `sessionId`s.
 
@@ -343,6 +345,7 @@ Fill in after the run (paste into `$OUT/RESULTS.md` or a ticket):
   - improve-* (if any):
 - Loop `usage.totalTokens` / `accuracy` / `turnCount`:
 - `usage.cost` (expect null / “cost unknown”):
+- AI credits / $ (from `aflt making-of hello-aflt --json`: `credits`, `usd`):
 - Estimated vs reported notes:
 - Planner / loop-root session ids (confirm fresh per `--fresh` run):
 
@@ -351,6 +354,7 @@ Fill in after the run (paste into `$OUT/RESULTS.md` or a ticket):
 - [ ] loop-status.json
 - [ ] state.json
 - [ ] usage-summary-*.json
+- [ ] making-of.html (`aflt making-of hello-aflt`)
 - [ ] screenshot of Loops view (optional)
 
 ## Issues / gaps observed
@@ -362,7 +366,7 @@ Fill in after the run (paste into `$OUT/RESULTS.md` or a ticket):
 
 ## Known gaps (do not “fix” in the write-up)
 
-1. **USD cost unknown** — Copilot path keeps `cost: null`; never derive dollars from tokens.
+1. **USD on the dashboard** — Copilot keeps `cost: null` and the Loops view shows “cost unknown”; recorded AI credits / `usd` appear in `usage-summary.json` and the making-of page. Never derive dollars from tokens.
 2. **Estimated usage** — some turns/rollups are `estimated` or `partial`, not fully API-reported.
 3. **Fresh planner sessions** — `--fresh` / new runs mint new planner + loop-root sessions; do not expect title reuse of completed peers.
 4. **Long wall clock** — budget allows up to 8 hours; success is green phases + scores, not a short runtime.

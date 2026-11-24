@@ -2,6 +2,8 @@
 
 > Want the agent to write the M0 scaffold too? [`hello-aflt-scratch`](../hello-aflt-scratch/README.md) is the same loop with a docs-only seed (no code or HTML).
 
+![A hello-aflt build (Cursor auto, after three improve rounds), seed 42](../../../docs/images/tile-dungeon-cursor-auto.png)
+
 ## Quick start (one command)
 
 From scratch on a work Mac (Copilot CLI is enough; no Grok Bot, no Cursor pin):
@@ -82,7 +84,9 @@ aflt --space hello-demo loop run /path/to/aflt/examples/loops/hello-aflt/hello-a
 
 ## Making of
 
-`aflt making-of hello-aflt` (same `AFLT_SPACE`) writes one self-contained page with every AI call, every commit with its diff, the seed files above, files per phase, eval outputs and a link to the build (`--build-url`). See [docs/cli-quickstart-loops.md](../../../docs/cli-quickstart-loops.md#7-see-exactly-how-it-was-built-making-of).
+`aflt making-of hello-aflt` (same `AFLT_SPACE`) writes one self-contained page with every AI call, every commit with its diff, the seed files above, files per phase, eval outputs and a link to the build (`--build-url`). The dashboard Loops tab links to it (**Making of**). See [docs/cli-quickstart-loops.md](../../../docs/cli-quickstart-loops.md#7-see-exactly-how-it-was-built-making-of).
+
+![Making-of for a Copilot Claude Sonnet 5.5 hello-aflt run](../../../docs/images/making-of-copilot-costs.png)
 
 ## Improve gate
 
