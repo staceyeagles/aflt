@@ -171,6 +171,11 @@ describe('named spaces', () => {
     assert.equal(lj.spaces.length, 1);
     assert.equal(lj.spaces[0].name, 'lab');
 
+    // `space ls` is an alias of `space list` (the Herdr af sessions picker uses it).
+    const ls = af(['space', 'ls', '--json'], { AGENTFLEET_HOME: null });
+    assert.equal(ls.status, 0, ls.stderr);
+    assert.deepEqual(JSON.parse(ls.stdout), lj);
+
     const curDefault = af(['space', 'current'], { AGENTFLEET_HOME: null });
     assert.equal(curDefault.status, 0);
     assert.match(curDefault.stdout, /\(default\)/);

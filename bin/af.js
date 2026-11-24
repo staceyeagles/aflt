@@ -498,7 +498,8 @@ Usage:
                             uses dev.aflt.dashboard.<space>. --print shows the
                             plist without writing. Unsupported on non-macOS.
                             Default --port comes from the space config when set.
-  aflt space list [--json]  List named spaces under ~/.agentfleet/spaces/ plus
+  aflt space list|ls [--json]
+                            List named spaces under ~/.agentfleet/spaces/ plus
                             the default (no-space) home; marks current.
   aflt space create <name> [--json]
                             Create ~/.agentfleet/spaces/<name> with a space-local
@@ -8203,8 +8204,8 @@ function cmdSpace(argv) {
   const sub = args[0];
   const asJson = Boolean(flags.json);
   const usage =
-    'usage: aflt space list|create|current|remove [--json]\n' +
-    '  aflt space list [--json]\n' +
+    'usage: aflt space list|ls|create|current|remove [--json]\n' +
+    '  aflt space list|ls [--json]\n' +
     '  aflt space create <name> [--json]\n' +
     '  aflt space current [--json]\n' +
     '  aflt space remove <name> [--force] [--json]';
@@ -8212,7 +8213,7 @@ function cmdSpace(argv) {
     fail(usage);
   }
 
-  if (sub === 'list') {
+  if (sub === 'list' || sub === 'ls') {
     const result = spaceLib.listSpaces();
     if (asJson) {
       emitJson(result);

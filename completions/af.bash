@@ -283,11 +283,11 @@ _af() {
       ;;
     space)
       if [[ ${COMP_CWORD} -eq 2 ]]; then
-        COMPREPLY=( $(compgen -W "list create current remove" -- "${cur}") )
+        COMPREPLY=( $(compgen -W "list ls create current remove" -- "${cur}") )
       elif [[ "${COMP_WORDS[2]}" == "create" || "${COMP_WORDS[2]}" == "remove" ]]; then
         COMPREPLY=( $(compgen -W "--json --force --space" -- "${cur}") )
       else
-        COMPREPLY=( $(compgen -W "list create current remove --json --force --space" -- "${cur}") )
+        COMPREPLY=( $(compgen -W "list ls create current remove --json --force --space" -- "${cur}") )
       fi
       ;;
     notify)

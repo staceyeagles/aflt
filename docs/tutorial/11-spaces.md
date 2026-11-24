@@ -25,7 +25,7 @@ aflt <command> …
 ## Commands
 
 ```bash
-aflt space list [--json]
+aflt space list [--json]      # alias: aflt space ls
 aflt space create <name> [--json]
 aflt space current [--json]
 aflt space remove <name> [--force] [--json]
@@ -95,6 +95,8 @@ Only force-remove the **tutorial** (or other throwaway) space you created for th
 3. Run doctor / dry-runs / dashboard experiments there
 4. `aflt --space tutorial ls` / `orphans` / `loop status` as needed
 5. `aflt space remove tutorial --force` when finished
+
+In the Herdr **af sessions** panel, click the space name in the header to switch the panel to a named space (the panel then passes `--space` on each command it runs). See [04 — Herdr](04-herdr.md).
 
 ## Try it
 
