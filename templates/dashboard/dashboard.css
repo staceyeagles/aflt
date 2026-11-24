@@ -859,7 +859,8 @@ body {
 }
 .loops-status.running,
 .loops-status.pending { color: var(--state-working); }
-.loops-status.waiting { color: var(--state-waiting); }
+.loops-status.waiting,
+.loops-status.needs_human { color: var(--state-waiting); }
 .loops-status.paused { color: var(--state-idle); }
 .loops-status.completed { color: var(--state-completed); }
 .loops-status.failed,

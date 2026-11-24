@@ -82,6 +82,7 @@ Before an unattended run, `aflt doctor --strict --loop <def.json>` checks that t
 
 ## Approval gates and plan-next
 
+- Optional `escalation: { "afterFailedRounds": 3, "event": "loop.needs_human" }` — after a non-retryable phase failure (exhausted fix attempts, protected-path violation, commit-gate refusal, or non-retryable engine error), the runner sets `status=needs_human` instead of `failed`, writes `$AGENTFLEET_HOME/loops/<name>/needs-human.json`, and emits `loop.needs_human` plus `loop.gate.waiting` with a diagnostic bundle. Resume with `aflt loop resume <name>` (fresh attempt on the failed phase) or `aflt loop stop <name>`. Plan-next improve loops also count consecutive failed rounds toward `afterFailedRounds`. Without `escalation`, behavior is unchanged (`failed`).
 - Phase `gate: "approve"` → runner `status=waiting`, notify `loop.gate.waiting`; release with `aflt loop approve` or dashboard `POST /api/loops/:name/approve`
 - `type: "plan-next"`: planner must write `$AGENTFLEET_HOME/loops/<name>/plan-next.json` as `{ "done": true }` or `{ "phases": [ … ] }`
 - Newly planned phases get `gate: "approve"` unless the phase sets `gate` or the loop sets `plannedPhaseGate: "none"`

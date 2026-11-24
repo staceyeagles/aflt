@@ -687,6 +687,7 @@ function loopStatusClass(status) {
   const s = String(status || 'unknown').toLowerCase();
   if (s === 'running' || s === 'pending') return 'running';
   if (s === 'waiting') return 'waiting';
+  if (s === 'needs_human') return 'waiting';
   if (s === 'paused') return 'paused';
   if (s === 'completed') return 'completed';
   if (s === 'failed' || s === 'stopped') return s;

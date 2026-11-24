@@ -81,7 +81,7 @@ process.exit(0);
           ...process.env,
           AGENTFLEET_HOME: home,
           AGENTFLEET_HC_BIN: stubHc,
-          PATH: `${only}${path.delimiter}${process.env.PATH || ''}`,
+          PATH: only,
           AGENTFLEET_CURSOR_BIN: '',
         },
       });
