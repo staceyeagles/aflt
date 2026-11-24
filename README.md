@@ -7,7 +7,7 @@
 <p align="center">
   <img alt="Node 20.10+" src="https://img.shields.io/badge/node-%3E%3D20.10-brightgreen?logo=node.js&logoColor=white"/>
   <img alt="version 1.5.0" src="https://img.shields.io/badge/version-1.5.0-blue"/>
-  <img alt="670 tests passing" src="https://img.shields.io/badge/tests-670%20passing-success"/>
+  <img alt="854 tests passing" src="https://img.shields.io/badge/tests-854%20passing-success"/>
   <img alt="macOS | Linux untested" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20untested-lightgrey"/>
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-yellow"/>
 </p>
@@ -821,7 +821,7 @@ See `af --help` / `aflt help` for the authoritative flag list. Long-form help co
 npm test
 ```
 
-670 tests (Node test runner): all passing in the hermetic suite (a live `create-chat` smoke test only runs with a real `cursor-agent`). Coverage includes registry, engines, Herdr backends, orchestration, messaging, MCP, docs, project/timeline, project memory, live dashboard, dry-run purity, interactive rm/stop pickers, and hermetic `AGENTFLEET_HOME` fixtures.
+855 tests (Node test runner): 854 passing and 1 skipped in the hermetic suite (the skipped live `create-chat` smoke test only runs with a real `cursor-agent`). Coverage includes registry, engines, Herdr backends and the af sessions panel space picker, orchestration, messaging, MCP, docs and tutorial commands, project/timeline, project memory, live dashboard, loops (script phases, verify tiers, commit gate, escalation, failover, hello-aflt and hello-aflt-scratch), making-of, usage, named spaces, eval, dry-run purity, interactive rm/stop pickers, and hermetic `AGENTFLEET_HOME` fixtures.
 
 ## Versioning and releases
 
