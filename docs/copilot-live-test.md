@@ -265,8 +265,14 @@ With `aflt dashboard --serve` on the space’s port:
 ### Token / cost honesty
 
 - Copilot `cost` stays **`null`** (provider “cost” on usage records is stored as `premiumRequests`, not USD). Dashboard may show **cost unknown**.
-- Some turns are **`accuracy: "estimated"`** (char/4 fallback) or rollups **`partial`** when mixed with reported turns. Do not treat estimates as API-reported.
+- Prefer **`reported`** counts from Copilot `usage_record` (JSON stdout or `events.jsonl`). Some turns are still **`accuracy: "estimated"`** (char/4 of prompt + final reply only) or rollups **`partial`** when mixed with reported turns. Do not treat estimates as API-reported.
 - Planner / loop-root sessions on a **fresh** run mint **new** session ids (no title reuse of completed/failed peers). Mid-run resume still reuses bound `sessionId`s.
+
+### Post–PR #8 success checks
+
+- A phase whose agent exits non-zero or times out must **fail or retry**, even if the eval command was already green (no more false passes on seed tests alone).
+- A brand-new space/home must not fail on missing `results/` / `plans/` (`--add-dir` is prepared automatically).
+- Dry-run text/JSON shows resolved **cwd**, **permissions**, and **model** before any live work.
 
 ---
 
@@ -323,9 +329,10 @@ Fill in after the run (paste into `$OUT/RESULTS.md` or a ticket):
 - Space / AGENTFLEET_HOME:
 - Dashboard URL / port:
 - Engine selection: AGENTFLEET_ENGINE= / `aflt engine` output:
+- Model: `COPILOT_MODEL` / config `defaultModel` / fallback to `auto` (yes/no):
 - Definition path:
 - Game cwd:
-- Command: `aflt loop run … --fresh` (exact argv):
+- Command: `aflt loop run … --fresh` (exact argv; note `--allow-existing` / `--force` if used):
 
 ## Outcome
 
@@ -333,6 +340,7 @@ Fill in after the run (paste into `$OUT/RESULTS.md` or a ticket):
 - `elapsedMs` / human elapsed:
 - `budget.runsUsed` / `budget.hoursUsed`:
 - Phases passed / failed (ids):
+- Any agent non-zero/timeout that correctly failed or retried (not a false pass):
 - Per-phase `evalScore` (from `pipeline` or `state.phases`):
   - m0:
   - m1:
@@ -341,6 +349,7 @@ Fill in after the run (paste into `$OUT/RESULTS.md` or a ticket):
   - m4:
   - m5a:
   - improve-* (if any):
+  - plan-next (wrote `plan-next.json`? attempts?):
 - Loop `usage.totalTokens` / `accuracy` / `turnCount`:
 - `usage.cost` (expect null / “cost unknown”):
 - Estimated vs reported notes:
@@ -350,11 +359,13 @@ Fill in after the run (paste into `$OUT/RESULTS.md` or a ticket):
 
 - [ ] loop-status.json
 - [ ] state.json
+- [ ] plan-next.json (if planner ran)
 - [ ] usage-summary-*.json
 - [ ] screenshot of Loops view (optional)
 
 ## Issues / gaps observed
 
+- (See Known gaps — especially Copilot plan-next non-interactive write TODO)
 -
 ```
 
@@ -363,10 +374,13 @@ Fill in after the run (paste into `$OUT/RESULTS.md` or a ticket):
 ## Known gaps (do not “fix” in the write-up)
 
 1. **USD cost unknown** — Copilot path keeps `cost: null`; never derive dollars from tokens.
-2. **Estimated usage** — some turns/rollups are `estimated` or `partial`, not fully API-reported.
+2. **Estimated usage** — some turns/rollups are `estimated` or `partial`, not fully API-reported. Even with `usage_record`, a long edit can still look small if the record is missing and the fallback is chars/4 of prompt + final reply only.
 3. **Fresh planner sessions** — `--fresh` / new runs mint new planner + loop-root sessions; do not expect title reuse of completed peers.
 4. **Long wall clock** — budget allows up to 8 hours; success is green phases + scores, not a short runtime.
-5. **No Cursor** — if `aflt doctor` warns about missing Cursor, that is expected on a Copilot-only Mac.
+5. **No Cursor** — if `aflt doctor` warns about missing Cursor, that is expected on a Copilot-only Mac. A non-Cursor binary named `agent` is ignored (PR #8).
+6. **Copilot plan-next cannot yet write its plan file non-interactively** — the planner must write `$AGENTFLEET_HOME/loops/<name>/plan-next.json`, which sits outside the game `-C` cwd. Headless Copilot still has no reliable non-interactive path to that file (follow-up TODO from PR #8). Expect retries, manual intervention, or Cursor for plan-next until that lands. Do not treat a stuck/missing `plan-next.json` as a docs or harness bug in the write-up.
+
+Fixed by PR #8 (do **not** re-list as open gaps): agent non-zero/timeout no longer passes a green eval; fresh homes get `results/` / `plans/` before `--add-dir`; loop `model` / `COPILOT_MODEL` / `defaultModel` + unavailable-model → `auto` fallback; `force` defaults off; cwd guard + `--allow-existing`; `--dry-run` prints cwd / permissions / model.
 
 ---
 
@@ -379,13 +393,15 @@ node -v && copilot version && aflt --version && aflt doctor
 # space + engine
 aflt space create copilot-live
 export AFLT_SPACE=copilot-live AGENTFLEET_ENGINE=copilot
+# optional but recommended when the account default model is unavailable:
+export COPILOT_MODEL=auto
 aflt engine copilot
 
-# validate → dry-run → live
+# empty game repo first (cwd guard), then validate → dry-run → live
 DEF=/path/to/aflt/examples/loops/hello-aflt/hello-aflt.json
+mkdir -p ~/tmp/tile-dungeon-live && cd ~/tmp/tile-dungeon-live && git init
 aflt loop validate "$DEF" --json
 aflt loop run "$DEF" --dry-run --json
-mkdir -p ~/tmp/tile-dungeon-live && cd ~/tmp/tile-dungeon-live && git init
 aflt loop run "$DEF" --fresh
 
 # observe

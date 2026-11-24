@@ -42,7 +42,7 @@ aflt --space tutorial loop validate examples/loops/hello-aflt/hello-aflt.json --
 aflt --space tutorial loop validate examples/loops/hello-aflt/hello-aflt-improve.json --json
 ```
 
-**hello-aflt one-liner** (work Mac / Copilot; no Grok Bot): create a folder, `git init`, then `aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt.json` — see [`examples/loops/hello-aflt/README.md`](../../examples/loops/hello-aflt/README.md). Optional once: `export AGENTFLEET_ENGINE=copilot`.
+**hello-aflt one-liner** (work Mac / Copilot; no Grok Bot): create a folder, `git init`, then `aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt.json` — see [`examples/loops/hello-aflt/README.md`](../../examples/loops/hello-aflt/README.md) and the full work-Mac guide [`docs/copilot-live-test.md`](../copilot-live-test.md). Optional once: `export AGENTFLEET_ENGINE=copilot` (and `COPILOT_MODEL=auto` when the account default model is unavailable). Continue-improve on an existing tree needs `--allow-existing`.
 
 Success text shape:
 
@@ -70,7 +70,7 @@ dry-run: loop "hello-eval" — 1 phase(s)
   - write-greeting engine=cursor session=loop-hello-eval maxFix=3 onPass=none force=true permission=force model=-
 ```
 
-`force` defaults to false. hello-eval sets `"force": true` on the phase. `--force` on `loop run` grants tools for every phase in that invocation. Model: phase `model`, definition `model`, `COPILOT_MODEL` (Copilot), then `config.json` `defaultModel`.
+`force` defaults to false. hello-eval sets `"force": true` on the phase. `--force` on `loop run` grants tools for every phase in that invocation. Model: phase `model`, definition `model`, `COPILOT_MODEL` (Copilot), then `config.json` `defaultModel`. A phase whose agent exits non-zero or times out fails or retries even when the eval is already green.
 
 ## Approval gates and plan-next
 
@@ -79,6 +79,7 @@ dry-run: loop "hello-eval" — 1 phase(s)
 - Newly planned phases get `gate: "approve"` unless the phase sets `gate` or the loop sets `plannedPhaseGate: "none"`
 - Cap growth with `budget.maxPhases`
 - `onPass` (`none`|`commit`|`merge`|`push`) only runs when loop-level `allow` flags permit (default all false)
+- Known gap: Copilot plan-next cannot yet write that plan file non-interactively (outside the game `-C` cwd); see [docs/copilot-live-test.md](../copilot-live-test.md) Known gaps.
 
 ## Dashboard scheduler / Loops UI
 
@@ -91,7 +92,8 @@ This tutorial stops at **validate / dry-run / status**. Do not start an unattend
 ```bash
 aflt space create tutorial   # if needed
 aflt --space tutorial loop validate examples/loops/hello-eval.json
-aflt --space tutorial loop run examples/loops/hello-eval.json --dry-run
+# From this checkout, "cwd": "." is the product repo — need --allow-existing:
+aflt --space tutorial loop run examples/loops/hello-eval.json --dry-run --allow-existing
 aflt --space tutorial loop status --json
 ```
 

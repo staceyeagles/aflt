@@ -41,6 +41,7 @@ That isolates registry, config, memory, dashboard port, and LaunchAgent label un
 - [docs/SETUP.md](../SETUP.md) — environment, Herdr, work-computer install, troubleshooting depth
 - [docs/CAPABILITIES.md](../CAPABILITIES.md) — engine × mode matrix and `aflt wait` outcomes
 - [docs/PROJECT-REPO-METADATA.md](../PROJECT-REPO-METADATA.md) — project↔repo schema
+- [docs/copilot-live-test.md](../copilot-live-test.md) — Copilot-only work Mac: validate / dry-run / live `hello-aflt`
 - [AGENTS.md](../../AGENTS.md) — agent-oriented command guide
 - [CHANGELOG.md](../../CHANGELOG.md) — release notes
 - [README.md](../../README.md) — product overview; dashboard screenshots in [docs/images/](../images/)
