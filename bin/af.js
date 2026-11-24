@@ -130,6 +130,19 @@ Usage:
                             --capture-completions: save registered Copilot Task Complete
                             events as project status notes in the configured memory repo.
                             Backfills existing events; no commits or Doc Bot launch.
+                            Loops tab: "Making of" opens /making-of/<loop>.
+  aflt making-of <loop> [--out file.html] [--data file.json] [--serve [--port 8797]]
+                            [--build-url URL] [--build-label TEXT] [--seed PATH[,PATH]]
+                            [--repo DIR] [--no-diffs] [--json]
+                            "Making of" page for one loop in this space: every AI call
+                            in order (prompt, reply, reasoning, tool calls + results,
+                            tokens, Copilot credits/$ as recorded), every commit in the
+                            loop's repo with phase, files and diff, and the artifacts
+                            (seed files, files per phase, eval outputs, final build).
+                            Self-contained HTML (default <space>/loops/<loop>/making-of.html).
+                            --serve serves it live (also at /making-of/<loop> under
+                            aflt dashboard --serve). --seed defaults to seed* / *-seed
+                            files next to the loop definition.
   aflt dashboard --snapshot <file.svg|html>
                             Write a standalone SVG or self-contained HTML snapshot
                             of the current activity graph (no server). Parent dirs
@@ -711,6 +724,9 @@ async function main() {
       break;
     case 'dashboard':
       await cmdDashboard(rest);
+      break;
+    case 'making-of':
+      await cmdMakingOf(rest);
       break;
     case 'turns':
       cmdTurns(rest);
@@ -1507,6 +1523,132 @@ function cmdTimeline(argv) {
 /**
  * Live local activity dashboard. Background refreshes are read-only by default.
  */
+const MAKING_OF_USAGE =
+  'usage: aflt making-of <loop> [--out file.html] [--data file.json] [--serve [--port 8797] [--host 127.0.0.1]]\n' +
+  '                         [--build-url URL] [--build-label TEXT] [--seed PATH[,PATH...]] [--repo DIR]\n' +
+  '                         [--no-diffs] [--json]';
+
+/**
+ * aflt making-of <loop>: one self-contained HTML page with every AI call
+ * (prompt, reply, tool calls + results, tokens, cost), every commit with its
+ * diff, and the run's artifacts. Space-scoped like the dashboard.
+ */
+async function cmdMakingOf(argv) {
+  const makingOf = require('../lib/making-of');
+  const view = require('../lib/making-of-view');
+  const { expandUserPath } = require('../lib/util');
+  const { args, flags } = parseArgs(argv);
+  const asJson = recoverBoolFlag(flags, 'json', args);
+  const loopName = args[0];
+  if (!loopName || flags.help || flags.h) {
+    const names = makingOf.listLoopNames();
+    fail(
+      `${MAKING_OF_USAGE}${names.length ? `\nloops in this space: ${names.join(', ')}` : '\n(no loops in this space; set AFLT_SPACE or --space)'}`,
+      { json: asJson }
+    );
+  }
+  const strFlag = (name) => (flags[name] != null && flags[name] !== true ? String(flags[name]) : null);
+  const collectOpts = {
+    withDiffs: !flags['no-diffs'],
+    buildUrl: strFlag('build-url'),
+    buildLabel: strFlag('build-label'),
+    seeds: strFlag('seed')
+      ? strFlag('seed').split(',').map((s) => path.resolve(expandUserPath(s.trim()))).filter(Boolean)
+      : null,
+    repo: strFlag('repo') ? path.resolve(expandUserPath(strFlag('repo'))) : null,
+  };
+
+  if (flags.serve) {
+    const http = require('http');
+    const host = strFlag('host') || '127.0.0.1';
+    const port = strFlag('port') ? Number(strFlag('port')) : 8797;
+    if (!makingOf.listLoopNames().includes(loopName)) {
+      fail(`aflt making-of: no loop "${loopName}" in this space (${fleetDir()})`, { json: asJson });
+    }
+    const server = http.createServer((req, res) => {
+      const u = new URL(req.url || '/', `http://${host}`);
+      if (u.pathname === '/') {
+        res.writeHead(302, { Location: `/making-of/${encodeURIComponent(loopName)}` });
+        res.end();
+        return;
+      }
+      const handled = makingOf.handleMakingOfRequest(req, res, u.pathname, {
+        back: '/making-of',
+        backLabel: '← all loops',
+        collectOpts,
+      });
+      if (!handled) {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('not found');
+      }
+    });
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(port, host, resolve);
+    });
+    const url = `http://${host}:${server.address().port}/making-of/${encodeURIComponent(loopName)}`;
+    if (asJson) emitJson({ ok: true, url, loop: loopName });
+    else process.stdout.write(`aflt making-of: serving ${url} (Ctrl-C to stop)\n`);
+    await new Promise((resolve) => {
+      const stop = () => server.close(() => resolve());
+      process.once('SIGINT', stop);
+      process.once('SIGTERM', stop);
+    });
+    return;
+  }
+
+  let data;
+  try {
+    data = makingOf.collectLoop(loopName, collectOpts);
+  } catch (err) {
+    fail(`aflt making-of: ${err.message || err}`, { json: asJson });
+  }
+  const outPath = strFlag('out')
+    ? path.resolve(expandUserPath(strFlag('out')))
+    : path.join(fleetDir(), 'loops', loopName, 'making-of.html');
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  fs.writeFileSync(outPath, view.renderHtml(data));
+  let dataPath = null;
+  if (strFlag('data')) {
+    dataPath = path.resolve(expandUserPath(strFlag('data')));
+    fs.mkdirSync(path.dirname(dataPath), { recursive: true });
+    fs.writeFileSync(dataPath, JSON.stringify(data));
+  }
+  const T = data.totals;
+  const summary = {
+    ok: true,
+    loop: loopName,
+    path: outPath,
+    data: dataPath,
+    engine: data.run.engine,
+    model: data.run.model,
+    phases: data.phases.length,
+    calls: T.calls,
+    toolCalls: T.toolCalls,
+    tokensIn: T.tokensIn || (T.aflt && T.aflt.totalInput) || null,
+    tokensOut: T.tokensOut || (T.aflt && T.aflt.outputTokens) || null,
+    credits: T.credits,
+    usd: T.usd,
+    costBasis: data.pricing.basis === 'recorded' ? 'recorded by Copilot' : 'not recorded',
+    billedPrompts: T.billedPrompts,
+    commits: data.commits.length,
+    seeds: data.artifacts.seeds.length,
+    prs: data.prs.length,
+  };
+  if (asJson) {
+    emitJson(summary);
+    return;
+  }
+  const money =
+    T.credits != null
+      ? ` · ${T.credits.toFixed(1)} credits ($${T.usd.toFixed(2)}, recorded by Copilot)`
+      : ' · cost not recorded';
+  process.stdout.write(
+    `${outPath}\n${data.run.engine || '?'} · ${data.run.model || '?'} · ${data.phases.length} phases · ` +
+      `${T.calls} AI calls · ${T.toolCalls} tool calls${money} · ${data.commits.length} commits\n`
+  );
+}
+
 async function cmdDashboard(argv) {
   const { args, flags } = parseArgs(argv);
   const asJson = recoverBoolFlag(flags, 'json', args);

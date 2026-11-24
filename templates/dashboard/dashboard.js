@@ -1002,6 +1002,10 @@ function renderLoopDetailHtml(detail) {
     '<button type="button" class="loops-btn subtle" data-loop-action="edit" data-loop-name="' +
     escapeHtml(detail.name) +
     '">Edit</button>';
+  html +=
+    '<a class="loops-btn subtle loops-making-of" href="/making-of/' +
+    encodeURIComponent(detail.name) +
+    '" target="_blank" rel="noopener" title="Every AI call, commit and artifact of this loop">Making of</a>';
   html += '</div></div>';
 
   html += '<div class="loops-stats">';

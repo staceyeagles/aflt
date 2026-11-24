@@ -780,6 +780,7 @@ body {
   border-color: var(--cp-border);
 }
 .loops-btn.subtle:hover { background: var(--cp-surface-soft); }
+a.loops-btn { display: inline-block; text-decoration: none; }
 .loops-btn.danger {
   background: var(--cp-danger);
   border-color: var(--cp-danger);

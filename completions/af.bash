@@ -42,7 +42,7 @@ _af() {
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  cmds="version new add import ls list timeline projects dashboard memory sync run log spawn master docs children result wait tail send stop resume pick adopt cursor copilot opencode engine rename cwd set-cwd done rm remove purge orphans note export import-file which-backend setup herdr-templates herdr-app doctor msg inbox thread mcp help turns archive unarchive loop notify service space eval"
+  cmds="version new add import ls list timeline projects dashboard making-of memory sync run log spawn master docs children result wait tail send stop resume pick adopt cursor copilot opencode engine rename cwd set-cwd done rm remove purge orphans note export import-file which-backend setup herdr-templates herdr-app doctor msg inbox thread mcp help turns archive unarchive loop notify service space eval"
 
   if [[ ${COMP_CWORD} -eq 1 ]]; then
     COMPREPLY=( $(compgen -W "${cmds}" -- "${cur}") )
@@ -235,6 +235,9 @@ _af() {
       ;;
     dashboard)
       COMPREPLY=( $(compgen -W "--serve --port --host --snapshot --json --capture-completions --space" -- "${cur}") )
+      ;;
+    making-of)
+      COMPREPLY=( $(compgen -W "--out --data --serve --port --host --build-url --build-label --seed --repo --no-diffs --json --space" -- "${cur}") )
       ;;
     memory)
       if [[ ${COMP_CWORD} -eq 2 ]]; then
