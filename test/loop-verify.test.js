@@ -177,3 +177,69 @@ describe('dashboard checker', () => {
     assert.equal(r.ok, false);
   });
 });
+describe('verify checkpoint key covers uncommitted work', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { execFileSync } = require('child_process');
+
+  function tempRepo() {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aflt-verify-key-'));
+    const git = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: 'pipe' });
+    git('init', '-q');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 'T');
+    fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'init');
+    const sha = String(git('rev-parse', 'HEAD')).trim();
+    return { dir, sha };
+  }
+
+  it('clean tree keys by HEAD; edits and untracked files change the key', () => {
+    const { dir, sha } = tempRepo();
+    try {
+      assert.equal(loopVerify.verifyCheckpointKey(dir, process.env), sha);
+      fs.writeFileSync(path.join(dir, 'a.txt'), 'two\n');
+      const k1 = loopVerify.verifyCheckpointKey(dir, process.env);
+      assert.match(k1, new RegExp(`^${sha}\\+dirty-[0-9a-f]{16}$`));
+      fs.writeFileSync(path.join(dir, 'new.txt'), 'x\n');
+      const k2 = loopVerify.verifyCheckpointKey(dir, process.env);
+      assert.notEqual(k2, k1);
+      fs.writeFileSync(path.join(dir, 'new.txt'), 'y\n');
+      assert.notEqual(loopVerify.verifyCheckpointKey(dir, process.env), k2);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not reuse a green HEAD checkpoint after uncommitted edits', async () => {
+    const { dir, sha } = tempRepo();
+    try {
+      fs.writeFileSync(path.join(dir, 'a.txt'), 'worker edit\n');
+      const state = {
+        verifyCheckpoints: { [sha]: { tiers: { tier1: { ok: true, summary: 'cached green' } } } },
+      };
+      const phaseState = { verification: [] };
+      let ran = false;
+      const r = await loopVerify.runAfterEvalVerify({
+        state,
+        definition: { name: 'x', cwd: dir, verify: { tier1: { command: ['npm', 'test'] } } },
+        phase: {},
+        phaseState,
+        recordVerification: (e) => commitGate.recordVerification(phaseState, e),
+        saveState: () => {},
+        env: process.env,
+        runCommand: async () => {
+          ran = true;
+          return { code: 0, stdout: '', stderr: '' };
+        },
+      });
+      assert.equal(r.ok, true);
+      assert.equal(ran, true);
+      assert.match(r.sha, /\+dirty-/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
