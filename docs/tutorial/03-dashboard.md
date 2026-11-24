@@ -38,7 +38,7 @@ The third tab, **Loops**, lists `aflt loop` runs in this space: status, engine/m
 
 ![Loops view of a completed hello-aflt-scratch run](../images/dashboard-loops.png)
 
-Known display quirk: the **Recent** list in the side panel shows times in UTC (for example `2026-11-24 19:51:06`), while History rows and tooltips use local time.
+Times are shown in your browser's local time zone with a short zone label (for example `2026-11-24 14:51:06 EST`): the **Recent** list, session and project details, timeline tooltips, the Loops detail (**Started** / **Updated**) and the making-of page. JSON APIs keep ISO UTC. The static `--snapshot` SVG stamp is rendered on the server and stays in ET.
 
 This is **not** `aflt memory dashboard`, which only regenerates the memory-repo root `DASHBOARD.md`.
 

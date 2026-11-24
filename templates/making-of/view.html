@@ -85,7 +85,8 @@ const fmt=n=>n==null?'–':Number(n).toLocaleString('en-US');
 const k=n=>n==null?'–':n>=1e6?(n/1e6).toFixed(2)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':String(n);
 const cr=n=>n==null?'–':Number(n).toFixed(n<10?2:1);
 const usd=n=>n==null?'–':'$'+Number(n).toFixed(n<1?3:2);
-const ET=t=>t?new Date(t).toLocaleString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',second:'2-digit'})+' ET':'';
+// Viewer-local time with a short zone label (e.g. "Nov 24, 2:37:01 PM EST"); never a fixed zone.
+const LT=t=>{if(!t)return '';const d=new Date(t);return isNaN(d)?String(t):d.toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit',second:'2-digit',timeZoneName:'short'});};
 const dur=ms=>ms==null||isNaN(ms)?'–':ms<60000?(ms/1000).toFixed(1)+'s':(ms/60000).toFixed(1)+' min';
 const COLORS=['#7cc4ff','#7ee2a8','#f5c26b','#c39bff','#ff9f7b','#6fe0e0','#ffd36b','#a8b4ff','#ff8fc8','#b4e07e','#e0b46f'];
 const params=new URLSearchParams(location.search);
@@ -108,7 +109,7 @@ function init(){
   renderCalls();renderCommits();renderArtifacts();
   if(params.get('expand'))document.querySelectorAll('details.call').forEach(d=>{d.open=true;fillBody(d)});
   $('#gaps').innerHTML=D.gaps.map(g=>`<li>${esc(g)}</li>`).join('');
-  $('#gen').textContent=`Generated ${ET(D.generatedAt)} by ${D.generator||'aflt making-of'} from ${D.fleetDir||''}`;
+  $('#gen').textContent=`Generated ${LT(D.generatedAt)} by ${D.generator||'aflt making-of'} from ${D.fleetDir||''}`;
   if(location.hash)setTimeout(()=>{const id=location.hash.slice(1);if(id.startsWith('call-'))openCall(+id.slice(5));else{const el=document.getElementById(id);if(el){if(el.tagName==='DETAILS')el.open=true;el.scrollIntoView()}}},0);
 }
 function openCall(i){const el=document.getElementById('call-'+i);if(!el){$('#phSel').value='';$('#q').value='';$('#toolSel').value='';$('#onlyText').checked=false;$('#onlyProduced').checked=false;renderCalls();}const d=document.getElementById('call-'+i);if(d){d.open=true;fillBody(d);d.scrollIntoView()}}
@@ -136,7 +137,7 @@ function phaseRow(p,i){
   const status=p.status?`<span class="pill ${p.status==='failed'?'bad':p.status==='passed'?'good':''}">${esc(p.status)}</span>`:'';
   const tokIn=t.tokensIn||A.totalInput,tokOut=t.tokensOut||A.outputTokens;
   const est=!t.tokensIn&&A.accuracy&&A.accuracy!=='reported'?` <span class="pill est" title="some of these tokens are estimated">${esc(A.accuracy)}</span>`:'';
-  return `<tr class="click" data-ph="${esc(p.runDir)}"><td><span style="color:${COLORS[i%COLORS.length]}">■</span> ${esc(p.phase)} ${status}${p.type==='script'?' <span class="pill">script · no AI</span>':''}</td><td>${ET(p.start)}</td><td>${esc(p.recording||'')}</td><td>${fmt(t.calls)}</td><td>${fmt(t.toolCalls)}</td><td>${k(tokIn)}${est}</td><td>${k(tokOut)}</td><td>${cr(t.credits)}</td><td>${usd(t.usd)}</td><td>${dur(t.durationMs)}</td><td>${(p.commits||[]).map(commitLink).join(' ')||'–'}</td><td>${(p.files||[]).length} files${cc?` · +${cc.linesAdded}/−${cc.linesRemoved}`:''}</td></tr>`;
+  return `<tr class="click" data-ph="${esc(p.runDir)}"><td><span style="color:${COLORS[i%COLORS.length]}">■</span> ${esc(p.phase)} ${status}${p.type==='script'?' <span class="pill">script · no AI</span>':''}</td><td>${LT(p.start)}</td><td>${esc(p.recording||'')}</td><td>${fmt(t.calls)}</td><td>${fmt(t.toolCalls)}</td><td>${k(tokIn)}${est}</td><td>${k(tokOut)}</td><td>${cr(t.credits)}</td><td>${usd(t.usd)}</td><td>${dur(t.durationMs)}</td><td>${(p.commits||[]).map(commitLink).join(' ')||'–'}</td><td>${(p.files||[]).length} files${cc?` · +${cc.linesAdded}/−${cc.linesRemoved}`:''}</td></tr>`;
 }
 function renderPhases(){
   const cop=D.pricing.basis==='recorded';
@@ -164,7 +165,7 @@ function renderCalls(){
     const snip=c.output.text||c.toolCalls.map(t=>t.intent||(t.args&&(t.args.description||t.args.command||t.args.path))||t.name).join(' · ')||c.output.reasoning||'';
     const nums=c.tokens?`${k(c.tokens.in)} in · ${k(c.tokens.out)} out · <b>${cr(c.cost&&c.cost.credits)} cr</b> ${usd(c.cost&&c.cost.usd)}`:`<span title="${esc(c.costNote||'')}">no per-call usage</span>`;
     const prod=(c.produced||[]).length?`<span class="pill good" title="${esc(c.produced.map(p=>p.path).join(', '))}">${c.produced.length} file${c.produced.length>1?'s':''}</span>`:'';
-    h+=`<details class="call" id="call-${c.index}" data-i="${c.index-1}"><summary><span class="idx">#${c.index}</span><span class="when">${c.timestamp?ET(c.timestamp).replace(/^\w+ \d+, /,''):esc(c.phase)}</span><span class="snip">${prod}${c.toolCalls.map(t=>`<span class="pill tool">${esc(t.name)}</span>`).join('')}${esc(String(snip).slice(0,220))}</span><span class="nums">${nums}</span></summary></details>`;
+    h+=`<details class="call" id="call-${c.index}" data-i="${c.index-1}"><summary><span class="idx">#${c.index}</span><span class="when">${c.timestamp?LT(c.timestamp).replace(/^\w+ \d+, /,''):esc(c.phase)}</span><span class="snip">${prod}${c.toolCalls.map(t=>`<span class="pill tool">${esc(t.name)}</span>`).join('')}${esc(String(snip).slice(0,220))}</span><span class="nums">${nums}</span></summary></details>`;
   }
   $('#calls').innerHTML=h||'<p class="small">No calls match.</p>';
   $('#count').textContent=`${vs.length} of ${D.calls.length} shown`;
@@ -198,14 +199,14 @@ function fillBody(d){
   if(d.querySelector('.body'))return;
   const c=D.calls[+d.dataset.i],p=phaseOf(c);
   let h='<div class="body">';
-  h+=`<div class="small">${esc(c.engine)} · ${esc(c.model||'')} · ${c.timestamp?ET(c.timestamp):''}${c.latency?` · ${dur(c.latency.durationMs)} (first token ${dur(c.latency.ttftMs)})`:''}${c.finishReason?' · finish: '+esc(c.finishReason):''}${c.apiCallId?' · '+esc(String(c.apiCallId).slice(0,24))+'…':''}</div>`;
+  h+=`<div class="small">${esc(c.engine)} · ${esc(c.model||'')} · ${c.timestamp?LT(c.timestamp):''}${c.latency?` · ${dur(c.latency.durationMs)} (first token ${dur(c.latency.ttftMs)})`:''}${c.finishReason?' · finish: '+esc(c.finishReason):''}${c.apiCallId?' · '+esc(String(c.apiCallId).slice(0,24))+'…':''}</div>`;
   if((c.produced||[]).length)h+=`<div class="sec"><div class="h">Produced</div>${c.produced.map(x=>`<div class="small"><span class="mono">${esc(x.path)}</span> ${x.kind?'('+esc(x.kind)+')':''} → ${x.commit?'commit '+commitLink(x.commit):'<i>not in any commit</i>'}</div>`).join('')}</div>`;
   h+='<div class="sec"><div class="h">Input: what was new in this request</div>';
   if(!c.input.length)h+='<div class="small">Nothing new. This request continued straight from the previous reply.</div>';
   for(const i of c.input){
     if(i.type==='system'){const s=sysPrompt(p,i.ref);h+=fold(`System prompt (${fmt(s.length)} chars${p.context&&p.context.toolDefinitions&&p.context.toolDefinitions.tokens?`, plus ~${fmt(p.context.toolDefinitions.tokens)} tokens of tool definitions that weren't recorded`:''})`,pre(s));}
     else if(i.type==='instruction')h+=fold(`Runtime instruction: ${esc(i.name||'')}`,pre(i.text));
-    else if(i.type==='user')h+=item('User prompt (sent by aflt)',pre(i.text),i.at?ET(i.at):'');
+    else if(i.type==='user')h+=item('User prompt (sent by aflt)',pre(i.text),i.at?LT(i.at):'');
     else if(i.type==='toolResult'){const m=toolMap.get(i.toolCallId);h+=m?fold(`Tool result from #${m.c.index}: ${esc(m.t.name)} ${esc(m.t.intent||'')} (${fmt(String(m.t.result||'').length)} chars)`,pre(m.t.result||'(empty)')):item('Tool result',pre('(unmatched)'));}
     else h+=item(esc(i.type),pre(i.text||''));
   }
@@ -249,9 +250,9 @@ function renderCommits(){
   if(!C.length){$('#commits').innerHTML='<p class="small">No commits.</p>';}
   else $('#commits').innerHTML=`<table><thead><tr><th class="l">Commit</th><th class="l">Phase</th><th class="l">Message</th><th>Files</th><th>+/−</th><th class="l">Calls that produced it</th></tr></thead><tbody>${C.map(c=>{
     const add=c.files.reduce((a,f)=>a+(f.added||0),0),rem=c.files.reduce((a,f)=>a+(f.removed||0),0);
-    return `<tr><td class="l"><a class="mono" href="#commit-${esc(c.short)}">${esc(c.short)}</a>${c.url?` <a href="${esc(c.url)}" class="small">GitHub</a>`:''}<div class="small">${ET(c.at)}</div></td><td class="l"><span class="pill ph" style="color:${phaseColor.get(c.phase)||'var(--dim)'}">${esc(c.phase||'—')}</span><div class="small">${esc(c.attribution||'')}</div></td><td class="l">${esc(c.subject)}</td><td>${c.files.length}</td><td class="mono">+${add} −${rem}</td><td class="l">${c.calls.slice(0,30).map(callLink).join(' ')}${c.calls.length>30?` +${c.calls.length-30} more`:''}</td></tr>`}).join('')}</tbody></table>`+
+    return `<tr><td class="l"><a class="mono" href="#commit-${esc(c.short)}">${esc(c.short)}</a>${c.url?` <a href="${esc(c.url)}" class="small">GitHub</a>`:''}<div class="small">${LT(c.at)}</div></td><td class="l"><span class="pill ph" style="color:${phaseColor.get(c.phase)||'var(--dim)'}">${esc(c.phase||'—')}</span><div class="small">${esc(c.attribution||'')}</div></td><td class="l">${esc(c.subject)}</td><td>${c.files.length}</td><td class="mono">+${add} −${rem}</td><td class="l">${c.calls.slice(0,30).map(callLink).join(' ')}${c.calls.length>30?` +${c.calls.length-30} more`:''}</td></tr>`}).join('')}</tbody></table>`+
     C.map(c=>fold(`<span class="mono">${esc(c.short)}</span> ${esc(c.subject)} — ${c.files.length} files`,
-      `<div style="padding:6px 10px" class="small">${esc(c.sha)} · ${esc(c.author)} · ${ET(c.at)}${diffHref(c.sha)?` · <a href="${esc(diffHref(c.sha))}" target="_blank">raw diff</a>`:''}${c.url?` · <a href="${esc(c.url)}">view on GitHub</a>`:''}</div>`+
+      `<div style="padding:6px 10px" class="small">${esc(c.sha)} · ${esc(c.author)} · ${LT(c.at)}${diffHref(c.sha)?` · <a href="${esc(diffHref(c.sha))}" target="_blank">raw diff</a>`:''}${c.url?` · <a href="${esc(c.url)}">view on GitHub</a>`:''}</div>`+
       `<table><tbody>${c.files.map(f=>`<tr><td class="l mono">${esc(f.status)} ${f.status==='D'?esc(f.path):fileLink(f.path)}${f.from?` (from ${esc(f.from)})`:''}</td><td class="mono">+${fmt(f.added)} −${fmt(f.removed)}</td></tr>`).join('')}</tbody></table>`+
       (c.diff!=null?diff(c.diff)+(c.diffTruncated?`<div class="small" style="padding:6px 10px">Diff truncated (${fmt(c.diffBytes)} bytes total).</div>`:''):'<div class="small" style="padding:6px 10px">Diff not embedded.</div>'),false,'commit-'+c.short)).join('');
   $('#prs').innerHTML=(D.prs||[]).length?D.prs.map(p=>`<div><a href="${esc(p.url)}">${esc(p.title||p.url)}</a></div>`).join(''):`None. ${esc(D.prsNote||'')}`;
@@ -270,7 +271,7 @@ function renderArtifacts(){
   $('#files').innerHTML=D.phases.filter(p=>(p.files||[]).length).map(p=>fold(`<b>${esc(p.phase)}</b> · ${p.files.length} files${(p.commits||[]).length?' · commit '+p.commits.join(' '):''}`,
     `<table><thead><tr><th class="l">File</th><th>Status</th><th>+/−</th><th class="l">Commits</th><th class="l">Calls</th></tr></thead><tbody>${p.files.map(f=>`<tr><td class="l">${fileLink(f.path)}</td><td>${esc(f.status)}${f.uncommitted&&!f.commits.length?' <span class="pill est">not committed</span>':''}</td><td class="mono">${f.added==null?'–':'+'+f.added+' −'+f.removed}</td><td class="l">${f.commits.map(commitLink).join(' ')||'–'}</td><td class="l">${f.calls.slice(0,20).map(callLink).join(' ')}${f.calls.length>20?' …':''}</td></tr>`).join('')}</tbody></table>`,true)).join('')||'<p class="small">No file changes recorded.</p>';
   let e='';
-  for(const p of D.phases){if(!p.lastEval)continue;const L=p.lastEval;e+=fold(`<b>${esc(p.phase)}</b> eval · exit ${esc(L.code)}${L.timedOut?' (timed out)':''} · ${ET(L.at)}`,(L.stdout?item('stdout',pre(L.stdout)):'')+(L.stderr?item('stderr',pre(L.stderr)):'')+(p.runLog?`<div class="small" style="padding:6px 10px">Agent run log: <span class="mono">${esc(p.runLog)}</span></div>`:''));}
+  for(const p of D.phases){if(!p.lastEval)continue;const L=p.lastEval;e+=fold(`<b>${esc(p.phase)}</b> eval · exit ${esc(L.code)}${L.timedOut?' (timed out)':''} · ${LT(L.at)}`,(L.stdout?item('stdout',pre(L.stdout)):'')+(L.stderr?item('stderr',pre(L.stderr)):'')+(p.runLog?`<div class="small" style="padding:6px 10px">Agent run log: <span class="mono">${esc(p.runLog)}</span></div>`:''));}
   for(const a of A.evalReports||[])e+=artifactFold(a,'report: '+a.label);
   $('#evals').innerHTML=e||'<p class="small">No eval output recorded.</p>';
 }

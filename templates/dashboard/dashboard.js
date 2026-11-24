@@ -189,11 +189,48 @@ function isHerdrFocusLocal(loc) {
   return host === '127.0.0.1' || host === 'localhost' || host === '::1';
 }
 
+/**
+ * Format an ISO timestamp (or epoch ms) in the viewer's local time zone with a
+ * short zone label: "2026-11-24 14:37:01 EST". Never shows raw UTC.
+ * opts.timeZone (tests) overrides the browser zone; opts.seconds=false drops
+ * seconds; opts.zone=false drops the label. Unparseable input is returned as-is.
+ */
+function formatLocalDateTime(value, opts) {
+  const o = opts || {};
+  if (value == null || value === '') return '';
+  const t = typeof value === 'number' ? value : Date.parse(String(value));
+  if (!Number.isFinite(t)) return String(value);
+  const d = new Date(t);
+  const pad = function (n) { return String(n).padStart(2, '0'); };
+  let y, mo, da, h, mi, s, zone = '';
+  try {
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: o.timeZone || undefined,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hourCycle: 'h23', timeZoneName: 'short',
+    });
+    const parts = {};
+    fmt.formatToParts(d).forEach(function (p) { parts[p.type] = p.value; });
+    y = parts.year; mo = parts.month; da = parts.day;
+    h = parts.hour === '24' ? '00' : parts.hour; mi = parts.minute; s = parts.second;
+    zone = parts.timeZoneName || '';
+  } catch (_) {
+    y = d.getFullYear(); mo = pad(d.getMonth() + 1); da = pad(d.getDate());
+    h = pad(d.getHours()); mi = pad(d.getMinutes()); s = pad(d.getSeconds());
+    const off = -d.getTimezoneOffset();
+    zone = 'UTC' + (off >= 0 ? '+' : '-') + pad(Math.floor(Math.abs(off) / 60)) + ':' + pad(Math.abs(off) % 60);
+  }
+  let out = y + '-' + mo + '-' + da + ' ' + h + ':' + mi + (o.seconds === false ? '' : ':' + s);
+  if (o.zone !== false && zone) out += ' ' + zone;
+  return out;
+}
+
 function renderTaskCompletion(completion) {
   if (!completion) return '';
   return '<section class="task-completion"><div class="label">Latest Task Complete</div>' +
     '<p class="completion-meta">' + escapeHtml(completion.sessionTitle) + ' · ' +
-    escapeHtml(completion.at) + '</p><div class="completion-body">' +
+    escapeHtml(formatLocalDateTime(completion.at)) + '</p><div class="completion-body">' +
     renderMarkdown(completion.summary, { documentLinks: false }) + '</div>' +
     (completion.truncated ? '<p class="completion-meta">Preview truncated; the full message is saved in the project note when capture is enabled.</p>' : '') +
     (completion.saveError ? '<p class="memory-error">Could not save completion: ' + escapeHtml(completion.saveError) + '</p>' : '') +
@@ -1039,6 +1076,8 @@ function renderLoopDetailHtml(detail) {
     { k: 'Phase', v: detail.phaseId || '—' },
     { k: 'Attempt', v: detail.attempt != null ? String(detail.attempt) : '—' },
     { k: 'Step', v: detail.step || '—' },
+    { k: 'Started', v: detail.startedAt ? formatLocalDateTime(detail.startedAt) : '—' },
+    { k: 'Updated', v: detail.updatedAt ? formatLocalDateTime(detail.updatedAt) : '—' },
     { k: 'Elapsed', v: formatLoopElapsed(detail.elapsedMs) },
     { k: 'Budget', v: formatLoopBudget(detail.budget) },
     { k: 'Tokens', v: formatLoopUsage(detail.usage) },
@@ -1120,7 +1159,7 @@ function emptyLoopPhaseForm(index) {
 if (typeof module !== 'undefined' && module.exports && typeof document === 'undefined') {
   module.exports = {
     mergeSimPreserve, renderProjectMemory, renderGraphHint, renderMarkdown, resolveDocumentLink,
-    renderTaskCompletion, activityLabel, rowFilterState, stateLabel, isHerdrFocusLocal, isDormantProject,
+    renderTaskCompletion, formatLocalDateTime, activityLabel, rowFilterState, stateLabel, isHerdrFocusLocal, isDormantProject,
     STATE_LABELS, FILTER_PRIORITY,
     HIDE_DORMANT_STORAGE_KEY, SHOW_ARCHIVED_STORAGE_KEY, DEFAULT_DORMANT_AFTER_MS,
     GRAPH_SPREAD_STORAGE_KEY, TIMELINE_PRESET_STORAGE_KEY, TIMELINE_VIEW_STORAGE_KEY,
@@ -1891,7 +1930,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       }
       applySpaceBrand();
       if (snapshotData) {
-        metaEl.textContent = spacePrefix() + 'snapshot · ' + state.generatedAt;
+        metaEl.textContent = spacePrefix() + 'snapshot · ' + formatLocalDateTime(state.generatedAt);
         return;
       }
       if (state.error) {
@@ -1964,9 +2003,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       const events = s.events || [];
       eventsEl.innerHTML = events
         .map(function (ev) {
-          const when = String(ev.at || '')
-            .replace('T', ' ')
-            .slice(0, 19);
+          const when = formatLocalDateTime(ev.at);
           return (
             '<li><span class="when">' +
             esc(when) +
@@ -2094,7 +2131,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
           row('sessions', item.sessionCount) +
           row('archived', item.archivedCount || 0) +
           row('Working', item.workingCount != null ? item.workingCount : item.runningCount) +
-          row('last activity', item.lastActivity || '—') +
+          row('last activity', item.lastActivity ? formatLocalDateTime(item.lastActivity) : '—') +
           '</dl>' +
           projectActionButtonsHtml(item) +
           renderTaskCompletion(item.completion);
@@ -2118,7 +2155,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         row('worker', item.workerStatus || '—') +
         row('cwd', item.cwd || '—') +
         row('model', item.model || '—') +
-        row('last used', item.lastUsed || '—') +
+        row('last used', item.lastUsed ? formatLocalDateTime(item.lastUsed) : '—') +
         row('last exit', item.lastExit == null ? '—' : item.lastExit) +
         row('error', item.lastError || '—') +
         row(
@@ -2842,7 +2879,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
             '" data-marker-id="' +
             esc(mid) +
             '" aria-label="' +
-            esc(stateLabel(m.state) + ' · ' + (m.at || '')) +
+            esc(stateLabel(m.state) + ' · ' + formatLocalDateTime(m.at)) +
             '"></button>';
         });
       }
@@ -3159,7 +3196,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
             '<p class="group-turn"><strong>' +
             esc(stateLabel(m.state)) +
             '</strong> · ' +
-            esc(m.at || '') +
+            esc(formatLocalDateTime(m.at)) +
             '<br/><span class="prompt">' +
             esc((m.prompt || '(no prompt)').slice(0, 120)) +
             '</span></p>'
@@ -3180,7 +3217,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         '<p><strong>' +
         esc(stateLabel(payload.state)) +
         '</strong> · ' +
-        esc(payload.at || '') +
+        esc(formatLocalDateTime(payload.at)) +
         '</p>' +
         (usageLine ? '<p class="usage-line">' + esc(usageLine) + '</p>' : '') +
         '<div class="label">Prompt</div><p>' +
@@ -3582,7 +3619,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
           String(ev.reply) !== String(ev.replyPreview));
         const expanded = expandedReplies.has(key);
         const body = expanded ? ev.reply : (ev.replyPreview != null ? ev.replyPreview : ev.reply);
-        const when = String(ev.at || '').replace('T', ' ').slice(0, 19);
+        const when = formatLocalDateTime(ev.at);
         const isMsg = ev.type === 'message';
         const statusState = isMsg
           ? (ev.status === 'completed' ? 'completed' : ev.status === 'read' ? 'idle' : 'waiting')
