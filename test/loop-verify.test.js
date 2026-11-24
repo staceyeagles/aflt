@@ -310,3 +310,37 @@ describe('loop detail shape + failed route summary', () => {
     assert.equal(loopVerify.failedRouteSummary({ ok: true, routes: [] }), '');
   });
 });
+
+describe('candidate aflt + nested loop path resolution', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const repoRoot = path.resolve(__dirname, '..');
+
+  it('afltRootFor smokes the candidate checkout when the loop cwd is aflt', () => {
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), 'aflt-not-aflt-'));
+    try {
+      const ctx = { cwd: repoRoot, packageRoot: '/opt/stable-aflt' };
+      assert.equal(loopVerify.afltRootFor({}, ctx), repoRoot);
+      assert.equal(loopVerify.afltRootFor({ aflt: 'runner' }, ctx), '/opt/stable-aflt');
+      assert.equal(loopVerify.afltRootFor({}, { cwd: other, packageRoot: '/opt/stable-aflt' }), '/opt/stable-aflt');
+      assert.equal(loopVerify.afltRootFor({ aflt: 'candidate' }, { cwd: other, packageRoot: '/x' }), other);
+    } finally {
+      fs.rmSync(other, { recursive: true, force: true });
+    }
+  });
+
+  it('resolveNestedLoopPath tries the loop cwd before the definition dir', () => {
+    const defDir = path.join(repoRoot, 'examples', 'loops');
+    const rel = 'examples/loops/hello-eval.json';
+    assert.equal(
+      loopVerify.resolveNestedLoopPath(rel, { cwd: repoRoot, definitionDir: defDir }),
+      path.join(repoRoot, rel)
+    );
+    assert.equal(
+      loopVerify.resolveNestedLoopPath('hello-eval.json', { cwd: '/nonexistent-cwd', definitionDir: defDir }),
+      path.join(defDir, 'hello-eval.json')
+    );
+    assert.equal(loopVerify.resolveNestedLoopPath('/abs/x.json', { cwd: repoRoot }), '/abs/x.json');
+  });
+});
