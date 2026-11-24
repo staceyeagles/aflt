@@ -220,6 +220,7 @@ Each session stores identity (`id`, `title`, `chatId`, `cwd`, `branch`, `model`,
 | `aflt timeline` | Read-only project session tree (+ best-effort commits) |
 | `aflt projects` | Read-only project↔repo mappings + checkout validation |
 | `aflt dashboard` | Live local activity UI (`--serve`) or SVG/HTML snapshot (`--snapshot`); read-only; not `aflt memory dashboard` |
+| `aflt making-of` | Self-contained page for a loop run: every AI call, commit + diff, artifact, recorded cost (`--out`, `--serve`, `--build-url`); also `/making-of/<loop>` on the dashboard |
 | `aflt turns backfill` | Import interactive turns into `runs/<id>/turns.jsonl` (dry-run unless `--apply`) |
 | `aflt memory` | Opt-in project-memory git repo (`init` / `sync --commit --push` / `dashboard` / `config` / `doc` / `status` / `where`) |
 | `aflt run` / `aflt log` | Headless create-or-resume; print last capture |

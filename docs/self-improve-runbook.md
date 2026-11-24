@@ -79,7 +79,16 @@ Use `AFLT_SPACE=self-improve` on every command. The runner uses the worktree as 
 AFLT_SPACE=self-improve aflt dashboard --serve --port 8789
 ```
 
-Open `http://127.0.0.1:8789/` (Loops view). Avoid 8787 if another dashboard already uses it.
+Open `http://127.0.0.1:8789/` (Loops view). Avoid 8787 if another dashboard already uses it. **Making of** on the loop (or `http://127.0.0.1:8789/making-of/self-improve`) shows every AI call, commit, diff and artifact.
+
+### Review a run (making of)
+
+```bash
+AFLT_SPACE=self-improve aflt making-of self-improve            # self-contained HTML in the loop folder
+AFLT_SPACE=self-improve aflt making-of self-improve --json     # calls, credits/$, commits summary
+```
+
+Each phase archives its engine record under `runs/<session>/engine/` and writes `runs/<session>/calls.jsonl`, so the review still works after Copilot/Cursor prune their own logs. Copilot costs are as Copilot recorded them; Cursor shows tokens only (no cost is estimated).
 
 ### Unattended (scheduler)
 

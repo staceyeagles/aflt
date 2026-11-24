@@ -74,7 +74,13 @@ aflt --space hello-demo loop run /path/to/aflt/examples/loops/hello-aflt/hello-a
 
 ## M0 seed
 
-`m0-seed/` is a portable zero-dependency scaffold (default **PORT 8792**). Phase `m0` runs `seed-m0.js`, which copies that tree into an empty cwd and runs `test/smoke.test.js`. If `package.json` already exists, the seed leaves the tree alone and only re-checks smoke.
+`m0-seed/` is a portable zero-dependency scaffold (default **PORT 8792**). Phase `m0` is a **`"type": "script"`** phase: aflt runs `seed-m0.js` directly — **no AI call, no agent session, no credits** — which copies that tree into an empty cwd and runs `test/smoke.test.js`. If `package.json` already exists, the seed leaves the tree alone and only re-checks smoke. A failing seed fails the loop immediately (script phases have no fix attempts).
+
+`prompts/M0.txt` is kept for anyone who wants an agent to build M0 instead: change `m0` to `"type": "run"` with `"promptFile": "prompts/M0.txt"`. (Before this change, Copilot spent ~5 calls / ~5 credits in m0 looking for the seed script outside the repo before the eval seeded it anyway.)
+
+## Making of
+
+`aflt making-of hello-aflt` (same `AFLT_SPACE`) writes one self-contained page with every AI call, every commit with its diff, the seed files above, files per phase, eval outputs and a link to the build (`--build-url`). See [docs/cli-quickstart-loops.md](../../../docs/cli-quickstart-loops.md#7-see-exactly-how-it-was-built-making-of).
 
 ## Improve gate
 

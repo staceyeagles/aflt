@@ -98,7 +98,33 @@ Then `aflt loop status hello-aflt --json`, `aflt loop pause hello-aflt`, `aflt l
 AFLT_SPACE=td-copilot aflt dashboard --serve --port 8787
 ```
 
-Open `http://127.0.0.1:8787/` → Loops tab.
+Open `http://127.0.0.1:8787/` → Loops tab. Each loop has a **Making of** button (`http://127.0.0.1:8787/making-of/hello-aflt`).
+
+## 7. See exactly how it was built (making of)
+
+After (or during) a run, one command writes a self-contained page with every AI call in order — the prompt, the reply, reasoning, every tool call with its result, tokens, and Copilot AI credits / dollars as Copilot recorded them — plus every commit in the game repo with its phase, files and diff, the M0 seed files, files changed per phase, eval outputs and the final build:
+
+```bash
+AFLT_SPACE=td-copilot aflt making-of hello-aflt
+# → ~/.agentfleet/spaces/td-copilot/loops/hello-aflt/making-of.html (open it in a browser)
+
+AFLT_SPACE=td-copilot aflt making-of hello-aflt --out ~/Desktop/hello-aflt-making-of.html \
+  --build-url http://127.0.0.1:8792/          # link the playable build
+AFLT_SPACE=td-copilot aflt making-of hello-aflt --serve --port 8797   # live page + raw diffs
+```
+
+What aflt records for this (per phase session, `$AGENTFLEET_HOME/runs/<session>/`):
+
+| File | Contents |
+|------|----------|
+| `engine/copilot-<chatId>.events.jsonl` | Copy of Copilot's own session log (messages, tool calls + results, per-call usage and AI credits) |
+| `engine/cursor-<chatId>-<time>.stream.jsonl` | Every Cursor `--output-format stream-json` event (loop phases now run Cursor in stream-json) |
+| `engine/cursor-<chatId>.transcript.jsonl` | Copy of Cursor's agent transcript |
+| `calls.jsonl` | One normalized line per model call: `phase, index, timestamp, engine, model, input, output, toolCalls, tokens, cost, costBasis` |
+| `session-context.json` | System prompt(s), runtime instructions, tool-definition size — once per session |
+| `usage-summary.json` | Token rollup; a headless run is counted once (Copilot `credits` / `usd` + `costBasis` when reported) |
+
+Costs are never estimated: Copilot credits come from its usage records (1e9 nano-AIU = 1 credit = $0.01); Cursor reports tokens per run and no cost, so its page shows tokens only.
 
 ---
 
