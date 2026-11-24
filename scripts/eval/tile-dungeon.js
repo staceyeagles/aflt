@@ -204,6 +204,8 @@ async function runOneTrial(n, plan, opts, deps) {
       AGENTFLEET_TEST_HERMETIC: '1',
     };
     delete runEnv.AGENTFLEET_HOME;
+    // Nested eval loops must not page the outer loop's webhook (aflt-loop-alerts).
+    require('../../lib/notify').stripNotifyEnv(runEnv);
     if (plan.engine) runEnv.AGENTFLEET_ENGINE = plan.engine;
     if (plan.model) runEnv.COPILOT_MODEL = plan.model;
 
