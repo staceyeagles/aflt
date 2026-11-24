@@ -8227,12 +8227,13 @@ async function cmdEval(argv) {
   const sub = args[0];
   const asJson = Boolean(flags.json);
   const usage =
-    'usage: aflt eval measure|score|report|gate|plateau [--json] …\n' +
+    'usage: aflt eval measure|score|report|gate|plateau|tile-dungeon [--json] …\n' +
     '  aflt eval measure [--json] [--out DIR]\n' +
     '  aflt eval score [results-file] [--json] [--history PATH] [--qualitative] [--results-dir DIR] [--write-baseline PATH] [--max-rounds N]\n' +
     '  aflt eval report [--json] [--history PATH] [--limit N]\n' +
     '  aflt eval gate [--json] [--base REF] [--paths a,b] [--improve] [--baseline PATH] [--results PATH] [--results-dir DIR] [--history PATH] [--score N]\n' +
-    '  aflt eval plateau [--json] [--baseline PATH] [--history PATH] [--max-rounds N] [--rounds N]';
+    '  aflt eval plateau [--json] [--baseline PATH] [--history PATH] [--max-rounds N] [--rounds N]\n' +
+    '  aflt eval tile-dungeon [--json] [--dry-run] [--trials N] [--candidate DIR] [--base DIR] [--engine NAME] [--model NAME] [--timeout-sec N]';
   if (!sub || sub === 'help' || sub === '-h' || sub === '--help') {
     fail(usage);
   }
@@ -8591,6 +8592,42 @@ async function cmdEval(argv) {
     // Exit 0 always when the check ran; callers inspect stop=true (or use
     // passRegex). Non-zero only on hard errors above.
     process.exitCode = 0;
+    return;
+  }
+
+  if (sub === 'tile-dungeon') {
+    const tileDungeon = require('../scripts/eval/tile-dungeon');
+    const tdArgs = (argv || []).slice(1);
+    const flags = tileDungeon.parseArgv(tdArgs);
+    let result;
+    try {
+      result = await tileDungeon.runTileDungeon({
+        argv: tdArgs,
+        flags,
+        json: asJson || flags.json,
+        dryRun: Boolean(flags.dryRun),
+        trials: flags.trials,
+        candidate: flags.candidate,
+        base: flags.base,
+        engine: flags.engine,
+        model: flags.model,
+        timeoutSec: flags.timeoutSec,
+      });
+    } catch (err) {
+      fail(err.message || String(err), { json: asJson });
+    }
+    if (asJson || flags.json) {
+      emitJson({ ok: Boolean(result.ok), ...result });
+    } else if (result.dryRun) {
+      process.stdout.write(
+        `eval tile-dungeon dry-run: ${result.plan.trials} trial(s) sha=${result.plan.sha}\n`
+      );
+    } else {
+      process.stdout.write(
+        `eval tile-dungeon: ${result.ok ? 'ok' : 'FAILED'} mean=${result.mean} median=${result.median} stdDev=${result.stdDev}\n`
+      );
+    }
+    process.exitCode = result.ok ? 0 : 1;
     return;
   }
 
