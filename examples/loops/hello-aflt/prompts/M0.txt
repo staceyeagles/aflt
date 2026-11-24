@@ -9,7 +9,7 @@ If you want to seed yourself first, run the same seed script with cwd = this rep
 
 M0 must remain zero-dependency Node ESM + HTML canvas:
 - package.json with "type": "module"
-- server.js binding 0.0.0.0 (default PORT 8792; do not bind 8790 or 8791)
+- server.js binding 127.0.0.1 (default PORT 8792; override with HOST; do not bind 8790 or 8791)
 - public/index.html with a canvas
 - src/main.js stub
 - test/smoke.test.js (node:test)

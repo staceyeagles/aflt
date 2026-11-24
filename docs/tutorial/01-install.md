@@ -11,7 +11,7 @@ For environment depth (Herdr, work laptop, tmux/WezTerm), use [docs/SETUP.md](..
 
 ## Requirements
 
-- **Node ≥ 18**
+- **Node ≥ 20.10** (`package.json` `engines`; `npm test` needs it)
 - Zero npm runtime dependencies beyond Node
 
 ## Install the CLI
@@ -19,15 +19,12 @@ For environment depth (Herdr, work laptop, tmux/WezTerm), use [docs/SETUP.md](..
 Keep **install**, **machine setup**, **project onboarding**, and **workflows** separate.
 
 ```bash
-# Primary (after the package is on the npm registry):
-npm install -g aflt
-
-# Fallback (before first publish, and anytime):
+# npm install -g aflt 404s — the name is not on the registry yet.
 npm install -g github:wwlib/aflt
 
 # Contributors / checkout:
-#   cd /path/to/aflt && npm install -g .
-#   # or: npm link
+#   cd /path/to/aflt && npm link
+#   # or: npm install -g .
 #   # or: ln -sfn "$(pwd)/bin/af.js" ~/.local/bin/{aflt,af,agentfleet}
 ```
 

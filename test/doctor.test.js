@@ -65,4 +65,56 @@ process.exit(0);
     assert.ok(hcLs && hcLs.ok, JSON.stringify(body.checks));
     assert.deepEqual(fs.readdirSync(home), before);
   });
+
+  it('does not treat an unrelated agent binary as Cursor', () => {
+    const only = fs.mkdtempSync(path.join(os.tmpdir(), 'af-fake-agent-'));
+    const cursorOnly = fs.mkdtempSync(path.join(os.tmpdir(), 'af-cursor-agent-'));
+    try {
+      fs.writeFileSync(
+        path.join(only, 'agent'),
+        '#!/bin/sh\necho "acme vendor cli 9.9.9"\nexit 0\n',
+        { mode: 0o755 }
+      );
+      const rejected = spawnSync(process.execPath, [afJs, 'doctor', '--json'], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          AGENTFLEET_HOME: home,
+          AGENTFLEET_HC_BIN: stubHc,
+          PATH: `${only}${path.delimiter}${process.env.PATH || ''}`,
+          AGENTFLEET_CURSOR_BIN: '',
+        },
+      });
+      assert.ok(rejected.status === 0 || rejected.status === 1, rejected.stdout + rejected.stderr);
+      const rejectedBody = JSON.parse(rejected.stdout);
+      const rejectedBin = rejectedBody.checks.find((c) => c.name === 'cursor_bin');
+      assert.equal(rejectedBin.ok, false);
+      assert.match(rejectedBin.detail, /not Cursor/);
+      assert.match(rejectedBin.detail, /agent/);
+      assert.doesNotMatch(rejectedBin.detail, /^acme/);
+
+      fs.writeFileSync(
+        path.join(cursorOnly, 'agent'),
+        '#!/bin/sh\necho "Cursor Agent CLI 2026.11.1"\nexit 0\n',
+        { mode: 0o755 }
+      );
+      const accepted = spawnSync(process.execPath, [afJs, 'doctor', '--json'], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          AGENTFLEET_HOME: home,
+          AGENTFLEET_HC_BIN: stubHc,
+          PATH: `${cursorOnly}${path.delimiter}${process.env.PATH || ''}`,
+          AGENTFLEET_CURSOR_BIN: '',
+        },
+      });
+      const acceptedBody = JSON.parse(accepted.stdout);
+      const acceptedBin = acceptedBody.checks.find((c) => c.name === 'cursor_bin');
+      assert.equal(acceptedBin.ok, true, JSON.stringify(acceptedBin));
+      assert.match(acceptedBin.detail, /agent$/);
+    } finally {
+      fs.rmSync(only, { recursive: true, force: true });
+      fs.rmSync(cursorOnly, { recursive: true, force: true });
+    }
+  });
 });

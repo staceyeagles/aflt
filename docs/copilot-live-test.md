@@ -4,7 +4,7 @@ Self-contained guide for a human or another assistant on a **work Mac with GitHu
 
 Flags and subcommands below match `aflt help` / `bin/af.js` USAGE. Do not invent flags. Prefer `aflt help` if anything looks stale.
 
-Related: [examples/loops/hello-aflt/README.md](../examples/loops/hello-aflt/README.md), [tutorial/09-loops.md](tutorial/09-loops.md), [tutorial/12-token-usage.md](tutorial/12-token-usage.md).
+Related: [examples/loops/hello-aflt/README.md](../examples/loops/hello-aflt/README.md), [tutorial/09-loops.md](tutorial/09-loops.md), [tutorial/12-token-usage.md](tutorial/12-token-usage.md). Recorded run (2026-11-23): [reports/2026-11-23-copilot-live-test-report.md](reports/2026-11-23-copilot-live-test-report.md).
 
 ---
 
@@ -13,7 +13,7 @@ Related: [examples/loops/hello-aflt/README.md](../examples/loops/hello-aflt/READ
 ### Node
 
 ```bash
-node -v   # need >= 18 (engines in package.json)
+node -v   # need >= 20.10 (engines in package.json; npm test needs it)
 ```
 
 ### GitHub Copilot CLI
@@ -35,17 +35,17 @@ Override binary with `AGENTFLEET_COPILOT_BIN` if needed. Cursor CLI is **not** r
 
 ### aflt install and PATH
 
-From a published package:
+`npm install -g aflt` 404s until the package is published. Use GitHub or a checkout:
 
 ```bash
-npm install -g aflt
+npm install -g github:wwlib/aflt
 ```
 
-Or from this checkout (contributors / before registry publish):
+Or from this checkout:
 
 ```bash
 cd /path/to/aflt
-npm install -g .         # or: npm link / symlink bin/af.js → ~/.local/bin/aflt
+npm link                 # or: npm install -g . / symlink bin/af.js → ~/.local/bin/aflt
 ```
 
 Confirm:
@@ -65,7 +65,7 @@ aflt doctor
 aflt doctor --json
 ```
 
-Expect a soft warn if Cursor is missing; Copilot should be present when `AGENTFLEET_ENGINE=copilot`.
+Expect a soft warn if Cursor is missing (`cursor_bin` does not fail the command). A binary named `agent` counts only when it identifies as Cursor. Copilot should be present when `AGENTFLEET_ENGINE=copilot`.
 
 ---
 
@@ -116,6 +116,26 @@ Confirm:
 aflt --space copilot-live engine
 ```
 
+### Model
+
+Copilot's account default (for example `claude-opus-4.6`) may be unavailable. A plain `copilot -p` then fails until you pass a model the account can use. `auto` worked on the 2026-11-23 live test.
+
+Resolution for each phase (first hit wins):
+
+1. Phase `model` in the loop definition
+2. Loop-level `model`
+3. `COPILOT_MODEL` when the phase engine is Copilot
+4. `$AGENTFLEET_HOME/config.json` `defaultModel` (alias `model`)
+5. Otherwise the CLI's own default (no `--model`). If Copilot answers `Model "…" is not available`, aflt retries that phase once with `--model auto` and uses `auto` for the rest of the run. Change the fallback with `AGENTFLEET_COPILOT_FALLBACK_MODEL=<model>`, or turn it off with `AGENTFLEET_COPILOT_FALLBACK_MODEL=none`.
+
+```bash
+export COPILOT_MODEL=auto
+# or persist a fleet default (COPILOT_MODEL still overrides this for Copilot):
+# printf '%s\n' '{ "defaultEngine": "copilot", "defaultModel": "auto" }' > config via aflt, or edit the space config.json
+```
+
+`hello-aflt.json` does not pin `model`. Without `COPILOT_MODEL` or `defaultModel`, each phase starts on the account default and falls back to `auto` if that model is unavailable. Pin a model when you want repeatable runs.
+
 ---
 
 ## 1. Validate
@@ -137,14 +157,16 @@ Also valid: `hello-aflt-improve.json` (continue-improve only; distinct loop name
 
 ## 2. Dry run
 
-Prints the phase plan; **does not** take the runner lock or execute phases:
+Prints the phase plan; **does not** take the runner lock or execute phases. Text and `--json` include the resolved **cwd**, **permission mode** (`force` / `restricted` / `mixed`), and **model**.
+
+`loop run` refuses a cwd that is not a clean empty git repo, or that contains the aflt checkout or the definition file, unless you pass `--allow-existing`. Dry-run prints the plan and exits 1 in that case. Run the dry-run from the empty game repo (next section) so `"cwd": "."` is that repo. From the aflt checkout, pass `--allow-existing` if you only want to inspect the plan.
 
 ```bash
 aflt --space copilot-live loop run "$AFLT_DEF" --dry-run
 aflt --space copilot-live loop run "$AFLT_DEF" --dry-run --json
 ```
 
-Expect phase lines for `m0` … improve/`plan-next` with engine resolved to `copilot` when the default is set. No `state.json` runner progress for a dry-run.
+Expect phase lines for `m0` … improve/`plan-next` with engine resolved to `copilot` when the default is set, `force=true` (hello-aflt opts in), and `model=` from `COPILOT_MODEL` / config when set. No `state.json` runner progress for a dry-run.
 
 ---
 
@@ -158,12 +180,37 @@ git init
 
 export AGENTFLEET_ENGINE=copilot
 export AFLT_SPACE=copilot-live
+# Optional: export COPILOT_MODEL=auto (unpinned runs fall back to auto anyway)
 
 # First run in this fleethome — --fresh is optional but safe.
 # Re-running after status=completed REQUIRES --fresh (else: "loop already completed").
+# A fresh empty git repo does not need --allow-existing.
+# hello-aflt sets force:true on each phase (full Copilot tool access). Omit that
+# and the default is restricted unless you pass --force.
 aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt.json --fresh
 # or with explicit space flag:
 # aflt --space copilot-live loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt.json --fresh --json
+```
+
+`aflt loop run` stays in the foreground. To detach it, log stdout/stderr and keep the pid:
+
+```bash
+mkdir -p ~/tmp
+nohup aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt.json --fresh \
+  > ~/tmp/aflt-copilot-live-run.log 2>&1 &
+echo $! > ~/tmp/aflt-copilot-live-run.pid
+# later:
+aflt loop status hello-aflt
+tail -f ~/tmp/aflt-copilot-live-run.log
+# stop (exact name; do not pkill):
+aflt loop stop hello-aflt
+```
+
+An existing tree (hello-aflt-improve, or `--fresh` after the game already has files) is not an empty repo. Pass `--allow-existing`:
+
+```bash
+cd /path/to/existing-game
+aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt-improve.json --allow-existing
 ```
 
 What this does (see example README):

@@ -425,13 +425,26 @@ Usage:
                             Validate a loop definition JSON file (schema,
                             phases, eval, allow/onPass). Exit 1 on errors.
   aflt loop run <file> [--dry-run] [--json] [--fresh]
+                            [--force] [--allow-existing]
                             Run a multi-phase loop (plan→develop→eval→fix,
                             optional plan-next). Persists state under
                             $AGENTFLEET_HOME/loops/<name>/.
-                            --dry-run prints the plan without locking or running.
+                            --dry-run prints the plan (resolved cwd, permission
+                            mode, model) without locking or running. A cwd that
+                            is not a clean empty git repo, or that contains the
+                            aflt checkout or the definition, is refused (dry-run
+                            still prints the plan, then exits 1).
+                            --allow-existing overrides that folder check.
+                            --force grants full tool permissions for this run
+                            (Cursor --force / Copilot --allow-all-tools).
+                            Definitions default force to false; set force:true
+                            on the loop or phase to opt in without the flag.
                             --fresh starts a new state (0 of N) when the loop
                             already completed (same fleethome; prefer over a
                             new space so the default Loops view still shows it).
+                            Model: phase.model, else definition.model, else
+                            COPILOT_MODEL when the phase engine is copilot,
+                            else config.json defaultModel (alias model).
   aflt loop start <file> [--json]
                             Register a loop as active for the dashboard
                             scheduler (does not run phases in this process).
@@ -3884,7 +3897,7 @@ async function executeHeadlessRun(session, opts = {}) {
       capturedUsage = parsed.usage;
       if (parsed.model) parsedModel = parsed.model;
     } else if (engineName === 'copilot') {
-      // Prefer events.jsonl sync; also try stdout when json was requested.
+      // Prefer events.jsonl / JSON stdout usage_record over a char estimate.
       if (engineOutputFormat === 'json') {
         const parsed = copilot.parseCopilotJsonOutput(result.stdout || '', {
           model: session.model || null,
@@ -3894,6 +3907,18 @@ async function executeHeadlessRun(session, opts = {}) {
         }
         capturedUsage = parsed.usage;
         if (parsed.model) parsedModel = parsed.model;
+      }
+      try {
+        const fromEvents = copilot.usageFromSessionEvents(session, {
+          since: runStartedAt,
+          env: childEnv,
+          model: parsedModel,
+        });
+        const usageLib = require('../lib/usage');
+        capturedUsage = usageLib.preferRicherUsage(capturedUsage, fromEvents);
+        if (fromEvents && fromEvents.model) parsedModel = fromEvents.model;
+      } catch (_) {
+        /* keep stdout usage */
       }
     }
   } catch (_) {
@@ -7517,9 +7542,21 @@ function cmdDoctor(argv) {
     add('hc_ls', false, 'hc not on PATH');
   }
   try {
-    const bin = cursor.resolveCursorBin();
-    const present = Boolean(bin) && (fs.existsSync(bin) || Boolean(require('../lib/util').which(bin)));
-    add('cursor_bin', present, bin);
+    const info = cursor.describeCursorBin();
+    if (info.bin) {
+      const present = path.isAbsolute(info.bin)
+        ? fs.existsSync(info.bin)
+        : Boolean(require('../lib/util').which(info.bin));
+      add('cursor_bin', present, present ? info.bin : `${info.bin} (not found)`);
+    } else if (info.ignoredAgent) {
+      add(
+        'cursor_bin',
+        false,
+        `cursor-agent not on PATH (ignored ${info.ignoredAgent}; not Cursor)`
+      );
+    } else {
+      add('cursor_bin', false, 'cursor-agent not on PATH');
+    }
   } catch (err) {
     add('cursor_bin', false, err.message);
   }
@@ -7576,6 +7613,7 @@ function cmdDoctor(argv) {
     .filter(
       (c) =>
         ![
+          'cursor_bin',
           'copilot_bin',
           'opencode_bin',
           'hc_on_path',
@@ -7609,7 +7647,7 @@ async function cmdLoop(argv) {
   const sub = args[0];
   const asJson = Boolean(flags.json);
   const usage =
-    'usage: aflt loop validate <file> | run <file> [--dry-run] [--json] [--fresh] | start <file> | pause <name> | status [name] | stop <name> | resume <name> | approve <name> [--json]';
+    'usage: aflt loop validate <file> | run <file> [--dry-run] [--json] [--fresh] [--force] [--allow-existing] | start <file> | pause <name> | status [name] | stop <name> | resume <name> | approve <name> [--json]';
   if (!sub || sub === 'help' || sub === '-h' || sub === '--help') {
     fail(usage);
   }
@@ -7652,12 +7690,21 @@ async function cmdLoop(argv) {
 
   if (sub === 'run') {
     const file = args[1];
-    if (!file) fail('usage: aflt loop run <file> [--dry-run] [--json] [--fresh]');
+    if (!file) {
+      fail(
+        'usage: aflt loop run <file> [--dry-run] [--json] [--fresh] [--force] [--allow-existing]'
+      );
+    }
     const dryRun = Boolean(flags['dry-run']);
     const fresh = Boolean(flags.fresh);
     let result;
     try {
-      result = await loopLib.runFromFile(file, { dryRun, fresh });
+      result = await loopLib.runFromFile(file, {
+        dryRun,
+        fresh,
+        forceTools: Boolean(flags.force),
+        allowExisting: Boolean(flags['allow-existing']),
+      });
     } catch (err) {
       fail(err.message, { json: asJson });
     }
@@ -7672,6 +7719,11 @@ async function cmdLoop(argv) {
         error: result.error || (result.errors && result.errors.join('; ')) || null,
         errors: result.errors || null,
         warnings: result.warnings || null,
+        cwd: result.cwd || (result.workdir && result.workdir.cwd) || null,
+        permissions: result.permissions || null,
+        model: result.model || null,
+        resolvedModel: result.resolvedModel || null,
+        workdir: result.workdir || null,
         plan: result.dryRun ? result : null,
         state: result.state
           ? {
@@ -7687,12 +7739,18 @@ async function cmdLoop(argv) {
       });
     } else if (result.dryRun) {
       process.stdout.write(
-        `dry-run: loop "${result.name}" — ${result.phases.length} phase(s) in ${result.cwd}\n`
+        `dry-run: loop "${result.name}" — ${result.phases.length} phase(s)\n` +
+          `  cwd: ${result.cwd}\n` +
+          `  permissions: ${result.permissions || 'restricted'}\n` +
+          `  model: ${result.resolvedModel || result.model || '(engine default)'}\n`
       );
       for (const p of result.phases) {
         process.stdout.write(
-          `  - ${p.id} engine=${p.engine} session=${p.session} maxFix=${p.maxFixAttempts} onPass=${p.onPass}\n`
+          `  - ${p.id} engine=${p.engine} session=${p.session} maxFix=${p.maxFixAttempts} onPass=${p.onPass} force=${p.force ? 'true' : 'false'} permission=${p.permission || (p.force ? 'force' : 'restricted')} model=${p.model || '-'}\n`
         );
+      }
+      if (!result.ok) {
+        for (const e of result.errors || []) process.stderr.write(`error: ${e}\n`);
       }
     } else if (result.errors) {
       for (const e of result.errors) process.stderr.write(`error: ${e}\n`);
@@ -7708,7 +7766,7 @@ async function cmdLoop(argv) {
       );
     }
     await notify.flushPendingNotifies();
-    process.exitCode = result.ok || result.dryRun ? 0 : 1;
+    process.exitCode = result.ok ? 0 : 1;
     return;
   }
 

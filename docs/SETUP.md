@@ -8,7 +8,7 @@ Source of truth for `aflt`: the code and README in this repo (`bin/af.js`, `lib/
 
 | Layer | What | Command |
 |-------|------|---------|
-| **Install** the CLI | Put `aflt` / `af` / `agentfleet` on PATH | `npm install -g aflt` (fallback: `npm install -g github:wwlib/aflt`; contributors: clone + `npm install -g .` / symlink) |
+| **Install** the CLI | Put `aflt` / `af` / `agentfleet` on PATH | `npm install -g github:wwlib/aflt` until publish (`npm install -g aflt` 404s). Contributors: clone + `npm link` / `npm install -g .` / symlink |
 | **Machine setup** | Home dir, optional Herdr templates/panel, optional memory registration | `aflt setup` (preview) / `aflt setup --apply` |
 | **Project onboarding** | Per-repo messaging/docs/project name | `.agentfleet.json`, `aflt memory init`, `aflt mcp install` |
 | **Ongoing workflows** | Run agents, orchestrate, sync memory | `aflt run`, `aflt master` / `spawn`, `aflt memory sync`, … |
@@ -97,7 +97,7 @@ Reload: `source ~/.zshrc`
 # Then follow the "Next steps" it prints to add brew to PATH, e.g. Apple Silicon:
 # eval "$(/opt/homebrew/bin/brew shellenv)"
 
-brew install node    # Node ≥ 18
+brew install node    # Node ≥ 20.10
 node -v
 ```
 
@@ -343,11 +343,11 @@ Until messaging is enabled for the running session, `aflt mcp` advertises no too
 ### 3.9 Install `aflt` (preferred: npm)
 
 ```bash
-# After the package is on the npm registry:
-npm install -g aflt
-
-# Fallback (before first publish, and anytime):
+# npm install -g aflt 404s until the package is published.
 npm install -g github:wwlib/aflt
+
+# From a checkout: npm link
+# or: npm install -g .
 
 # Then machine setup (preview first):
 aflt setup
@@ -758,7 +758,7 @@ Other notes: bundled Herdr templates use official frontmatter and `ready: quiet`
 ## 10. Quick checklist (work Mac)
 
 - [ ] PATH has `~/.local/bin` (+ Homebrew)
-- [ ] Node ≥ 18
+- [ ] Node ≥ 20.10
 - [ ] `tmux` installed
 - [ ] WezTerm or iTerm2 (optional but nice)
 - [ ] `agent` / `cursor-agent` installed and `agent login` OK

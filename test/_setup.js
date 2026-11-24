@@ -44,6 +44,17 @@ function sanitizePath(raw) {
   return [hermeticDir, ...parts].join(delim);
 }
 
+// A developer shell may export the fleet space, default engine, or model for
+// live runs (docs/copilot-live-test.md). Those must not leak into the suite.
+for (const key of [
+  'AFLT_SPACE',
+  'AGENTFLEET_ENGINE',
+  'COPILOT_MODEL',
+  'AGENTFLEET_COPILOT_FALLBACK_MODEL',
+]) {
+  delete process.env[key];
+}
+
 process.env.AGENTFLEET_TEST_HERMETIC = '1';
 process.env.AGENTFLEET_HC_BIN = stubHc;
 process.env.AGENTFLEET_HERDR_APP_BIN = stubApp;

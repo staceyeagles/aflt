@@ -71,7 +71,11 @@ function buildSmokePlan(opts = {}) {
     { id: 'memory-status', argv: ['memory', 'status', '--json'], mode: 'run' },
     { id: 'loop-status', argv: ['loop', 'status', '--json'], mode: 'run' },
     { id: 'loop-validate', argv: ['loop', 'validate', loopExample, '--json'], mode: 'run' },
-    { id: 'loop-run-dry', argv: ['loop', 'run', loopExample, '--dry-run', '--json'], mode: 'dry-run' },
+    {
+      id: 'loop-run-dry',
+      argv: ['loop', 'run', loopExample, '--dry-run', '--allow-existing', '--json'],
+      mode: 'dry-run',
+    },
     { id: 'turns-backfill', argv: ['turns', 'backfill', '--json'], mode: 'run' },
     { id: 'export', argv: ['export'], mode: 'run' },
     { id: 'service-status', argv: ['service', 'status', '--json'], mode: 'run' },

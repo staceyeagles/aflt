@@ -83,7 +83,7 @@ From USAGE, `aflt run` accepts `--output-format text|json` (default user-facing 
 When you **omit** `--output-format`:
 
 - **Cursor** and **OpenCode** — the CLI requests JSON from the engine internally so `result.usage` / step-finish tokens are available, then presents the extracted reply as **text**. Your stdout and `aflt log` stay the human reply, not a raw JSON dump.
-- **Copilot** — headless stdout stays text; token counts come from the session event log (below), not from forcing JSON print mode.
+- **Copilot** — loop runs request JSON internally and also read `events.jsonl` `session.usage_record` (and checkpoint/shutdown metrics). `aflt run` still presents text unless you pass `--output-format json`, and reads the same event log after the process exits. Counts are `reported` when a usage record is present.
 
 If you pass `--output-format json` yourself, you get JSON end-to-end (no silent text presentation).
 
@@ -110,7 +110,7 @@ Copilot’s raw `inputTokens` is **cache-inclusive**. Aflt splits uncached = `in
 
 ### Fallback estimate
 
-If the engine returns no usable metrics, aflt may attach `accuracy: "estimated"` / `source: "estimated-chars"` (roughly `ceil(chars / 4)` for prompt and reply). Estimated never overwrites a reported row.
+If the engine returns no usable metrics, aflt may attach `accuracy: "estimated"` / `source: "estimated-chars"` (roughly `ceil(chars / 4)` for the prompt and the final reply text only). That figure is a floor, not a bill: tool calls, cache, and provider credits are not included, so a long Copilot edit can look like a few hundred tokens. History shows a `~` prefix for estimated or partial rows. Estimated never overwrites a reported row. USD is never invented from tokens.
 
 ## Dashboard History
 
@@ -187,7 +187,7 @@ aflt --space tutorial turns backfill --engine all --json
 ## Caveats
 
 - Omitting `--output-format` is the happy path for Cursor/OpenCode usage; passing `--output-format text` explicitly skips the internal JSON request path for those engines.
-- Copilot headless text mode still relies on events / checkpoints — empty metrics → estimate or nothing.
+- Copilot counts are `reported` only when stdout JSON or `events.jsonl` has a usage record. Otherwise the `estimated` chars/4 figure counts the prompt and final reply only (not tool calls or credits).
 - OpenCode all-zero error rows are dropped (not treated as reported).
 - Dashboard and memory only show what was already recorded under `runs/<id>/` — they do not invent counts.
 
