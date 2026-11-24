@@ -284,3 +284,29 @@ describe('dashboard serve (real child, no fakes)', () => {
     }
   });
 });
+
+describe('loop detail shape + failed route summary', () => {
+  it('accepts phases keyed by id (the real /api/loops/:name shape)', () => {
+    const body = JSON.stringify({ ok: true, name: 'x', status: 'completed', phases: { a: {}, b: {} } });
+    const r = loopVerify.checkLoopDetailShape(200, body, true);
+    assert.equal(r.ok, true, JSON.stringify(r.checks));
+    const empty = loopVerify.checkLoopDetailShape(
+      200,
+      JSON.stringify({ ok: true, name: 'x', status: 'completed', phases: {} }),
+      true
+    );
+    assert.equal(empty.ok, false);
+  });
+
+  it('failedRouteSummary names the failing route and check', () => {
+    const s = loopVerify.failedRouteSummary({
+      ok: false,
+      routes: [
+        { path: '/api/state', ok: true },
+        { path: '/api/loops/x', ok: false, checks: [{ ok: true, detail: 'ok:true' }, { ok: false, detail: 'status=failed' }] },
+      ],
+    });
+    assert.equal(s, '; failed: /api/loops/x (status=failed)');
+    assert.equal(loopVerify.failedRouteSummary({ ok: true, routes: [] }), '');
+  });
+});
