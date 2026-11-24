@@ -237,7 +237,7 @@ _af() {
       COMPREPLY=( $(compgen -W "--serve --port --host --snapshot --json --capture-completions --space" -- "${cur}") )
       ;;
     making-of)
-      COMPREPLY=( $(compgen -W "--out --data --serve --port --host --build-url --build-label --seed --repo --no-diffs --json --space" -- "${cur}") )
+      COMPREPLY=( $(compgen -W "--out --data --serve --port --host --build-url --build-label --seed --repo --no-diffs --with-files --json --space" -- "${cur}") )
       ;;
     memory)
       if [[ ${COMP_CWORD} -eq 2 ]]; then

@@ -133,7 +133,7 @@ Usage:
                             Loops tab: "Making of" opens /making-of/<loop>.
   aflt making-of <loop> [--out file.html] [--data file.json] [--serve [--port 8797]]
                             [--build-url URL] [--build-label TEXT] [--seed PATH[,PATH]]
-                            [--repo DIR] [--no-diffs] [--json]
+                            [--repo DIR] [--no-diffs] [--with-files] [--json]
                             "Making of" page for one loop in this space: every AI call
                             in order (prompt, reply, reasoning, tool calls + results,
                             tokens, Copilot credits/$ as recorded), every commit in the
@@ -142,7 +142,9 @@ Usage:
                             Self-contained HTML (default <space>/loops/<loop>/making-of.html).
                             --serve serves it live (also at /making-of/<loop> under
                             aflt dashboard --serve). --seed defaults to seed* / *-seed
-                            files next to the loop definition.
+                            files next to the loop definition. --with-files also writes
+                            <out>-files/ (all commit diffs, seed/eval/tracked files as HTML) and
+                            links them, for hosting the page without aflt.
   aflt dashboard --snapshot <file.svg|html>
                             Write a standalone SVG or self-contained HTML snapshot
                             of the current activity graph (no server). Parent dirs
@@ -1526,7 +1528,9 @@ function cmdTimeline(argv) {
 const MAKING_OF_USAGE =
   'usage: aflt making-of <loop> [--out file.html] [--data file.json] [--serve [--port 8797] [--host 127.0.0.1]]\n' +
   '                         [--build-url URL] [--build-label TEXT] [--seed PATH[,PATH...]] [--repo DIR]\n' +
-  '                         [--no-diffs] [--json]';
+  '                         [--no-diffs] [--with-files] [--json]\n' +
+  '  --with-files  also write <out>-files/ (every commit diff + seed/eval/tracked files as small HTML pages) and link them,\n' +
+  '                for static hosting without aflt';
 
 /**
  * aflt making-of <loop>: one self-contained HTML page with every AI call
@@ -1607,6 +1611,8 @@ async function cmdMakingOf(argv) {
     ? path.resolve(expandUserPath(strFlag('out')))
     : path.join(fleetDir(), 'loops', loopName, 'making-of.html');
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  let exported = null;
+  if (recoverBoolFlag(flags, 'with-files', args) || flags['with-files']) exported = makingOf.exportFiles(data, outPath);
   fs.writeFileSync(outPath, view.renderHtml(data));
   let dataPath = null;
   if (strFlag('data')) {
@@ -1634,6 +1640,7 @@ async function cmdMakingOf(argv) {
     commits: data.commits.length,
     seeds: data.artifacts.seeds.length,
     prs: data.prs.length,
+    files: exported,
   };
   if (asJson) {
     emitJson(summary);
@@ -1645,7 +1652,8 @@ async function cmdMakingOf(argv) {
       : ' · cost not recorded';
   process.stdout.write(
     `${outPath}\n${data.run.engine || '?'} · ${data.run.model || '?'} · ${data.phases.length} phases · ` +
-      `${T.calls} AI calls · ${T.toolCalls} tool calls${money} · ${data.commits.length} commits\n`
+      `${T.calls} AI calls · ${T.toolCalls} tool calls${money} · ${data.commits.length} commits\n` +
+      (exported ? `${exported.dir} (${exported.diffs} diffs, ${exported.files} files)\n` : '')
   );
 }
 

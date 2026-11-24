@@ -239,6 +239,10 @@ function fullContext(c){
   }
   return h;
 }
+// Links to a raw diff / file: --serve uses query routes, a static export uses fileMap.
+function diffHref(sha){const L=D.links||{};if(L.diffMap)return L.diffMap[sha]||'';return L.diffBase?L.diffBase+sha+(L.diffSuffix||''):'';}
+function fileHref(p){const L=D.links||{},R=D.repo||{};if(!p)return '';const abs=p.startsWith('/')||!R.path?p:R.path.replace(/\/$/,'')+'/'+p;if(L.fileMap)return L.fileMap[abs]||'';return L.fileBase?L.fileBase+encodeURIComponent(abs):'';}
+function fileLink(p,text){const h=fileHref(p);return h?`<a class="mono" href="${esc(h)}" target="_blank">${esc(text||p)}</a>`:`<span class="mono">${esc(text||p)}</span>`;}
 function renderCommits(){
   const R=D.repo||{},C=D.commits||[];
   $('#repoMeta').innerHTML=R.path?`Repo <span class="mono">${esc(R.path)}</span>${R.head?` · HEAD ${commitLink(R.head.slice(0,7))}`:''} · ${R.github?`GitHub <a href="${esc(R.github)}">${esc(R.github)}</a>`:R.remote?`remote ${esc(R.remote)}`:'no remote (local only), so diffs are embedded below'}${R.error?` · <span class="pill bad">${esc(R.error)}</span>`:''}`:'No repo recorded for this loop.';
@@ -247,24 +251,24 @@ function renderCommits(){
     const add=c.files.reduce((a,f)=>a+(f.added||0),0),rem=c.files.reduce((a,f)=>a+(f.removed||0),0);
     return `<tr><td class="l"><a class="mono" href="#commit-${esc(c.short)}">${esc(c.short)}</a>${c.url?` <a href="${esc(c.url)}" class="small">GitHub</a>`:''}<div class="small">${ET(c.at)}</div></td><td class="l"><span class="pill ph" style="color:${phaseColor.get(c.phase)||'var(--dim)'}">${esc(c.phase||'—')}</span><div class="small">${esc(c.attribution||'')}</div></td><td class="l">${esc(c.subject)}</td><td>${c.files.length}</td><td class="mono">+${add} −${rem}</td><td class="l">${c.calls.slice(0,30).map(callLink).join(' ')}${c.calls.length>30?` +${c.calls.length-30} more`:''}</td></tr>`}).join('')}</tbody></table>`+
     C.map(c=>fold(`<span class="mono">${esc(c.short)}</span> ${esc(c.subject)} — ${c.files.length} files`,
-      `<div style="padding:6px 10px" class="small">${esc(c.sha)} · ${esc(c.author)} · ${ET(c.at)}${D.links&&D.links.diffBase?` · <a href="${esc(D.links.diffBase+c.sha)}">raw diff</a>`:''}${c.url?` · <a href="${esc(c.url)}">view on GitHub</a>`:''}</div>`+
-      `<table><tbody>${c.files.map(f=>`<tr><td class="l mono">${esc(f.status)} ${esc(f.path)}${f.from?` (from ${esc(f.from)})`:''}</td><td class="mono">+${fmt(f.added)} −${fmt(f.removed)}</td></tr>`).join('')}</tbody></table>`+
+      `<div style="padding:6px 10px" class="small">${esc(c.sha)} · ${esc(c.author)} · ${ET(c.at)}${diffHref(c.sha)?` · <a href="${esc(diffHref(c.sha))}" target="_blank">raw diff</a>`:''}${c.url?` · <a href="${esc(c.url)}">view on GitHub</a>`:''}</div>`+
+      `<table><tbody>${c.files.map(f=>`<tr><td class="l mono">${esc(f.status)} ${f.status==='D'?esc(f.path):fileLink(f.path)}${f.from?` (from ${esc(f.from)})`:''}</td><td class="mono">+${fmt(f.added)} −${fmt(f.removed)}</td></tr>`).join('')}</tbody></table>`+
       (c.diff!=null?diff(c.diff)+(c.diffTruncated?`<div class="small" style="padding:6px 10px">Diff truncated (${fmt(c.diffBytes)} bytes total).</div>`:''):'<div class="small" style="padding:6px 10px">Diff not embedded.</div>'),false,'commit-'+c.short)).join('');
   $('#prs').innerHTML=(D.prs||[]).length?D.prs.map(p=>`<div><a href="${esc(p.url)}">${esc(p.title||p.url)}</a></div>`).join(''):`None. ${esc(D.prsNote||'')}`;
 }
 function artifactFold(a,label){
   const body=a.content!=null?pre(a.content)+(a.truncated?'<div class="small" style="padding:6px 10px">Truncated.</div>':''):'<div class="small" style="padding:6px 10px">Binary or unreadable; not embedded.</div>';
-  return fold(`<span class="mono">${esc(label||a.label)}</span> <span class="small">${fmt(a.bytes)} bytes · ${esc(a.path)}${D.links&&D.links.fileBase?` · <a href="${esc(D.links.fileBase+encodeURIComponent(a.path))}">open</a>`:''}</span>`,body);
+  return fold(`<span class="mono">${esc(label||a.label)}</span> <span class="small">${fmt(a.bytes)} bytes · ${esc(a.path)}${fileHref(a.path)?` · <a href="${esc(fileHref(a.path))}" target="_blank">open</a>`:''}</span>`,body);
 }
 function renderArtifacts(){
   const A=D.artifacts||{},R=D.repo||{};
   let b='';
   if(A.build)b+=`<p>🎮 Final build: <a href="${esc(A.build.url)}">${esc(A.build.label||A.build.url)}</a></p>`;
-  if(R.head)b+=`<p class="small">Final source: HEAD ${commitLink(R.head.slice(0,7))} in <span class="mono">${esc(R.path)}</span> (${fmt((R.finalTree||[]).length)} tracked files). Run it locally with <span class="mono">cd ${esc(R.path)} &amp;&amp; npm start</span>.</p>`+fold('Tracked files at HEAD',pre((R.finalTree||[]).join('\n')));
+  if(R.head)b+=`<p class="small">Final source: HEAD ${commitLink(R.head.slice(0,7))} in <span class="mono">${esc(R.path)}</span> (${fmt((R.finalTree||[]).length)} tracked files). Run it locally with <span class="mono">cd ${esc(R.path)} &amp;&amp; npm start</span>.</p>`+fold('Tracked files at HEAD',`<div style="padding:6px 10px;line-height:1.7">${(R.finalTree||[]).map(f=>fileLink(f)).join('<br>')}</div>`);
   $('#build').innerHTML=b||'<p class="small">No build link recorded.</p>';
   $('#seeds').innerHTML=(A.seeds||[]).length?`<p class="small">${A.seeds.length} seed files the loop copied in or ran without an AI call.</p>`+A.seeds.map(a=>artifactFold(a)).join(''):'<p class="small">No seed files found next to the loop definition.</p>';
   $('#files').innerHTML=D.phases.filter(p=>(p.files||[]).length).map(p=>fold(`<b>${esc(p.phase)}</b> · ${p.files.length} files${(p.commits||[]).length?' · commit '+p.commits.join(' '):''}`,
-    `<table><thead><tr><th class="l">File</th><th>Status</th><th>+/−</th><th class="l">Commits</th><th class="l">Calls</th></tr></thead><tbody>${p.files.map(f=>`<tr><td class="l mono">${esc(f.path)}</td><td>${esc(f.status)}${f.uncommitted&&!f.commits.length?' <span class="pill est">not committed</span>':''}</td><td class="mono">${f.added==null?'–':'+'+f.added+' −'+f.removed}</td><td class="l">${f.commits.map(commitLink).join(' ')||'–'}</td><td class="l">${f.calls.slice(0,20).map(callLink).join(' ')}${f.calls.length>20?' …':''}</td></tr>`).join('')}</tbody></table>`,true)).join('')||'<p class="small">No file changes recorded.</p>';
+    `<table><thead><tr><th class="l">File</th><th>Status</th><th>+/−</th><th class="l">Commits</th><th class="l">Calls</th></tr></thead><tbody>${p.files.map(f=>`<tr><td class="l">${fileLink(f.path)}</td><td>${esc(f.status)}${f.uncommitted&&!f.commits.length?' <span class="pill est">not committed</span>':''}</td><td class="mono">${f.added==null?'–':'+'+f.added+' −'+f.removed}</td><td class="l">${f.commits.map(commitLink).join(' ')||'–'}</td><td class="l">${f.calls.slice(0,20).map(callLink).join(' ')}${f.calls.length>20?' …':''}</td></tr>`).join('')}</tbody></table>`,true)).join('')||'<p class="small">No file changes recorded.</p>';
   let e='';
   for(const p of D.phases){if(!p.lastEval)continue;const L=p.lastEval;e+=fold(`<b>${esc(p.phase)}</b> eval · exit ${esc(L.code)}${L.timedOut?' (timed out)':''} · ${ET(L.at)}`,(L.stdout?item('stdout',pre(L.stdout)):'')+(L.stderr?item('stderr',pre(L.stderr)):'')+(p.runLog?`<div class="small" style="padding:6px 10px">Agent run log: <span class="mono">${esc(p.runLog)}</span></div>`:''));}
   for(const a of A.evalReports||[])e+=artifactFold(a,'report: '+a.label);

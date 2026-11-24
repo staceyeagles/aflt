@@ -431,6 +431,33 @@ cat "${stubDir}/stream.jsonl"
     assert.match(bad.stdout, /no loop state/);
   });
 
+  it('--with-files exports every commit diff and artifact for static hosting', () => {
+    seedLoop();
+    const out = path.join(home, 'hub', 'demo.html');
+    const dataOut = path.join(home, 'hub', 'demo.json');
+    const r = spawnSync(process.execPath, [afJs, 'making-of', 'demo', '--out', out, '--data', dataOut, '--with-files', '--json'], {
+      encoding: 'utf8',
+      env: { ...process.env },
+      timeout: 30000,
+    });
+    assert.equal(r.status, 0, r.stderr);
+    const summary = JSON.parse(r.stdout);
+    assert.equal(summary.files.diffs, 2);
+    const data = JSON.parse(fs.readFileSync(dataOut, 'utf8'));
+    const filesDir = path.join(home, 'hub', 'demo-files');
+    for (const c of data.commits) {
+      const href = data.links.diffMap[c.sha];
+      assert.ok(href && href.startsWith('demo-files/commit/'), `diff link for ${c.short}`);
+      assert.match(fs.readFileSync(path.join(home, 'hub', decodeURIComponent(href)), 'utf8'), new RegExp(c.sha));
+    }
+    for (const a of data.artifacts.seeds) assert.ok(data.links.fileMap[a.path], `seed ${a.label} linked`);
+    for (const f of data.repo.finalTree) assert.ok(data.links.fileMap[path.join(data.repo.path, f)], `tracked ${f} linked`);
+    assert.ok(fs.existsSync(path.join(filesDir, 'repo', 'src', 'rng.js.html')));
+    assert.equal(data.links.diffBase, undefined);
+    const html = fs.readFileSync(out, 'utf8');
+    assert.match(html, /demo-files\/commit\//);
+  });
+
   it('dashboard serves /making-of/<loop>, commit diffs and artifacts only', async () => {
     seedLoop();
     const dash = require('../lib/dashboard');

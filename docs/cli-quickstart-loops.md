@@ -111,6 +111,9 @@ AFLT_SPACE=td-copilot aflt making-of hello-aflt
 AFLT_SPACE=td-copilot aflt making-of hello-aflt --out ~/Desktop/hello-aflt-making-of.html \
   --build-url http://127.0.0.1:8792/          # link the playable build
 AFLT_SPACE=td-copilot aflt making-of hello-aflt --serve --port 8797   # live page + raw diffs
+AFLT_SPACE=td-copilot aflt making-of hello-aflt --out site/making-of.html --with-files
+# → site/making-of.html + site/making-of-files/ (every commit diff and seed/eval/tracked file
+#   as a small HTML page, all linked) for any static host
 ```
 
 What aflt records for this (per phase session, `$AGENTFLEET_HOME/runs/<session>/`):
