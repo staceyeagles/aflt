@@ -423,6 +423,27 @@ describe('aflt eval improve loop (E3)', () => {
     assert.match(plan.prompt || '', /RUBRIC|baseline|plateau/i);
   });
 
+  it('example self-improve.json is unpinned and follows AGENTFLEET_ENGINE', () => {
+    const loop = require('../lib/loop');
+    const example = path.join(repoRoot, 'examples', 'loops', 'self-improve.json');
+    const raw = JSON.parse(fs.readFileSync(example, 'utf8'));
+    assert.equal(raw.engine, undefined);
+    for (const p of raw.phases) assert.equal(p.engine, undefined, p.id);
+    raw.cwd = tmp;
+    const file = path.join(tmp, 'self-improve-unpinned.json');
+    writeJson(file, raw);
+    for (const engine of ['copilot', 'cursor', 'opencode']) {
+      const result = loop.validateFile(file, {
+        checkPromptFiles: false,
+        env: { ...process.env, AGENTFLEET_ENGINE: engine },
+      });
+      assert.equal(result.ok, true, (result.errors || []).join('; '));
+      assert.equal(result.definition.engine, engine);
+      assert.ok(result.definition.phases.length > 0);
+      for (const p of result.definition.phases) assert.equal(p.engine, engine, p.id);
+    }
+  });
+
   it('hermetic fake engine: one improve round, passing gate, stop on plateau', async () => {
     const loop = require('../lib/loop');
     const {
