@@ -30,6 +30,7 @@ State lives under `$AGENTFLEET_HOME/loops/<name>/` (`state.json` + runner lock).
 | `examples/loops/plan-next.json` | Seed phases + `type: "plan-next"` planner |
 | `examples/loops/self-improve.json` | Eval measure → score/baseline → plan-next → gate `--improve` |
 | `examples/loops/hello-aflt/` | Portable tile-dungeon: empty-repo M0 seed → M1–M5a → ≤3 improve rounds (Copilot-friendly) |
+| `examples/loops/hello-aflt-scratch/` | Same milestones from a docs-only seed (AGENTS.md + SPEC.md, no code/HTML); M0 is a real agent build checked by `m0-check.js` |
 | `examples/loops/hello-aflt/hello-aflt-improve.json` | Continue improve-only on an existing M5a game (loop name `hello-aflt-improve`) |
 
 Validate (safe; no engines):

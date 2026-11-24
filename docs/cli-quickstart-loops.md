@@ -92,6 +92,26 @@ aflt dashboard --serve --port 8787
 
 Then `aflt loop status hello-aflt --json`, `aflt loop pause hello-aflt`, `aflt loop resume hello-aflt`, `aflt loop stop hello-aflt`.
 
+### Variant: build M0 from scratch (no seed code)
+
+`examples/loops/hello-aflt-scratch/` runs the same milestones, but the seed is
+instructions only (`AGENTS.md`, `SPEC.md`, `.agentfleet.json`, `.gitignore`):
+no code, no HTML. M0 is a real agent build of the scaffold, checked by
+`m0-check.js` (structure + `node --test` + server boot). Use a separate folder
+and space so it does not collide with a `hello-aflt` run:
+
+```bash
+mkdir -p ~/tmp/td-scratch && cd ~/tmp/td-scratch && git init -b main
+export AFLT_SPACE=td-scratch
+aflt loop validate "$AFLT_HOME/examples/loops/hello-aflt-scratch/hello-aflt-scratch.json" --json
+aflt loop run "$AFLT_HOME/examples/loops/hello-aflt-scratch/hello-aflt-scratch.json"
+```
+
+M0's check installs the seed docs after the agent's first pass and commits them with M0. To give the M0 agent `AGENTS.md`/`SPEC.md` up front, run `node "$AFLT_HOME/examples/loops/hello-aflt-scratch/m0-check.js" --seed-docs` first and add `--allow-existing` to `aflt loop run`.
+
+Status: `aflt loop status hello-aflt-scratch --json`. Details:
+[examples/loops/hello-aflt-scratch/README.md](../examples/loops/hello-aflt-scratch/README.md).
+
 ## 6. Watch the dashboard
 
 ```bash

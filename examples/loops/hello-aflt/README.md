@@ -1,5 +1,7 @@
 # hello-aflt — portable tile-dungeon loop example
 
+> Want the agent to write the M0 scaffold too? [`hello-aflt-scratch`](../hello-aflt-scratch/README.md) is the same loop with a docs-only seed (no code or HTML).
+
 ## Quick start (one command)
 
 From scratch on a work Mac (Copilot CLI is enough; no Grok Bot, no Cursor pin):
