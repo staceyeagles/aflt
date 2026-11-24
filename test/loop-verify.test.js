@@ -243,3 +243,44 @@ describe('verify checkpoint key covers uncommitted work', () => {
     }
   });
 });
+
+describe('dashboard serve (real child, no fakes)', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const dashboardApi = require('../scripts/eval/dashboard-api');
+
+  it('dashboard-api exports every helper loop-verify calls', () => {
+    for (const name of ['httpRequest', 'checkDashboardRoutes', 'waitForServeJson', 'stopChild']) {
+      assert.equal(typeof dashboardApi[name], 'function', `dashboard-api.${name}`);
+    }
+  });
+
+  it('withDashboardServe starts aflt dashboard --serve on a free port and stops it', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'aflt-verify-serve-'));
+    let child = null;
+    try {
+      const out = await loopVerify.withDashboardServe(
+        {
+          packageRoot: path.resolve(__dirname, '..'),
+          space: 'verify-serve-test',
+          env: { ...process.env, HOME: home },
+        },
+        async (h) => {
+          child = h.child;
+          assert.equal(loopVerify.isPortBlocked(h.port), false);
+          const state = await dashboardApi.httpRequest(h.port, '/api/state');
+          const loops = await dashboardApi.httpRequest(h.port, '/api/loops');
+          const root = await dashboardApi.httpRequest(h.port, '/');
+          return { state: state.status, loops: loops.status, root: root.status };
+        }
+      );
+      assert.deepEqual(out, { state: 200, loops: 200, root: 200 });
+      assert.ok(child);
+      await new Promise((r) => setTimeout(r, 200));
+      assert.ok(child.exitCode !== null || child.signalCode !== null, 'dashboard child stopped');
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
