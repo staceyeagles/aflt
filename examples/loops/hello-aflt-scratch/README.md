@@ -7,7 +7,8 @@ agent writes every file, including the M0 scaffold.
 | | `hello-aflt` | `hello-aflt-scratch` |
 |---|---|---|
 | Seed copied into the repo | `m0-seed/`: `package.json`, `server.js`, `public/index.html`, `src/main.js`, `test/smoke.test.js`, docs | `seed/`: `AGENTS.md`, `SPEC.md`, `.agentfleet.json`, `.gitignore` |
-| M0 phase | Agent told to "do nothing heavy"; `seed-m0.js` copies the scaffold | Real agent build of the scaffold from `SPEC.md` § M0 |
+| Before M0 | — | `seed-docs` script phase (no AI call) copies the four docs in and commits them |
+| M0 phase | `type: "script"`: `seed-m0.js` copies the scaffold (no AI call) | Real agent build of the scaffold from `SPEC.md` § M0 |
 | M0 eval | `seed-m0.js` (copy + smoke test) | `m0-check.js` (structural check + `node --test` + server boot; never copies code) |
 | M1–M5a, plan-next | Same milestones | Same milestones; prompts say there is no seed code and to work only in the repo |
 | Improve gate | `improve-gate.js` | Shared: `../hello-aflt/improve-gate.js` |
@@ -22,20 +23,12 @@ mkdir tile-dungeon-scratch && cd tile-dungeon-scratch && git init
 aflt loop run /path/to/aflt/examples/loops/hello-aflt-scratch/hello-aflt-scratch.json
 ```
 
-The M0 prompt carries the full scaffold contract, so the agent can start in a
-truly empty repo. Right after the agent's first pass, `m0-check.js` installs
-the seed docs (`AGENTS.md`, `SPEC.md`, `.agentfleet.json`, `.gitignore`,
-never overwriting) and then verifies the scaffold; they are committed with M0,
-and every later phase (and any M0 fix attempt) reads them.
-
-Want the M0 agent to read `AGENTS.md` / `SPEC.md` on its very first attempt?
-Pre-seed the docs, then pass `--allow-existing` (the folder is no longer an
-empty repo, which `aflt loop run` otherwise refuses):
-
-```bash
-node /path/to/aflt/examples/loops/hello-aflt-scratch/m0-check.js --seed-docs
-aflt loop run /path/to/aflt/examples/loops/hello-aflt-scratch/hello-aflt-scratch.json --allow-existing
-```
+The first phase, `seed-docs`, is a `type: "script"` phase (no AI call): it
+runs `node m0-check.js --seed-docs`, which copies only `AGENTS.md`, `SPEC.md`,
+`.agentfleet.json` and `.gitignore` into the empty repo (never overwriting)
+and commits them. The M0 agent then reads `SPEC.md` and writes the scaffold.
+The M0 prompt also carries the full contract, and `m0-check.js` re-installs any
+missing docs before it verifies, so M0 still works if the docs are absent.
 
 Pick an engine as for `hello-aflt` (`AGENTFLEET_ENGINE=cursor` or `copilot`,
 optional `COPILOT_MODEL` / definition `model`). Watch it live with a matching

@@ -17,6 +17,20 @@
   },
   "phases": [
     {
+      "id": "seed-docs",
+      "type": "script",
+      "eval": {
+        "command": [
+          "node",
+          "m0-check.js",
+          "--seed-docs"
+        ],
+        "exitCode": 0,
+        "timeoutSec": 60
+      },
+      "onPass": "commit"
+    },
+    {
       "id": "m0",
       "session": "hello-aflt-scratch-m0",
       "promptFile": "prompts/M0.txt",

@@ -57,9 +57,15 @@ describe('hello-aflt-scratch example (docs-only seed)', () => {
     assert.ok(!JSON.stringify(raw).includes('seed-m0'));
     assert.deepEqual(
       raw.phases.map((p) => p.id),
-      original.phases.map((p) => p.id)
+      ['seed-docs', ...original.phases.map((p) => p.id)]
     );
-    for (const p of raw.phases) {
+    const seedPhase = raw.phases[0];
+    assert.equal(seedPhase.type, 'script');
+    assert.deepEqual(seedPhase.eval.command, ['node', 'm0-check.js', '--seed-docs']);
+    assert.equal(seedPhase.onPass, 'commit');
+    const m0Raw = raw.phases.find((p) => p.id === 'm0');
+    assert.ok(!m0Raw.type || m0Raw.type === 'run', 'm0 must be an AI build phase');
+    for (const p of raw.phases.filter((x) => x.type !== 'script')) {
       assert.match(p.session, /^hello-aflt-scratch-/, p.id);
     }
     assert.equal(raw.allow.push, false);
@@ -67,7 +73,7 @@ describe('hello-aflt-scratch example (docs-only seed)', () => {
 
     const result = loop.validateFile(scratchJson, { checkCwd: false, cwdBase: tmpDir() });
     assert.equal(result.ok, true, (result.errors || []).join('; '));
-    for (const p of result.definition.phases) {
+    for (const p of result.definition.phases.filter((x) => x.type !== 'script')) {
       assert.ok(p.promptFile && p.promptFile.startsWith(scratchDir), p.promptFile);
       assert.ok(fs.existsSync(p.promptFile), p.promptFile);
     }
@@ -207,8 +213,7 @@ describe('hello-aflt-scratch example (docs-only seed)', () => {
   it('docs point at the scratch variant', () => {
     const quick = fs.readFileSync(path.join(repoRoot, 'docs', 'cli-quickstart-loops.md'), 'utf8');
     assert.match(quick, /hello-aflt-scratch\/hello-aflt-scratch\.json/);
-    assert.match(quick, /m0-check\.js" --seed-docs/);
-    assert.match(quick, /--allow-existing/);
+    assert.match(quick, /seed-docs/);
     const readme = fs.readFileSync(path.join(scratchDir, 'README.md'), 'utf8');
     assert.match(readme, /git init/);
     assert.match(readme, /aflt loop run .*hello-aflt-scratch\.json/);

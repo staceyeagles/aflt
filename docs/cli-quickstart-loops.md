@@ -107,7 +107,7 @@ aflt loop validate "$AFLT_HOME/examples/loops/hello-aflt-scratch/hello-aflt-scra
 aflt loop run "$AFLT_HOME/examples/loops/hello-aflt-scratch/hello-aflt-scratch.json"
 ```
 
-M0's check installs the seed docs after the agent's first pass and commits them with M0. To give the M0 agent `AGENTS.md`/`SPEC.md` up front, run `node "$AFLT_HOME/examples/loops/hello-aflt-scratch/m0-check.js" --seed-docs` first and add `--allow-existing` to `aflt loop run`.
+A `seed-docs` script phase (no AI call) copies the docs in and commits them before the M0 agent starts.
 
 Status: `aflt loop status hello-aflt-scratch --json`. Details:
 [examples/loops/hello-aflt-scratch/README.md](../examples/loops/hello-aflt-scratch/README.md).
