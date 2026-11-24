@@ -511,6 +511,19 @@ exit 1
     assert.match(repoRun.stderr, /aflt checkout|loop definition/);
   });
 
+  it('tells the user how to fix a fresh non-git directory but stays strict', () => {
+    const loop = require('../lib/loop');
+    const inspection = loop._test.inspectLoopWorkdir(cwd);
+    assert.equal(inspection.ok, false);
+    const msg = inspection.problems.join('\n');
+    assert.match(msg, /is not a git repository/);
+    assert.match(msg, /git init/);
+    assert.match(msg, /--allow-existing/);
+
+    gitInit(cwd);
+    assert.equal(loop._test.inspectLoopWorkdir(cwd).ok, true);
+  });
+
   it('grants Copilot plan-next the loop state dir and plan-next.json write rule', () => {
     const loop = require('../lib/loop');
     const copilot = require('../lib/copilot');
