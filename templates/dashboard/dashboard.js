@@ -743,6 +743,8 @@ function renderLoopsListHtml(loops, selectedName) {
     const selected = selectedName && name === selectedName;
     const status = String(loop.status || 'unknown');
     const meta = [
+      loop.active ? 'live' : null,
+      loop.engine ? loop.engine + (loop.model ? '/' + loop.model : '') : null,
       loop.phaseId ? 'phase ' + loop.phaseId : null,
       loop.attempt != null ? 'attempt ' + loop.attempt : null,
       formatLoopElapsed(loop.elapsedMs),
@@ -1004,6 +1006,8 @@ function renderLoopDetailHtml(detail) {
   html += '<div class="loops-stats">';
   const stats = [
     { k: 'Status', v: status },
+    { k: 'Engine', v: detail.engine || '—' },
+    { k: 'Model', v: detail.model || '—' },
     { k: 'Phase', v: detail.phaseId || '—' },
     { k: 'Attempt', v: detail.attempt != null ? String(detail.attempt) : '—' },
     { k: 'Step', v: detail.step || '—' },
@@ -1039,6 +1043,36 @@ function renderLoopDetailHtml(detail) {
   return html;
 }
 
+/** Fields of a loop summary/detail that make a rendered detail pane stale. */
+function loopSyncSignature(loop) {
+  if (!loop || typeof loop !== 'object') return '';
+  const budget = loop.budget || {};
+  const elapsed = Number(loop.elapsedMs);
+  return JSON.stringify([
+    loop.name,
+    loop.status,
+    loop.phaseId,
+    loop.phaseIndex,
+    loop.attempt,
+    loop.step,
+    loop.runsUsed != null ? loop.runsUsed : budget.runsUsed,
+    loop.active ? 1 : 0,
+    loop.updatedAt,
+    Number.isFinite(elapsed) ? Math.floor(elapsed / 1000) : null,
+  ]);
+}
+
+/**
+ * Whether the selected loop's detail pane must be re-fetched/re-rendered after
+ * the list poll delivered `summary` (the loop's row from /api/loops).
+ * `synced` is { name, signature } of the summary the pane last synced to.
+ */
+function loopDetailNeedsSync(summary, synced, selectedName) {
+  if (!selectedName || !summary || summary.name !== selectedName) return false;
+  if (!synced || synced.name !== selectedName) return true;
+  return loopSyncSignature(summary) !== synced.signature;
+}
+
 /** Build a default empty phase editor model. */
 function emptyLoopPhaseForm(index) {
   return {
@@ -1068,6 +1102,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     graphViewTransform, clampTimelineWindow, resolveTimelineWindow, formatTimelineAxisLabel,
     zoomTimelineWindow, panTimelineWindow, layoutTimelineMarkers, maxTimelineLaneCount,
     formatLoopElapsed, formatLoopBudget, formatLoopUsage, loopStatusClass, renderLoopStepPipeline,
+    loopSyncSignature, loopDetailNeedsSync,
     renderLoopsListHtml, renderLoopPhaseTree, renderLoopPhaseCards, renderLoopDetailHtml,
     emptyLoopPhaseForm, escapeHtml,
   };
@@ -3717,6 +3752,9 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
 
     let selectedLoopName = null;
     let loopDetailCache = null;
+    let loopDetailSynced = null;
+    let loopDetailSyncing = false;
+    let loopDetailHtml = '';
     let loopDefinitionsCache = [];
     let loopFormPhases = [emptyLoopPhaseForm(0)];
     let loopsLoading = false;
@@ -4016,24 +4054,69 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       loopsDefinitionsEl.innerHTML = html;
     }
 
+    function loopSummaryFromState(name) {
+      const rows = (state && state.loops && state.loops.loops) || [];
+      for (let i = 0; i < rows.length; i++) {
+        if (rows[i] && rows[i].name === name) return rows[i];
+      }
+      return null;
+    }
+
+    /** Swap the detail markup, keeping the panel and eval-tail scroll offsets. */
+    function setLoopDetailHtml(html) {
+      if (!loopsDetailEl || html === loopDetailHtml) return;
+      const panel = loopsDetailEl.parentNode || null;
+      const panelTop = panel ? panel.scrollTop : 0;
+      const tails = loopsDetailEl.querySelectorAll
+        ? Array.prototype.map.call(loopsDetailEl.querySelectorAll('.loops-eval-tail'), function (el) {
+            return el.scrollTop;
+          })
+        : [];
+      loopDetailHtml = html;
+      loopsDetailEl.innerHTML = html;
+      if (panel) panel.scrollTop = panelTop;
+      if (loopsDetailEl.querySelectorAll) {
+        Array.prototype.forEach.call(loopsDetailEl.querySelectorAll('.loops-eval-tail'), function (el, i) {
+          if (tails[i] != null) el.scrollTop = tails[i];
+        });
+      }
+    }
+
     async function selectLoop(name) {
+      const changed = name !== selectedLoopName;
       selectedLoopName = name;
       renderLoopsListFromState();
       if (!name) {
         loopDetailCache = null;
-        if (loopsDetailEl) {
-          loopsDetailEl.innerHTML = '<div class="empty">Select a loop or create one</div>';
-        }
+        loopDetailSynced = null;
+        setLoopDetailHtml('<div class="empty">Select a loop or create one</div>');
         return;
       }
+      const summary = loopSummaryFromState(name);
       try {
-        loopDetailCache = await fetchLoopDetail(name);
-        if (loopsDetailEl) loopsDetailEl.innerHTML = renderLoopDetailHtml(loopDetailCache);
+        const detail = await fetchLoopDetail(name);
+        if (selectedLoopName !== name) return;
+        loopDetailCache = detail;
+        loopDetailSynced = { name: name, signature: loopSyncSignature(summary || detail) };
+        if (changed && loopsDetailEl && loopsDetailEl.parentNode) loopsDetailEl.parentNode.scrollTop = 0;
+        setLoopDetailHtml(renderLoopDetailHtml(loopDetailCache));
       } catch (err) {
-        if (loopsDetailEl) {
-          loopsDetailEl.innerHTML =
-            '<div class="empty">' + escapeHtml(String(err.message || err)) + '</div>';
-        }
+        setLoopDetailHtml(
+          '<div class="empty">' + escapeHtml(String(err.message || err)) + '</div>'
+        );
+      }
+    }
+
+    /** Re-sync the selected loop's detail pane when the polled loop row changed. */
+    async function syncSelectedLoopDetail() {
+      if (!selectedLoopName || loopDetailSyncing) return;
+      const summary = loopSummaryFromState(selectedLoopName);
+      if (!loopDetailNeedsSync(summary, loopDetailSynced, selectedLoopName)) return;
+      loopDetailSyncing = true;
+      try {
+        await selectLoop(selectedLoopName);
+      } finally {
+        loopDetailSyncing = false;
       }
     }
 
@@ -4069,7 +4152,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       renderLoopsListFromState();
       renderLoopDefinitionsList();
       if (loopDetailCache && selectedLoopName) {
-        if (loopsDetailEl) loopsDetailEl.innerHTML = renderLoopDetailHtml(loopDetailCache);
+        setLoopDetailHtml(renderLoopDetailHtml(loopDetailCache));
       }
       refreshLoopsData();
     }
@@ -4532,10 +4615,8 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       if (historyTooltipId) renderHistoryTooltip();
       if (currentView === 'loops') {
         renderLoopsListFromState();
-        if (selectedLoopName && loopDetailCache && loopDetailCache.name === selectedLoopName) {
-          // Keep showing last detail; refreshLoopsData is kicked from setView/refresh.
-          if (loopsDetailEl) loopsDetailEl.innerHTML = renderLoopDetailHtml(loopDetailCache);
-        }
+        // The SSE tick carries fresh loop rows; refetch the detail when they moved.
+        syncSelectedLoopDetail();
       }
       // Always rebuild/draw the graph model so a later switch (or tests) have nodes.
       updateSim(opts);
@@ -4630,6 +4711,12 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     function firstState(data) {
       applyState(data, { forceRebuild: true });
       if (data && data.defaultView === 'graph') setView('graph');
+      else if (data && data.defaultView === 'loops') {
+        setView('loops');
+        const rows = (data.loops && data.loops.loops) || [];
+        const pick = rows.find(function (l) { return l && l.active; }) || rows[0];
+        if (pick && pick.name) selectLoop(pick.name);
+      }
     }
 
     if (snapshotData) {

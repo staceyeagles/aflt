@@ -1081,7 +1081,11 @@ body {
   color: var(--cp-text-muted);
 }
 .loops-form-status.error { color: var(--cp-danger); }
-.loops-hint {
+/* .hint is absolutely positioned for the graph view; keep this one in flow so
+   it never overlaps the bottom of the scrollable loop panels. */
+.hint.loops-hint {
+  position: static;
+  flex: none;
   margin-top: 0.65rem;
   font-size: 0.75rem;
   color: var(--cp-text-soft);
