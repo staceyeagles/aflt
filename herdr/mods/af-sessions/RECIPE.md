@@ -1,6 +1,6 @@
 # af sessions
 
-![af sessions](preview.png)
+![Herdr with the af sessions panel in the sidebar (screenshot predates the space picker)](../../../docs/images/herdr.png)
 
 A Herdr sidebar panel that lists AgentFleet (`aflt`) tracked sessions, shows
 lifecycle and live Herdr runtime, and focuses or resumes them. A space picker
@@ -45,7 +45,7 @@ lifecycle status, a colored runtime dot, and relative last-used. Group headers
 - Mod `mods/af-sessions/` (`place: none`): gpui-kit `View`, `exec`/`run`/
   `spaces`/`focused`/`theme`/`notify`/`home` from `herdr`; `afspace.js` holds
   the pure aflt-space helpers (tested by `test/herdr-af-sessions-space.test.js`).
-- Runs `aflt ls --json --all` (prefer `~/.local/bin/aflt` (else `af`), else `/bin/zsh -lc`).
+- Runs `aflt space ls --json` and `aflt [--space <name>] ls --json --all` (prefer `~/.local/bin/aflt` (else `af`), else `/bin/zsh -lc`).
 
 ## Watch out
 
