@@ -425,7 +425,7 @@ Usage:
                             Validate a loop definition JSON file (schema,
                             phases, eval, allow/onPass). Exit 1 on errors.
   aflt loop run <file> [--dry-run] [--json] [--fresh]
-                            [--force] [--allow-existing]
+                            [--force] [--allow-existing] [--create-worktree]
                             Run a multi-phase loop (plan→develop→eval→fix,
                             optional plan-next). Persists state under
                             $AGENTFLEET_HOME/loops/<name>/.
@@ -435,6 +435,10 @@ Usage:
                             aflt checkout or the definition, is refused (dry-run
                             still prints the plan, then exits 1).
                             --allow-existing overrides that folder check.
+                            workdir.mode "worktree" (definition key) instead
+                            accepts a clean non-empty git worktree that is not
+                            the running aflt checkout; --create-worktree runs
+                            \`git worktree add\` for a missing workdir.path.
                             --force grants full tool permissions for this run
                             (Cursor --force / Copilot --allow-all-tools).
                             Definitions default force to false; set force:true
@@ -7642,12 +7646,28 @@ function cmdDoctor(argv) {
   process.exitCode = ok ? 0 : 1;
 }
 
+function formatWorkdirLine(result) {
+  const wd = result.workdir;
+  if (!wd || wd.mode !== 'worktree') return '';
+  const bits = [
+    'mode=worktree',
+    `base=${wd.base || '-'}`,
+    `git=${wd.git}`,
+    `clean=${wd.clean}`,
+    `linked=${Boolean(wd.linkedWorktree)}`,
+    wd.ok ? 'ok' : 'refused',
+  ];
+  if (wd.created) bits.push(wd.created);
+  if (wd.createCommand) bits.push(`create: ${wd.createCommand}`);
+  return `  workdir: ${bits.join(' ')}\n`;
+}
+
 async function cmdLoop(argv) {
   const { args, flags } = parseArgs(argv || []);
   const sub = args[0];
   const asJson = Boolean(flags.json);
   const usage =
-    'usage: aflt loop validate <file> | run <file> [--dry-run] [--json] [--fresh] [--force] [--allow-existing] | start <file> | pause <name> | status [name] | stop <name> | resume <name> | approve <name> [--json]';
+    'usage: aflt loop validate <file> | run <file> [--dry-run] [--json] [--fresh] [--force] [--allow-existing] [--create-worktree] | start <file> | pause <name> | status [name] | stop <name> | resume <name> | approve <name> [--json]';
   if (!sub || sub === 'help' || sub === '-h' || sub === '--help') {
     fail(usage);
   }
@@ -7692,7 +7712,7 @@ async function cmdLoop(argv) {
     const file = args[1];
     if (!file) {
       fail(
-        'usage: aflt loop run <file> [--dry-run] [--json] [--fresh] [--force] [--allow-existing]'
+        'usage: aflt loop run <file> [--dry-run] [--json] [--fresh] [--force] [--allow-existing] [--create-worktree]'
       );
     }
     const dryRun = Boolean(flags['dry-run']);
@@ -7704,6 +7724,7 @@ async function cmdLoop(argv) {
         fresh,
         forceTools: Boolean(flags.force),
         allowExisting: Boolean(flags['allow-existing']),
+        createWorktree: Boolean(flags['create-worktree']),
       });
     } catch (err) {
       fail(err.message, { json: asJson });
@@ -7741,6 +7762,7 @@ async function cmdLoop(argv) {
       process.stdout.write(
         `dry-run: loop "${result.name}" — ${result.phases.length} phase(s)\n` +
           `  cwd: ${result.cwd}\n` +
+          formatWorkdirLine(result) +
           `  permissions: ${result.permissions || 'restricted'}\n` +
           `  model: ${result.resolvedModel || result.model || '(engine default)'}\n`
       );
