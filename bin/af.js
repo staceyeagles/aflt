@@ -34,6 +34,7 @@ const purgeLib = require('../lib/purge');
 const turns = require('../lib/turns');
 const notify = require('../lib/notify');
 const loopLib = require('../lib/loop');
+const doctorLib = require('../lib/doctor');
 const serviceLib = require('../lib/service');
 const spaceLib = require('../lib/space');
 const evalMeasure = require('../scripts/eval/measure');
@@ -413,11 +414,19 @@ Usage:
                             Symlink (default) or copy the af-sessions Herdr panel
                             + af layout into ~/.config/herdr-app (or $HERDR_APP_HOME)
   aflt herdr-app status       Report linked/copied/missing for the panel + layout
-  aflt doctor [--json]
+  aflt doctor [--json] [--strict [--notify]] [--port N] [--loop <file>]
                             Read-only environment checks (hc, engines, home,
                             notify status, memory DOC-AGENT freshness — never
                             prints the notify key; outdated DOC-AGENT hints
-                            \`aflt memory config\`)
+                            \`aflt memory config\`). --strict adds preflight:
+                            engine CLIs on PATH (+ ~/.local/bin hint), engine
+                            sign-in probe (cursor runs \`cursor-agent status\`,
+                            copilot/opencode report "unknown (no probe)" warn),
+                            notify config (--notify: live round trip), a free
+                            ephemeral port, and exits 1 if any check fails
+                            (warnings never fail). --port N test-binds
+                            127.0.0.1:N and releases it. --loop <file> shows
+                            the loop workdir inspection and engine CLIs.
   aflt notify test [--json]
                             Send a sample notify webhook event (requires
                             config.json notify.url or AFLT_NOTIFY_URL)
@@ -771,7 +780,7 @@ async function main() {
       cmdSetup(rest);
       break;
     case 'doctor':
-      cmdDoctor(rest);
+      await cmdDoctor(rest);
       break;
     case 'notify':
       await cmdNotify(rest);
@@ -7488,9 +7497,14 @@ function cmpSemver(a, b) {
   return a.patch - b.patch;
 }
 
-function cmdDoctor(argv) {
+async function cmdDoctor(argv) {
   const { flags } = parseArgs(argv);
   const asJson = Boolean(flags.json);
+  const strict = Boolean(flags.strict);
+  if (flags.notify && !strict) fail('doctor: --notify requires --strict', { json: asJson });
+  for (const f of ['port', 'loop']) {
+    if (flags[f] === true) fail(`doctor: --${f} requires a value`, { json: asJson });
+  }
   const checks = [];
   function add(name, ok, detail) {
     checks.push({ name, ok: Boolean(ok), detail: detail || null });
@@ -7613,7 +7627,7 @@ function cmdDoctor(argv) {
     add('agent_docs', true, `status unavailable: ${err.message}`);
   }
   // copilot/hc optional for plain-only workflows — warn on old herdr-core but do not fail exit
-  const ok = checks
+  const legacyOk = checks
     .filter(
       (c) =>
         ![
@@ -7633,11 +7647,32 @@ function cmdDoctor(argv) {
         ].includes(c.name)
     )
     .every((c) => c.ok);
+  let ok = legacyOk;
+  let failed = [];
+  const extended = strict || flags.port != null || flags.loop != null;
+  if (extended) {
+    const pre = await doctorLib.runPreflightChecks({
+      strict,
+      notifyLive: Boolean(flags.notify),
+      port: flags.port,
+      loopFile: flags.loop ? String(flags.loop) : null,
+      env: process.env,
+    });
+    doctorLib.classifyLegacy(checks, pre.requiredEngines);
+    for (const c of pre.checks) {
+      checks.push({ name: c.name, ok: c.ok, status: c.status, detail: c.detail || null, ...(c.data ? { data: c.data } : {}) });
+    }
+    failed = checks.filter((c) => c.status === 'fail').map((c) => c.name);
+    // Strict mode fails on any failed check, including the advisory legacy rows that are required.
+    if (strict) ok = failed.length === 0;
+    else ok = legacyOk && !pre.checks.some((c) => c.status === 'fail');
+  }
   if (asJson) {
-    emitJson({ ok, checks });
+    emitJson({ ok, checks, ...(strict ? { strict: true, failed } : {}) });
   } else {
     for (const c of checks) {
-      process.stdout.write(`${c.ok ? 'ok ' : '!! '} ${c.name}: ${c.detail || ''}\n`);
+      const mark = c.ok ? 'ok ' : c.status === 'warn' ? 'warn' : '!! ';
+      process.stdout.write(`${mark} ${c.name}: ${c.detail || ''}\n`);
     }
     process.stdout.write(
       '\nHerdr smoke: hc server status && hc ls --json | head -c 200 && aflt ls\n'

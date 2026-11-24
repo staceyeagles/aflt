@@ -698,6 +698,11 @@ aflt docs --status --json
 aflt setup [--apply] [--json] [--herdr] [--memory <path>] [--force]
 # Machine setup preview (default) or apply; never edits shell rc / sessions
 aflt doctor [--json]                 # read-only environment checks (notify + DOC-AGENT + agent_docs; never prints key)
+aflt doctor --strict [--notify] [--port N] [--loop <file>] [--json]
+# Preflight: engine CLIs on PATH (+ ~/.local/bin hint), sign-in probe (cursor: `cursor-agent status`;
+# copilot/opencode: "unknown (no probe)" warning), notify config (--notify = live round trip),
+# free-port test-bind (--port N; default 8787 only reported), --loop inspects the workdir + engine CLIs.
+# Checks carry status ok|warn|fail; exit 1 only when a check fails.
 aflt notify test [--json]            # sample notify webhook POST (requires url config/env)
 aflt which-backend                   # auto-detected resume --all backend
 aflt herdr-templates [--force] [--dry-run]

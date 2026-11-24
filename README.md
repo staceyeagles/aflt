@@ -150,6 +150,7 @@ curl https://cursor.com/install -fsS | bash   # agent / cursor-agent on PATH
 
 aflt doctor          # read-only: node, home, hc, engines, MCP hints, notify status
 aflt doctor --json
+aflt doctor --strict [--notify] [--port N] [--loop FILE]   # preflight; exit 1 on any failed check
 aflt notify test     # sample webhook POST (requires notify.url / AFLT_NOTIFY_URL)
 ```
 
@@ -598,7 +599,7 @@ aflt import copilot <uuid|prefix>…   # register; --title (single id), --tag, -
 ## Doctor, setup, JSON, dry-run
 
 - **`aflt setup [--apply] [--json] [--herdr] [--memory <path>] [--force]`** — machine setup preview (default) or apply. Idempotent; never edits shell rc, never mutates sessions, never installs engines.
-- **`aflt doctor [--json]`** — read-only checks: node, home, registry, default engine, `hc`, engines, MCP wiring hints, notify status (never prints the notify key).
+- **`aflt doctor [--json]`** — read-only checks: node, home, registry, default engine, `hc`, engines, MCP wiring hints, notify status (never prints the notify key). `--strict` adds engine CLI / sign-in / notify / free-port preflight (`--notify` live round trip, `--port N`, `--loop <file>`); only a failed check exits non-zero, warnings do not.
 - **`aflt notify test [--json]`** — send a sample opt-in webhook event (`run.completed`). Requires `config.json` `notify.url` or `AFLT_NOTIFY_URL`.
 - **`--json`** — machine-readable stdout on supporting commands (single JSON object where applicable).
 - **`--dry-run`** — plan only; no registry/state mutation (new, run, spawn, master, docs, msg enable, adopt, cwd, rm, turns backfill, sync, herdr-*, mcp install, …). `aflt purge` / `aflt orphans` / `aflt turns backfill` are dry-run by default unless `--apply`.

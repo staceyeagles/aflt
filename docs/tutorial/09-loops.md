@@ -78,6 +78,8 @@ Primary engine precedence: phase `engine` > definition `engine` > `AGENTFLEET_EN
 
 Optional `"engines": ["copilot", "cursor", "opencode"]` adds ordered failover. A phase moves to the next installed engine in the list (and reruns the same attempt, not a fix attempt) when a worker run hits a non-retryable infrastructure error: `cli_missing`, `auth_required`, `usage_limit`, `rate_limit`, or `model_unavailable`. A failing eval never fails over. Sessions are engine-bound, so the new engine uses `<session>-<engine>` (phase-level `model` is dropped; model names are engine-specific). A primary whose CLI is not installed is skipped up front. The engine actually used is stored on the phase (`engine`, `failovers[]`) and recorded as history/notify event `loop.engine.failover`. With no engines left, the phase fails as before.
 
+Before an unattended run, `aflt doctor --strict --loop <def.json>` checks that the engine CLIs are installed and signed in, that notify is configured, that the dashboard port is free (`--port N`), and shows the loop's workdir inspection (`--notify` adds a live webhook round trip). It exits non-zero only on a failed check.
+
 ## Approval gates and plan-next
 
 - Phase `gate: "approve"` → runner `status=waiting`, notify `loop.gate.waiting`; release with `aflt loop approve` or dashboard `POST /api/loops/:name/approve`
