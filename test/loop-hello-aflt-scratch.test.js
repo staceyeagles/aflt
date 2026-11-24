@@ -190,7 +190,7 @@ describe('hello-aflt-scratch example (docs-only seed)', () => {
     assert.match(r.stderr, /must run node --test/);
     assert.match(r.stderr, /dependencies must be empty/);
     assert.match(r.stderr, /8792/);
-    assert.match(r.stderr, /export createServer/);
+    assert.match(r.stderr, /named export createServer/);
   });
 
   it('m0-check passes an agent-built scaffold (tests + server boot)', () => {

@@ -117,7 +117,7 @@ function checkScaffold(cwd) {
     if (!/8792/.test(server)) problems.push('server.js must default PORT to 8792');
     if (!/127\.0\.0\.1/.test(server)) problems.push('server.js must bind 127.0.0.1 by default');
     if (!/export\s+(function|const|async function)\s+createServer|export\s*\{[^}]*createServer/.test(server)) {
-      problems.push('server.js must export createServer()');
+      problems.push('server.js must have a named export createServer() (not export default)');
     }
     if (/require\(/.test(server)) problems.push('server.js must be ESM (no require())');
   }
