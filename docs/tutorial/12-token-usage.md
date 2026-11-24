@@ -144,6 +144,8 @@ When you open the live UI (`aflt dashboard --serve` — see [03 — Dashboard](0
 
 The Loops view shows the per-loop token rollup and recorded cost in each row and in the detail (`6.1m tok · 9 turns · reported · 278.8 credits · $2.79` for the Copilot Sonnet hello-aflt run; Cursor loops say `cost unknown` because Cursor records no cost). The rollup is recomputed at read time from the phase sessions' turns, de-duplicated, so loops recorded before the double-count fix show corrected totals (that Sonnet run's stored rollup said 10.4M tokens; it is 6.1M) with a note in the detail; `state.json` is not rewritten. Copilot credits come from the same per-call usage records as the making-of page when older turns lack them. Use `aflt making-of` for per-call and per-phase figures.
 
+![Loops view for the Copilot Sonnet run: AI credits and dollars in the row and the Tokens line](../images/dashboard-loops-copilot.png)
+
 ## Memory rollup
 
 With a configured memory repo, `aflt memory sync` includes a compact `usage` object on each session line in `<project>/_aflt/sessions.jsonl`, and the generated `timeline.md` can show a project-level line such as:

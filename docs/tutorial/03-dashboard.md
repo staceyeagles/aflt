@@ -7,7 +7,7 @@
 - Distinguish the live UI from `aflt memory dashboard`
 - Optionally install the macOS LaunchAgent via `aflt service`
 
-Screenshots: [dashboard-graph.png](../images/dashboard-graph.png), [dashboard-history.png](../images/dashboard-history.png), [dashboard-sessions.png](../images/dashboard-sessions.png), [dashboard-loops.png](../images/dashboard-loops.png) (Loops view), [dashboard-history-loop.png](../images/dashboard-history-loop.png) (a loop's phase sessions in History).
+Screenshots: [dashboard-graph.png](../images/dashboard-graph.png), [dashboard-history.png](../images/dashboard-history.png), [dashboard-sessions.png](../images/dashboard-sessions.png), [dashboard-loops.png](../images/dashboard-loops.png) (Loops view), [dashboard-loops-copilot.png](../images/dashboard-loops-copilot.png) (Loops view with Copilot credits), [dashboard-history-loop.png](../images/dashboard-history-loop.png) (a loop's phase sessions in History).
 
 ## Serve
 

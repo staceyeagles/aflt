@@ -7,7 +7,7 @@
 <p align="center">
   <img alt="Node 20.10+" src="https://img.shields.io/badge/node-%3E%3D20.10-brightgreen?logo=node.js&logoColor=white"/>
   <img alt="version 1.5.0" src="https://img.shields.io/badge/version-1.5.0-blue"/>
-  <img alt="884 tests passing" src="https://img.shields.io/badge/tests-884%20passing-success"/>
+  <img alt="886 tests passing" src="https://img.shields.io/badge/tests-886%20passing-success"/>
   <img alt="macOS | Linux untested" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20untested-lightgrey"/>
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-yellow"/>
 </p>
@@ -24,14 +24,14 @@ Zero npm runtime dependencies beyond **Node ≥20.10**. The npm name `aflt` is n
 
 Live dashboard (`aflt dashboard --serve`):
 
-![aflt dashboard — star graph of projects and sessions](docs/images/dashboard-graph.png)
-*Graph view: projects and sessions colored by Working / Waiting / Idle / Completed / Failed.*
+![aflt dashboard — star graph of a project, its loop master and phase sessions](docs/images/dashboard-graph.png)
+*Graph view (space `scratch-composer`): projects and sessions colored by Working / Waiting / Idle / Completed / Failed; the **Recent** list shows times in your local zone.*
 
-![aflt dashboard — history timeline, 7d preset](docs/images/dashboard-history.png)
-*History view: activity Gantt with completed/failed turn markers (7d preset).*
+![aflt dashboard — history timeline, all preset](docs/images/dashboard-history.png)
+*History view: activity Gantt with completed/failed turn markers (all preset, side panel hidden).*
 
-![aflt dashboard — sessions overview](docs/images/dashboard-sessions.png)
-*Sessions overview: collapsible project/session tree with live stats.*
+![aflt dashboard — sessions overview with a project selected](docs/images/dashboard-sessions.png)
+*Sessions overview (space `cmp-copilot-claude-sonnet-5.5`): collapsible project/session tree, project detail with local-time last activity, and the project's usage summary with Copilot AI credits and dollars (278.8 credits · $2.79).*
 
 ### Herdr panel
 
@@ -46,7 +46,10 @@ Install the panel and layout with `aflt setup --apply --herdr` (or `aflt herdr-a
 `aflt loop` building the [hello-aflt](examples/loops/hello-aflt/) tile-dungeon roguelike end to end. Below: the [docs-only `hello-aflt-scratch`](examples/loops/hello-aflt-scratch/) variant on Cursor `composer-2.5` (no seed code or HTML; every phase passed, eval 85.2 after M5a → 89.9 after three improve rounds).
 
 ![aflt dashboard Loops view: hello-aflt-scratch completed, phase tree m0–m5a, improve-r1–r3 with eval scores](docs/images/dashboard-loops.png)
-*Loops view (`aflt dashboard --serve`, space `scratch-composer`): status, engine/model, budget, token rollup, step pipeline, phase tree with eval scores, and the **Making of** button.*
+*Loops view (`aflt dashboard --serve`, space `scratch-composer`): status, engine/model, Started / Updated in local time, active elapsed time (20m 53s, not the 3 h wall clock since the first run), budget, token rollup, step pipeline, phase tree with eval scores, and the **Making of** button. Stop is grey and disabled because the loop has completed.*
+
+![aflt dashboard Loops view for a Copilot run: tokens, AI credits and dollars](docs/images/dashboard-loops-copilot.png)
+*Loops view for the Copilot Claude Sonnet 5.5 run: the row and the Tokens line show recorded AI credits and dollars (6.1m tok · 278.8 credits · $2.79), with a note that the totals were recomputed from per-session records (the stored rollup was double-counted).*
 
 ![aflt dashboard History view: the loop master with one session per phase](docs/images/dashboard-history-loop.png)
 *History view (24h preset): the loop master with one session per phase, each with its token count and turn markers.*
@@ -821,7 +824,7 @@ See `af --help` / `aflt help` for the authoritative flag list. Long-form help co
 npm test
 ```
 
-885 tests (Node test runner): 884 passing and 1 skipped in the hermetic suite (the skipped live `create-chat` smoke test only runs with a real `cursor-agent`). Coverage includes registry, engines, Herdr backends and the af sessions panel space picker, orchestration, messaging, MCP, docs and tutorial commands, project/timeline, project memory, live dashboard (local-time stamps, Stop state, loop credits), loops (active-time budget, script phases, verify tiers, commit gate, escalation, failover, hello-aflt and hello-aflt-scratch), making-of, usage, named spaces, eval, dry-run purity, interactive rm/stop pickers, and hermetic `AGENTFLEET_HOME` fixtures.
+887 tests (Node test runner): 886 passing and 1 skipped in the hermetic suite (the skipped live `create-chat` smoke test only runs with a real `cursor-agent`). Coverage includes registry, engines, Herdr backends and the af sessions panel space picker, orchestration, messaging, MCP, docs and tutorial commands, project/timeline, project memory, live dashboard (local-time stamps, Stop state, loop credits), loops (active-time budget, script phases, verify tiers, commit gate, escalation, failover, hello-aflt and hello-aflt-scratch), making-of, usage, named spaces, eval, dry-run purity, interactive rm/stop pickers, and hermetic `AGENTFLEET_HOME` fixtures.
 
 ## Versioning and releases
 
