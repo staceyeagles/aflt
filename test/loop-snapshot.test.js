@@ -145,4 +145,51 @@ describe('loop snapshots prompt files and outside check scripts', () => {
     );
     assert.equal(out.phases[0].promptFile, path.join('.agentfleet', 'prompts', 'm0.md'));
   });
+  it('rejects planned checks that climb out of the project (the scratch run\'s ../hello-aflt/improve-gate.js)', () => {
+    clearMods();
+    const loop = require('../lib/loop');
+    const cwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'af-snap-plan-')));
+    try {
+      const v = loop.validateDefinition(
+        {
+          name: 'p',
+          cwd,
+          engine: 'cursor',
+          budget: { maxRuns: 9, maxPhases: 9 },
+          phases: [
+            { id: 'm0', prompt: 'x', eval: { command: ['node', '--test'] } },
+            { id: 'plan-next', type: 'plan-next', force: true },
+          ],
+        },
+        { checkCwd: false }
+      );
+      assert.equal(v.ok, true, (v.errors || []).join('; '));
+      const state = loop.createInitialState(v.definition);
+      state.definitionPath = path.join(cwd, '..', 'defs-elsewhere', 'loop.json');
+      const bad = loop.insertPlannedPhases(state, 1, [{ id: 'improve-r1', prompt: 'improve', eval: { command: ['node', '../hello-aflt/improve-gate.js'] } }], { checkPromptFiles: false });
+      assert.equal(bad.ok, false);
+      assert.match(bad.error, /improve-r1: eval command uses \.\.\/hello-aflt\/improve-gate\.js .* outside the project folder/);
+      const badStr = loop.insertPlannedPhases(state, 1, [{ id: 'improve-r1', prompt: 'improve', eval: { command: 'npm test && node ../x/gate.js' } }], { checkPromptFiles: false });
+      assert.equal(badStr.ok, false);
+      const ok = loop.insertPlannedPhases(state, 1, [{ id: 'improve-r1', prompt: 'improve', eval: { command: 'npm test && node scripts/eval/eval.js --json' } }], { checkPromptFiles: false });
+      assert.equal(ok.ok, true, ok.error);
+      const pv = loop.validateDefinition(
+        { name: 'q', cwd, engine: 'cursor', budget: { maxRuns: 3 }, phases: [{ id: 'm0', prompt: 'x', eval: { command: 'node ../shared/check.js' } }] },
+        { checkCwd: false }
+      );
+      assert.ok(pv.warnings.some((w) => /phase m0: check command reads .*shared\/check\.js outside the project folder/.test(w)), pv.warnings.join('; '));
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('planner and fix prompts tell the agent to stay inside the project', () => {
+    clearMods();
+    const loop = require('../lib/loop');
+    const fix = loop.buildFixPrompt({ id: 'r1' }, { code: 1, stdout: 'Cannot find module /x/improve-gate.js', stderr: '' });
+    assert.match(fix, /Work only inside the project folder/);
+    const plan = loop.buildPlanNextPrompt({ name: 'p', definition: { name: 'p', phases: [] }, history: [], phases: {} }, { id: 'plan-next' }, '/tmp/out.json');
+    assert.match(plan, /Eval commands must use files inside the project folder/);
+    assert.match(plan, /do not search other folders, other projects, or the aflt install/);
+  });
 });
