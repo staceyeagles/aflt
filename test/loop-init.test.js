@@ -193,17 +193,18 @@ describe('loop init: drafting (mock engine)', () => {
     // Pointer is not appended twice.
     li.ensureAgentsPointer(cwd, '.agentfleet/loop.json');
     assert.equal(fs.readFileSync(path.join(cwd, 'AGENTS.md'), 'utf8').split('## aflt loop').length, 2);
-    // Dashboard copy: absolute paths, listed and valid from the definitions dir.
+    // Dashboard copy: absolute project cwd, project-relative prompt paths; valid from the definitions dir.
     assert.ok(r.dashboardCopy && r.dashboardCopy.startsWith(path.join(home, 'loops', 'definitions')), r.dashboardCopy);
     const copy = JSON.parse(fs.readFileSync(r.dashboardCopy, 'utf8'));
     assert.equal(path.isAbsolute(copy.cwd), true);
-    assert.equal(path.isAbsolute(copy.phases[0].promptFile), true);
+    assert.equal(copy.phases[0].promptFile, path.join('.agentfleet', 'prompts', 'm0.md'));
     assert.equal(copy.improveModel, 'composer-2.5');
     assert.equal(copy.phases[2].type, 'plan-next');
     const loop = require('../lib/loop');
     assert.ok(loop.listSavedDefinitions().definitions.some((d) => d.name === 'demo'));
     const v = loop.validateFile(r.dashboardCopy, { cwdBase: os.tmpdir() });
     assert.equal(v.ok, true, (v.errors || []).join('; '));
+    assert.equal((v.warnings || []).filter((w) => /outside the project folder/.test(w)).length, 0, v.warnings.join('; '));
   });
 
   it('feeds validator and policy errors back for a repair, up to 2 times', async () => {
