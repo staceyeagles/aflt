@@ -101,6 +101,12 @@ Before an unattended run, `aflt doctor --strict --loop <def.json>` checks that t
 - Cap growth with `budget.maxPhases`
 - `onPass` (`none`|`commit`|`merge`|`push`) only runs when loop-level `allow` flags permit (default all false)
 
+## Stalled engines (idle timeout)
+
+An engine run that prints nothing and changes no file in the work folder for `idleTimeoutSec` seconds (default 1200 = 20 min) is stopped, with every child process (also ones in their own process group, like a shell tool blocked on input). The phase then counts as a timed-out attempt: it gets a fix attempt if `maxFixAttempts` allows, else it fails. Set `"idleTimeoutSec"` on the loop or a phase, or `AFLT_LOOP_IDLE_TIMEOUT_SEC`; `0` turns it off. `aflt loop status --json` and `/api/loops` report `lastActivityAt` (from `loops/<name>/activity.json` or the state), and the dashboard shows it as "Last activity".
+
+During improve rounds the dashboard shows the round (`improve-r2 (round 2/3)`, `round` in `/api/loops`) instead of plan-next, and the plan-next row reads "waiting · improve-r2 running".
+
 ## Dashboard scheduler / Loops UI
 
 `aflt loop start` registers a loop as `active` without running phases in that process. `aflt dashboard --serve` hosts an in-process scheduler (one runner per name; lock respected). Loops view: list, phase pipeline, eval tails, History links, start/pause/resume/stop/approve, define/edit form, and a **Making of** button.
