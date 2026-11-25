@@ -655,6 +655,9 @@ async function main() {
     case 'new':
       await cmdNew(rest);
       break;
+    case 'init':
+      await cmdInit(rest);
+      break;
     case 'run':
       await cmdRun(rest);
       break;
@@ -819,6 +822,180 @@ async function main() {
     default:
       fail(`unknown command: ${cmd}\n\n${USAGE}`);
   }
+}
+
+/**
+ * aflt init <name>: start a looped project (folder, git, space, starter
+ * SPEC.md / AGENTS.md / .agentfleet.json). Terminal-first; asks a few plain
+ * questions on a TTY unless --yes.
+ */
+async function cmdInit(argv) {
+  const { args, flags } = parseArgs(argv || []);
+  const positional = args.slice();
+  const asJson = recoverBoolFlag(flags, 'json', positional);
+  const yes = recoverBoolFlag(flags, 'yes', positional) || recoverBoolFlag(flags, 'y', positional);
+  const force = recoverBoolFlag(flags, 'force', positional);
+  const noSpace = recoverBoolFlag(flags, 'no-space', positional);
+  const usage =
+    'usage: aflt init <name> [--dir PATH] [--space NAME | --no-space] [--engine cursor|copilot|opencode]\n' +
+    '                 [--goal TEXT] [--stack TEXT] [--checks TEXT] [--budget-credits N] [--budget-hours N]\n' +
+    '                 [--yes] [--force] [--json]';
+  if (flags.help || flags.h || positional[0] === 'help') {
+    process.stdout.write(usage + '\n');
+    return;
+  }
+  const name = positional[0];
+  if (!name) fail(usage, { json: asJson });
+  let engineName = null;
+  if (flags.engine) {
+    try {
+      engineName = config.validateEngine(String(flags.engine));
+    } catch (err) {
+      fail(err.message, { json: asJson });
+    }
+  }
+  const projectInit = require('../lib/project-init');
+  const answers = {
+    goal: typeof flags.goal === 'string' ? flags.goal : null,
+    stack: typeof flags.stack === 'string' ? flags.stack : null,
+    checks: typeof flags.checks === 'string' ? flags.checks : null,
+    budgetCredits: flags['budget-credits'] != null && flags['budget-credits'] !== true ? flags['budget-credits'] : null,
+    budgetHours: flags['budget-hours'] != null && flags['budget-hours'] !== true ? flags['budget-hours'] : null,
+  };
+  const dir = typeof flags.dir === 'string' ? path.resolve(flags.dir) : path.resolve(process.cwd(), require('../lib/loop-init').slugName(name));
+  const docsExist = fs.existsSync(path.join(dir, 'SPEC.md')) && fs.existsSync(path.join(dir, 'AGENTS.md'));
+  const interactive = !yes && !asJson && process.stdin.isTTY && (!docsExist || force);
+  if (interactive) {
+    await projectInit.askQuestions(answers);
+  }
+  let result;
+  try {
+    result = projectInit.initProject({
+      name,
+      dir,
+      space: noSpace ? false : currentSpaceName() || null,
+      engine: engineName,
+      ...answers,
+      force,
+    });
+  } catch (err) {
+    fail(err.message || String(err), { json: asJson });
+  }
+  if (asJson) {
+    emitJson(result);
+    return;
+  }
+  const out = [];
+  out.push(`project ${result.project} in ${result.dir}${result.createdDir ? ' (new folder)' : ''}`);
+  out.push(`  git: ${result.git === 'initialized' ? 'initialized' : 'existing repo'}`);
+  if (result.space) {
+    out.push(`  space: ${result.space.name}${result.space.created ? ` (created, dashboard port ${result.space.port})` : ' (existing)'}`);
+  } else {
+    out.push('  space: (current)');
+  }
+  for (const f of result.files) {
+    out.push(`  ${f.action.padEnd(11)} ${path.relative(result.dir, f.path) || f.path}`);
+  }
+  out.push('', 'next:');
+  for (const n of result.next) out.push(`  ${n}`);
+  process.stdout.write(out.join('\n') + '\n');
+}
+
+/** aflt loop init: draft .agentfleet/loop.json from SPEC.md / AGENTS.md. */
+async function cmdLoopInit(argvRest) {
+  const { args, flags } = parseArgs(argvRest || []);
+  const positional = args.slice();
+  const asJson = recoverBoolFlag(flags, 'json', positional);
+  const dryRun = recoverBoolFlag(flags, 'dry-run', positional);
+  const force = recoverBoolFlag(flags, 'force', positional);
+  const noDashboard = recoverBoolFlag(flags, 'no-dashboard', positional);
+  const noAgents = recoverBoolFlag(flags, 'no-agents-pointer', positional);
+  const noGate = recoverBoolFlag(flags, 'no-gate', positional);
+  const cwd = typeof flags.cwd === 'string' ? path.resolve(flags.cwd) : process.cwd();
+  const loopInit = require('../lib/loop-init');
+  // A project made by `aflt init` records its space; use it unless one was chosen.
+  if (!currentSpaceName() && !require('../lib/util').envNonEmpty(process.env, 'AGENTFLEET_HOME')) {
+    const pc = loopInit.readProjectConfig(cwd);
+    if (pc.space) {
+      try {
+        applySpaceSelection({ sawSpace: true, spaceFlag: String(pc.space), env: process.env });
+      } catch (err) {
+        fail(err.message || String(err), { json: asJson });
+      }
+    }
+  }
+  let engineName = null;
+  if (flags.engine) {
+    try {
+      engineName = config.validateEngine(String(flags.engine));
+    } catch (err) {
+      fail(err.message, { json: asJson });
+    }
+  }
+  const str = (k) => (typeof flags[k] === 'string' ? flags[k] : null);
+  const log = asJson ? () => {} : (m) => process.stderr.write(`${m}\n`);
+  let result;
+  try {
+    result = await loopInit.initLoop({
+      cwd,
+      engine: engineName,
+      model: str('model'),
+      buildModel: str('build-model'),
+      planModel: str('plan-model'),
+      out: str('out'),
+      dryRun,
+      force,
+      dashboard: !noDashboard,
+      agentsPointer: !noAgents,
+      gate: noGate ? false : undefined,
+      budgetCredits: str('budget-credits'),
+      budgetHours: str('budget-hours'),
+      timeoutSec: str('timeout') ? Number(str('timeout')) : undefined,
+      maxRepairs: str('max-repairs') != null ? Number(str('max-repairs')) : undefined,
+      log,
+    });
+  } catch (err) {
+    fail(err.message || String(err), { json: asJson });
+  }
+  if (asJson) {
+    emitJson({ ...result, space: currentSpaceName() || null });
+    process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
+  if (result.dryRun) {
+    process.stdout.write(
+      `dry-run: would ask ${result.engine} (build model ${result.models.build || 'default'}, plan model ${result.models.plan || 'default'}) to write ${result.outRel} and prompts in ${path.relative(result.cwd, result.promptsDir)}/\n` +
+        `prompt (${result.promptChars} chars):\n\n${result.prompt}\n`
+    );
+    return;
+  }
+  if (!result.ok) {
+    process.stderr.write(`loop init failed: ${result.error || 'the draft did not pass the checks'}\n`);
+    for (const e of result.errors || []) process.stderr.write(`  error: ${e}\n`);
+    if (result.attempts && result.attempts.length) {
+      process.stderr.write(`  (${result.attempts.length} attempt(s); draft left at ${result.out} for you to fix)\n`);
+    }
+    process.exitCode = 1;
+    return;
+  }
+  const out = [];
+  out.push(`drafted ${result.outRel} (${result.attempts.length} attempt(s)); validated and checks policy ok`);
+  for (const line of result.summary) out.push(line);
+  for (const w of result.warnings || []) out.push(`WARNING: ${w}`);
+  if (result.usage) {
+    const u = result.usage;
+    const bits = [];
+    if (u.totalTokens != null) bits.push(`${u.totalTokens} tok`);
+    if (u.credits != null) bits.push(`${Number(u.credits).toFixed(2)} credits`);
+    if (u.usd != null) bits.push('$' + Number(u.usd).toFixed(2));
+    if (bits.length) out.push(`drafting cost: ${bits.join(' · ')}`);
+  }
+  if (result.agentsPointer) out.push(`AGENTS.md: ${result.agentsPointer.action} the aflt loop section`);
+  if (result.dashboardCopy) out.push(`dashboard copy: ${result.dashboardCopy}`);
+  const sp = currentSpaceName();
+  out.push('', 'next:');
+  for (const n of result.next) out.push(`  ${sp && n.startsWith('aflt ') ? n.replace(/^aflt /, `aflt --space ${sp} `) : n}`);
+  process.stdout.write(out.join('\n') + '\n');
 }
 
 async function cmdNew(argv) {
@@ -7853,9 +8030,14 @@ async function cmdLoop(argv) {
   const sub = args[0];
   const asJson = Boolean(flags.json);
   const usage =
-    'usage: aflt loop validate <file> | run <file> [--dry-run] [--json] [--fresh] [--force] [--allow-existing] [--create-worktree] | start <file> | pause <name> | status [name] | stop <name> | resume <name> | approve <name> [--json]';
+    'usage: aflt loop init [--engine E] [--model M | --build-model M --plan-model M] [--out FILE] [--dry-run] [--force] [--json] | validate <file> | run <file> [--dry-run] [--json] [--fresh] [--force] [--allow-existing] [--create-worktree] | start <file> | pause <name> | status [name] | stop <name> | resume <name> | approve <name> [--json]';
   if (!sub || sub === 'help' || sub === '-h' || sub === '--help') {
     fail(usage);
+  }
+
+  if (sub === 'init') {
+    await cmdLoopInit((argv || []).slice((argv || []).indexOf('init') + 1));
+    return;
   }
 
   if (sub === 'validate') {
