@@ -16,7 +16,7 @@ Human overview: [README.md](README.md) (dashboard screenshots in `docs/images/`;
 - **Recording** — after each loop phase: `runs/<session>/engine/` (archived Copilot `events.jsonl`, Cursor `stream-json` events + agent transcript), `runs/<session>/calls.jsonl` (one normalized line per model call), `runs/<session>/session-context.json`. Loop phases run Cursor with `--output-format stream-json`.
 - **Usage** — `usage-summary.json` counts a headless run once (`dedupedTurns`); Copilot usage adds `credits` / `usd` / `costBasis` from `copilotUsage.totalNanoAiu` (1e9 nano-AIU = 1 credit = $0.01). `cost` stays provider-reported only; nothing is estimated from tokens.
 - **`type: "script"` phases** — `eval.command` is the step; no prompt, session, fix attempts or `maxRuns`. hello-aflt `m0` and hello-aflt-scratch `seed-docs` use it.
-- **`examples/loops/hello-aflt-scratch/`** — tile dungeon from a docs-only seed (no code / HTML); M0 is an agent build checked by `m0-check.js`.
+- **`examples/loops/hello-aflt-scratch/`** — tile dungeon from a docs-only seed (no code / HTML); M0 is an agent build checked by `.agentfleet/checks/m0-check.cjs`.
 - **`aflt space ls [--json]`** (alias of `list`) and the Herdr af sessions **space picker** (passes `--space` to `ls` / `resume` / `adopt`).
 
 ## What's new (2026-11-23)

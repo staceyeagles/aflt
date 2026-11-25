@@ -8,11 +8,11 @@
  * never needs files outside the project folder. It never copies code: the M0
  * agent writes the scaffold from SPEC.md and this script checks it.
  *
- *   node .agentfleet/checks/m0-check.js --seed-docs
+ *   node .agentfleet/checks/m0-check.cjs --seed-docs
  *       verify the repo holds only the seed (AGENTS.md, SPEC.md,
  *       .agentfleet.json, .gitignore and .agentfleet/: loop, prompts, checks)
  *       and nothing else, so no pre-existing code leaks into a from-scratch run
- *   node .agentfleet/checks/m0-check.js
+ *   node .agentfleet/checks/m0-check.cjs
  *       verify the agent-built scaffold structurally, run its node:test suite,
  *       and boot server.js once
  */
@@ -28,8 +28,8 @@ const SEED_ALLOWED_NAMES = new Set(['.agentfleet.json', '.gitignore']);
 const SEED_ALLOWED_EXTS = new Set(['.md', '.txt']);
 const SEED_TOOLING = new Set([
   '.agentfleet/loop.json',
-  '.agentfleet/checks/m0-check.js',
-  '.agentfleet/checks/improve-gate.js',
+  '.agentfleet/checks/m0-check.cjs',
+  '.agentfleet/checks/improve-gate.cjs',
 ]);
 const SEED_REQUIRED = ['AGENTS.md', 'SPEC.md', '.agentfleet/loop.json'];
 

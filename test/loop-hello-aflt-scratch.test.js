@@ -12,8 +12,8 @@ const scratchDir = path.join(repoRoot, 'examples', 'loops', 'hello-aflt-scratch'
 const seedDir = path.join(scratchDir, 'seed');
 const loopDirInSeed = path.join(seedDir, '.agentfleet');
 const scratchJson = path.join(loopDirInSeed, 'loop.json');
-const checkScript = path.join(loopDirInSeed, 'checks', 'm0-check.js');
-const gateScript = path.join(loopDirInSeed, 'checks', 'improve-gate.js');
+const checkScript = path.join(loopDirInSeed, 'checks', 'm0-check.cjs');
+const gateScript = path.join(loopDirInSeed, 'checks', 'improve-gate.cjs');
 const originalDir = path.join(repoRoot, 'examples', 'loops', 'hello-aflt');
 
 /** Extensions that mean "code or markup", banned from the docs-only seed. */
@@ -73,7 +73,7 @@ describe('hello-aflt-scratch example (docs-only seed, everything inside the proj
     );
     const seedPhase = raw.phases[0];
     assert.equal(seedPhase.type, 'script');
-    assert.deepEqual(seedPhase.eval.command, ['node', '.agentfleet/checks/m0-check.js', '--seed-docs']);
+    assert.deepEqual(seedPhase.eval.command, ['node', '.agentfleet/checks/m0-check.cjs', '--seed-docs']);
     assert.equal(seedPhase.onPass, 'none');
     assert.deepEqual(raw.workdir, { mode: 'project' });
     assert.deepEqual(raw.protected, { paths: ['.agentfleet/**'] });
@@ -96,7 +96,7 @@ describe('hello-aflt-scratch example (docs-only seed, everything inside the proj
       assert.ok(fs.existsSync(p.promptFile), p.promptFile);
     }
     const m0 = result.definition.phases.find((p) => p.id === 'm0');
-    assert.deepEqual(m0.eval.command, ['node', '.agentfleet/checks/m0-check.js']);
+    assert.deepEqual(m0.eval.command, ['node', '.agentfleet/checks/m0-check.cjs']);
     assert.ok(m0.maxFixAttempts >= 1);
     assert.deepEqual(require('../lib/loop-snapshot').outsidePaths(result.definition), []);
 
@@ -111,7 +111,7 @@ describe('hello-aflt-scratch example (docs-only seed, everything inside the proj
     const tooling = all.filter((f) => f.startsWith('.agentfleet/'));
     assert.deepEqual(
       tooling.filter((f) => !/^\.agentfleet\/prompts\/[^/]+\.txt$/.test(f)),
-      ['.agentfleet/checks/improve-gate.js', '.agentfleet/checks/m0-check.js', '.agentfleet/loop.json']
+      ['.agentfleet/checks/improve-gate.cjs', '.agentfleet/checks/m0-check.cjs', '.agentfleet/loop.json']
     );
     const files = all.filter((f) => !f.startsWith('.agentfleet/'));
     assert.deepEqual(files, ['.agentfleet.json', '.gitignore', 'AGENTS.md', 'SPEC.md']);
@@ -141,7 +141,7 @@ describe('hello-aflt-scratch example (docs-only seed, everything inside the proj
 
   it('m0-check guards the seed allowlist', () => {
     const { isAllowedSeedFile } = require(checkScript);
-    for (const ok of ['AGENTS.md', 'SPEC.md', 'notes.txt', '.gitignore', '.agentfleet.json', '.agentfleet/loop.json', '.agentfleet/prompts/M0.txt', '.agentfleet/checks/m0-check.js', '.agentfleet/checks/improve-gate.js']) {
+    for (const ok of ['AGENTS.md', 'SPEC.md', 'notes.txt', '.gitignore', '.agentfleet.json', '.agentfleet/loop.json', '.agentfleet/prompts/M0.txt', '.agentfleet/checks/m0-check.cjs', '.agentfleet/checks/improve-gate.cjs']) {
       assert.equal(isAllowedSeedFile(ok), true, ok);
     }
     for (const bad of ['server.js', 'src/main.js', 'public/index.html', 'package.json', 'a.ts', 'x.css', 'm.mjs', '.agentfleet/checks/game.js', '.agentfleet/other.json']) {
@@ -179,14 +179,14 @@ describe('hello-aflt-scratch example (docs-only seed, everything inside the proj
 
     const planNext = read('plan-next.txt');
     assert.match(planNext, /hello-aflt-scratch-rN/);
-    assert.match(planNext, /"command": \["node", "\.agentfleet\/checks\/improve-gate\.js"\]/);
+    assert.match(planNext, /"command": \["node", "\.agentfleet\/checks\/improve-gate\.cjs"\]/);
     assert.ok(!/"\.\.\//.test(planNext), 'no ../ paths in the planner prompt');
     for (const n of ['M0.txt', 'M1.txt', 'M2.txt', 'M3.txt', 'M4.txt', 'M5a.txt', 'plan-next.txt']) {
       const text = read(n);
       assert.ok(!/~\/|\/Users\/|examples\/loops/.test(text), `${n} names a folder outside the project`);
     }
     // The planned check stays inside the project, so aflt accepts it.
-    const esc = require('../lib/loop-snapshot').escapingTokens(['node', '.agentfleet/checks/improve-gate.js'], '/p/proj');
+    const esc = require('../lib/loop-snapshot').escapingTokens(['node', '.agentfleet/checks/improve-gate.cjs'], '/p/proj');
     assert.deepEqual(esc, []);
     // The in-project gate is the original gate plus a header.
     const body = (t) => t.slice(t.indexOf("const fs = require('fs');"));
@@ -206,6 +206,29 @@ describe('hello-aflt-scratch example (docs-only seed, everything inside the proj
     const empty = runCheck(tmpDir(), ['--seed-docs']);
     assert.equal(empty.status, 1);
     assert.match(empty.stderr, /missing AGENTS\.md/);
+  });
+
+  it('every seed file is tracked by git (the repo ignores .agentfleet/ folders elsewhere)', () => {
+    const { spawnSync } = require('child_process');
+    const repo = path.join(__dirname, '..');
+    for (const rel of ['loop.json', 'checks/m0-check.cjs', 'checks/improve-gate.cjs', 'prompts/plan-next.txt']) {
+      const file = path.join(loopDirInSeed, rel);
+      const r = spawnSync('git', ['check-ignore', '-q', file], { cwd: repo });
+      assert.notEqual(r.status, 0, rel + ' is git-ignored');
+    }
+  });
+
+  it('the in-project checks still run when the game sets "type": "module"', () => {
+    const cwd = seededProject();
+    fs.writeFileSync(path.join(cwd, 'package.json'), JSON.stringify({ name: 'g', type: 'module' }) + '\n');
+    const { spawnSync } = require('child_process');
+    for (const script of ['.agentfleet/checks/m0-check.cjs', '.agentfleet/checks/improve-gate.cjs']) {
+      const r = spawnSync(process.execPath, [script], { cwd, encoding: 'utf8', timeout: 60000 });
+      const out = String(r.stdout || '') + String(r.stderr || '');
+      assert.doesNotMatch(out, /require is not defined|ERR_REQUIRE_ESM|ReferenceError/, script + ': ' + out);
+    }
+    const r = spawnSync(process.execPath, ['.agentfleet/checks/m0-check.cjs'], { cwd, encoding: 'utf8' });
+    assert.match(String(r.stderr), /m0-check: /);
   });
 
   it('m0-check fails on a docs-only tree and copies no code in', () => {

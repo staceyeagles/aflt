@@ -99,7 +99,7 @@ instructions only (`AGENTS.md`, `SPEC.md`, `.agentfleet.json`, `.gitignore`)
 plus the loop itself in `.agentfleet/` (`loop.json`, prompts, and two check
 scripts): no game code, no HTML. Everything the loop uses lives inside the
 project folder. M0 is a real agent build of the scaffold, checked by
-`.agentfleet/checks/m0-check.js` (structure + `node --test` + server boot). Use
+`.agentfleet/checks/m0-check.cjs` (structure + `node --test` + server boot). Use
 a new empty folder (not inside another repo) and its own space:
 
 ```bash

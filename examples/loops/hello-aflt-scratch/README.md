@@ -7,15 +7,17 @@ agent writes every file, including the M0 scaffold.
 Everything the loop uses lives **inside the project**: the seed carries the
 loop definition, its prompts and its two check scripts under `.agentfleet/`,
 so a run in an isolated folder never reads or runs a file from anywhere else.
+The checks are CommonJS `.cjs` files, so they run whatever `"type"` the game's
+`package.json` sets.
 
 | | `hello-aflt` | `hello-aflt-scratch` |
 |---|---|---|
-| Seed copied into the repo | `m0-seed/`: `package.json`, `server.js`, `public/index.html`, `src/main.js`, `test/smoke.test.js`, docs | `seed/`: `AGENTS.md`, `SPEC.md`, `.agentfleet.json`, `.gitignore`, and `.agentfleet/` (`loop.json`, `prompts/`, `checks/m0-check.js`, `checks/improve-gate.js`) |
+| Seed copied into the repo | `m0-seed/`: `package.json`, `server.js`, `public/index.html`, `src/main.js`, `test/smoke.test.js`, docs | `seed/`: `AGENTS.md`, `SPEC.md`, `.agentfleet.json`, `.gitignore`, and `.agentfleet/` (`loop.json`, `prompts/`, `checks/m0-check.cjs`, `checks/improve-gate.cjs`) |
 | Before M0 | — | `seed-docs` script phase (no AI call) checks the repo holds only the seed |
 | M0 phase | `type: "script"`: `seed-m0.js` copies the scaffold (no AI call) | Real agent build of the scaffold from `SPEC.md` § M0 |
-| M0 eval | `seed-m0.js` (copy + smoke test) | `.agentfleet/checks/m0-check.js` (structural check + `node --test` + server boot; never copies code) |
+| M0 eval | `seed-m0.js` (copy + smoke test) | `.agentfleet/checks/m0-check.cjs` (structural check + `node --test` + server boot; never copies code) |
 | M1–M5a, plan-next | Same milestones | Same milestones; prompts say there is no seed code and to work only in the repo |
-| Improve gate | `improve-gate.js` | In the project: `.agentfleet/checks/improve-gate.js` (same gate) |
+| Improve gate | `improve-gate.js` | In the project: `.agentfleet/checks/improve-gate.cjs` (same gate) |
 
 Use it to see what an engine builds with nothing but a spec, and to compare
 engines/models on the same docs-only starting point.
@@ -55,7 +57,7 @@ first. `"protected": { "paths": [".agentfleet/**"] }` fails any phase that edits
 the loop, its prompts or its checks.
 
 The first phase, `seed-docs`, is a `type: "script"` phase (no AI call): it runs
-`node .agentfleet/checks/m0-check.js --seed-docs`, which passes only when the
+`node .agentfleet/checks/m0-check.cjs --seed-docs`, which passes only when the
 repo holds the seed and nothing else, so no leftover code leaks into a
 from-scratch run. The M0 agent then reads `SPEC.md` and writes the scaffold.
 
@@ -73,8 +75,8 @@ aflt --space tile-dungeon-scratch loop status hello-aflt-scratch --json
 `seed/` may hold only instructions and config (`*.md`, `*.txt`,
 `.agentfleet.json`, `.gitignore`) plus the loop's own files under
 `.agentfleet/`: `loop.json`, `prompts/*.txt`, and the check tooling
-`checks/m0-check.js` and `checks/improve-gate.js` (no game code).
-`m0-check.js --seed-docs` refuses a repo with anything else in it, and
+`checks/m0-check.cjs` and `checks/improve-gate.cjs` (no game code).
+`m0-check.cjs --seed-docs` refuses a repo with anything else in it, and
 `test/loop-hello-aflt-scratch.test.js` fails if a code or HTML file is added to
 the seed outside that tooling.
 
@@ -83,7 +85,7 @@ the seed outside that tooling.
 
 ## M0 check
 
-`node .agentfleet/checks/m0-check.js` (run by the loop in the game cwd) fails with a list of
+`node .agentfleet/checks/m0-check.cjs` (run by the loop in the game cwd) fails with a list of
 problems unless:
 
 - `package.json` is valid JSON with `"type": "module"`, `test` running `node --test`, `start` running `node server.js`, and no dependencies;
