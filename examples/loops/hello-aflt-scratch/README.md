@@ -4,14 +4,18 @@ A variant of [`hello-aflt`](../hello-aflt/README.md) where the seed contains
 **no code and no HTML**. The game repo starts with instructions only, and an
 agent writes every file, including the M0 scaffold.
 
+Everything the loop uses lives **inside the project**: the seed carries the
+loop definition, its prompts and its two check scripts under `.agentfleet/`,
+so a run in an isolated folder never reads or runs a file from anywhere else.
+
 | | `hello-aflt` | `hello-aflt-scratch` |
 |---|---|---|
-| Seed copied into the repo | `m0-seed/`: `package.json`, `server.js`, `public/index.html`, `src/main.js`, `test/smoke.test.js`, docs | `seed/`: `AGENTS.md`, `SPEC.md`, `.agentfleet.json`, `.gitignore` |
-| Before M0 | — | `seed-docs` script phase (no AI call) copies the four docs in and commits them |
+| Seed copied into the repo | `m0-seed/`: `package.json`, `server.js`, `public/index.html`, `src/main.js`, `test/smoke.test.js`, docs | `seed/`: `AGENTS.md`, `SPEC.md`, `.agentfleet.json`, `.gitignore`, and `.agentfleet/` (`loop.json`, `prompts/`, `checks/m0-check.js`, `checks/improve-gate.js`) |
+| Before M0 | — | `seed-docs` script phase (no AI call) checks the repo holds only the seed |
 | M0 phase | `type: "script"`: `seed-m0.js` copies the scaffold (no AI call) | Real agent build of the scaffold from `SPEC.md` § M0 |
-| M0 eval | `seed-m0.js` (copy + smoke test) | `m0-check.js` (structural check + `node --test` + server boot; never copies code) |
+| M0 eval | `seed-m0.js` (copy + smoke test) | `.agentfleet/checks/m0-check.js` (structural check + `node --test` + server boot; never copies code) |
 | M1–M5a, plan-next | Same milestones | Same milestones; prompts say there is no seed code and to work only in the repo |
-| Improve gate | `improve-gate.js` | Shared: `../hello-aflt/improve-gate.js` |
+| Improve gate | `improve-gate.js` | In the project: `.agentfleet/checks/improve-gate.js` (same gate) |
 
 Use it to see what an engine builds with nothing but a spec, and to compare
 engines/models on the same docs-only starting point.
@@ -33,42 +37,53 @@ Cursor reports tokens only, so no cost is recorded.
 
 ## Quick start
 
+Use a new, empty folder that is not inside another git repo, and its own space:
+
 ```bash
-mkdir tile-dungeon-scratch && cd tile-dungeon-scratch && git init
-aflt loop run /path/to/aflt/examples/loops/hello-aflt-scratch/hello-aflt-scratch.json
+mkdir -p ~/aflt-projects/tile-dungeon-scratch && cd ~/aflt-projects/tile-dungeon-scratch
+cp -R /path/to/aflt/examples/loops/hello-aflt-scratch/seed/. .
+aflt init tile-dungeon-scratch --dir . --yes --engine cursor --isolated   # git init + a space of its own
+git add -A && git commit -m "Seed hello-aflt-scratch"
+aflt --space tile-dungeon-scratch loop validate .agentfleet/loop.json
+aflt --space tile-dungeon-scratch loop run .agentfleet/loop.json
 ```
 
-The first phase, `seed-docs`, is a `type: "script"` phase (no AI call): it
-runs `node m0-check.js --seed-docs`, which copies only `AGENTS.md`, `SPEC.md`,
-`.agentfleet.json` and `.gitignore` into the empty repo (never overwriting)
-and commits them. The M0 agent then reads `SPEC.md` and writes the scaffold.
-The M0 prompt also carries the full contract, and `m0-check.js` re-installs any
-missing docs before it verifies, so M0 still works if the docs are absent.
+(`aflt init` is optional; plain `git init` plus `--space` of your choice works too.)
+The loop uses `"workdir": { "mode": "project" }`: it runs in this repo even though
+the repo holds its own definition, and refuses a dirty tree, so commit the seed
+first. `"protected": { "paths": [".agentfleet/**"] }` fails any phase that edits
+the loop, its prompts or its checks.
+
+The first phase, `seed-docs`, is a `type: "script"` phase (no AI call): it runs
+`node .agentfleet/checks/m0-check.js --seed-docs`, which passes only when the
+repo holds the seed and nothing else, so no leftover code leaks into a
+from-scratch run. The M0 agent then reads `SPEC.md` and writes the scaffold.
 
 Pick an engine as for `hello-aflt` (`AGENTFLEET_ENGINE=cursor` or `copilot`,
-optional `COPILOT_MODEL` / definition `model`). Watch it live with a matching
-space:
+optional `COPILOT_MODEL` / definition `model`). Watch it live:
 
 ```bash
-export AFLT_SPACE=scratch-run   # optional: keep this run in its own space
-aflt loop start /path/to/aflt/examples/loops/hello-aflt-scratch/hello-aflt-scratch.json --json
-aflt dashboard --serve --port 8787   # same AFLT_SPACE; open http://127.0.0.1:8787/
-aflt loop status hello-aflt-scratch --json
+aflt --space tile-dungeon-scratch loop start .agentfleet/loop.json --json
+aflt --space tile-dungeon-scratch dashboard --serve --port 8787   # open http://127.0.0.1:8787/
+aflt --space tile-dungeon-scratch loop status hello-aflt-scratch --json
 ```
 
 ## Seed
 
-`seed/` may hold only instructions and config: `*.md`, `*.txt`,
-`.agentfleet.json`, `.gitignore`. `m0-check.js` refuses to install anything
-else, and `test/loop-hello-aflt-scratch.test.js` fails if a code or HTML file
-(`.js`, `.mjs`, `.cjs`, `.ts`, `.html`, `.css`, other `.json`, …) is added.
+`seed/` may hold only instructions and config (`*.md`, `*.txt`,
+`.agentfleet.json`, `.gitignore`) plus the loop's own files under
+`.agentfleet/`: `loop.json`, `prompts/*.txt`, and the check tooling
+`checks/m0-check.js` and `checks/improve-gate.js` (no game code).
+`m0-check.js --seed-docs` refuses a repo with anything else in it, and
+`test/loop-hello-aflt-scratch.test.js` fails if a code or HTML file is added to
+the seed outside that tooling.
 
 - `seed/AGENTS.md` — stack, safety and workflow rules, milestone list.
 - `seed/SPEC.md` — the M0 scaffold contract (files, routes, port, tests) and the M1–M5a plan.
 
 ## M0 check
 
-`node m0-check.js` (run by the loop in the game cwd) fails with a list of
+`node .agentfleet/checks/m0-check.js` (run by the loop in the game cwd) fails with a list of
 problems unless:
 
 - `package.json` is valid JSON with `"type": "module"`, `test` running `node --test`, `start` running `node server.js`, and no dependencies;

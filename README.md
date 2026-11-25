@@ -522,7 +522,7 @@ aflt loop approve <name>                    # release gate: "approve"
 # aflt loop validate examples/loops/hello-aflt/hello-aflt.json --json
 # aflt loop run examples/loops/hello-aflt/hello-aflt.json --dry-run
 # aflt loop run examples/loops/hello-aflt/hello-aflt.json --fresh
-# Docs-only seed variant: examples/loops/hello-aflt-scratch/hello-aflt-scratch.json
+# Docs-only seed variant: copy examples/loops/hello-aflt-scratch/seed/ into an empty repo, then aflt loop run .agentfleet/loop.json
 # See docs/cli-quickstart-loops.md, examples/loops/hello-aflt/README.md and docs/copilot-live-test.md
 
 # Unattended host (scheduler + activity UI + Loops view)

@@ -36,7 +36,7 @@ State lives under `$AGENTFLEET_HOME/loops/<name>/` (`state.json` + runner lock).
 | `examples/loops/plan-next.json` | Seed phases + `type: "plan-next"` planner |
 | `examples/loops/self-improve.json` | Eval measure → score/baseline → plan-next → gate `--improve` |
 | `examples/loops/hello-aflt/` | Portable tile-dungeon: empty-repo M0 seed (script phase, no AI call) → M1–M5a → ≤3 improve rounds (Copilot-friendly) |
-| `examples/loops/hello-aflt-scratch/` | Same milestones from a docs-only seed (AGENTS.md + SPEC.md, no code/HTML); M0 is a real agent build checked by `m0-check.js` |
+| `examples/loops/hello-aflt-scratch/` | Same milestones from a docs-only seed (AGENTS.md + SPEC.md, no game code/HTML); the loop, prompts and checks ship inside the seed (`seed/.agentfleet/`), so nothing lives outside the project; M0 is a real agent build checked by `.agentfleet/checks/m0-check.js` |
 | `examples/loops/hello-aflt/hello-aflt-improve.json` | Continue improve-only on an existing M5a game (loop name `hello-aflt-improve`) |
 
 Validate (safe; no engines):
@@ -47,7 +47,7 @@ aflt --space tutorial loop validate examples/loops/plan-next.json --json
 aflt --space tutorial loop validate examples/loops/self-improve.json --json
 aflt --space tutorial loop validate examples/loops/hello-aflt/hello-aflt.json --json
 aflt --space tutorial loop validate examples/loops/hello-aflt/hello-aflt-improve.json --json
-aflt --space tutorial loop validate examples/loops/hello-aflt-scratch/hello-aflt-scratch.json --json
+aflt --space tutorial loop validate examples/loops/hello-aflt-scratch/seed/.agentfleet/loop.json --json
 ```
 
 **hello-aflt one-liner** (work Mac / Copilot; no Grok Bot): create a folder, `git init`, then `aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt.json` — see [`examples/loops/hello-aflt/README.md`](../../examples/loops/hello-aflt/README.md). Optional once: `export AGENTFLEET_ENGINE=copilot`.

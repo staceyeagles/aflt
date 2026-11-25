@@ -3,7 +3,7 @@ Never use pkill/killall or pattern-matched kills; only stop PIDs you started.
 
 You are building Milestone 0 (M0) of tile-dungeon FROM SCRATCH in this git repo. There is no starter code and no template to copy: you write every file yourself. Work only inside this repo (the current working directory). Do not search the rest of the disk for seed code, templates, or other tile-dungeon repos.
 
-First read AGENTS.md and SPEC.md if they are present in this repo (the loop installs them before or right after this phase). If they are missing, the requirements below are complete; do not author AGENTS.md or SPEC.md yourself.
+First read AGENTS.md and SPEC.md (they are in this repo). The requirements below repeat the M0 contract; do not rewrite AGENTS.md or SPEC.md. Do not edit anything under .agentfleet/ (the loop, its prompts and its checks).
 
 Build the zero-dependency Node ESM + HTML canvas scaffold described in SPEC.md § M0:
 1. package.json: "name": "tile-dungeon", "private": true, "type": "module", scripts "start": "node server.js" and "test": "node --test test/*.test.js". No dependencies or devDependencies. Do not run npm install.

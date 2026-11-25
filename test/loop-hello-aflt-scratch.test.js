@@ -9,9 +9,11 @@ const { spawnSync } = require('child_process');
 
 const repoRoot = path.join(__dirname, '..');
 const scratchDir = path.join(repoRoot, 'examples', 'loops', 'hello-aflt-scratch');
-const scratchJson = path.join(scratchDir, 'hello-aflt-scratch.json');
 const seedDir = path.join(scratchDir, 'seed');
-const checkScript = path.join(scratchDir, 'm0-check.js');
+const loopDirInSeed = path.join(seedDir, '.agentfleet');
+const scratchJson = path.join(loopDirInSeed, 'loop.json');
+const checkScript = path.join(loopDirInSeed, 'checks', 'm0-check.js');
+const gateScript = path.join(loopDirInSeed, 'checks', 'improve-gate.js');
 const originalDir = path.join(repoRoot, 'examples', 'loops', 'hello-aflt');
 
 /** Extensions that mean "code or markup", banned from the docs-only seed. */
@@ -37,6 +39,16 @@ function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'aflt-scratch-'));
 }
 
+/** A project folder seeded the documented way: cp -R seed/. <dir>, git init, commit. */
+function seededProject() {
+  const cwd = fs.realpathSync(tmpDir());
+  fs.cpSync(seedDir, cwd, { recursive: true });
+  spawnSync('git', ['init', '-q', cwd]);
+  spawnSync('git', ['-C', cwd, 'add', '-A']);
+  spawnSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'seed']);
+  return cwd;
+}
+
 function runCheck(cwd, args = []) {
   return spawnSync(process.execPath, [checkScript, ...args], {
     cwd,
@@ -45,7 +57,7 @@ function runCheck(cwd, args = []) {
   });
 }
 
-describe('hello-aflt-scratch example (docs-only seed)', () => {
+describe('hello-aflt-scratch example (docs-only seed, everything inside the project)', () => {
   it('definition validates and dry-runs with the same milestones as hello-aflt', () => {
     const loop = require('../lib/loop');
     const raw = JSON.parse(fs.readFileSync(scratchJson, 'utf8'));
@@ -61,8 +73,10 @@ describe('hello-aflt-scratch example (docs-only seed)', () => {
     );
     const seedPhase = raw.phases[0];
     assert.equal(seedPhase.type, 'script');
-    assert.deepEqual(seedPhase.eval.command, ['node', 'm0-check.js', '--seed-docs']);
-    assert.equal(seedPhase.onPass, 'commit');
+    assert.deepEqual(seedPhase.eval.command, ['node', '.agentfleet/checks/m0-check.js', '--seed-docs']);
+    assert.equal(seedPhase.onPass, 'none');
+    assert.deepEqual(raw.workdir, { mode: 'project' });
+    assert.deepEqual(raw.protected, { paths: ['.agentfleet/**'] });
     const m0Raw = raw.phases.find((p) => p.id === 'm0');
     assert.ok(!m0Raw.type || m0Raw.type === 'run', 'm0 must be an AI build phase');
     for (const p of raw.phases.filter((x) => x.type !== 'script')) {
@@ -71,24 +85,35 @@ describe('hello-aflt-scratch example (docs-only seed)', () => {
     assert.equal(raw.allow.push, false);
     assert.equal(raw.allow.merge, false);
 
-    const result = loop.validateFile(scratchJson, { checkCwd: false, cwdBase: tmpDir() });
+    // Seeded project: the loop, prompts and checks all resolve inside it.
+    const cwd = seededProject();
+    const file = path.join(cwd, '.agentfleet', 'loop.json');
+    const result = loop.validateFile(file, { cwdBase: cwd });
     assert.equal(result.ok, true, (result.errors || []).join('; '));
+    assert.deepEqual(result.warnings.filter((w) => /outside the project/.test(w)), []);
     for (const p of result.definition.phases.filter((x) => x.type !== 'script')) {
-      assert.ok(p.promptFile && p.promptFile.startsWith(scratchDir), p.promptFile);
+      assert.ok(p.promptFile && p.promptFile.startsWith(cwd + path.sep), p.promptFile);
       assert.ok(fs.existsSync(p.promptFile), p.promptFile);
     }
     const m0 = result.definition.phases.find((p) => p.id === 'm0');
-    assert.deepEqual(m0.eval.command, ['node', checkScript]);
+    assert.deepEqual(m0.eval.command, ['node', '.agentfleet/checks/m0-check.js']);
     assert.ok(m0.maxFixAttempts >= 1);
+    assert.deepEqual(require('../lib/loop-snapshot').outsidePaths(result.definition), []);
 
-    const plan = loop.planDryRun(result.definition, scratchJson);
+    const plan = loop.planDryRun(result.definition, file);
     assert.equal(plan.ok, true);
     assert.equal(plan.name, 'hello-aflt-scratch');
     assert.ok(plan.phases.length >= 7);
   });
 
-  it('seed contains only instructions and config: no code, no HTML', () => {
-    const files = listFiles(seedDir);
+  it('seed contains only instructions, config and the loop with its checks: no game code, no HTML', () => {
+    const all = listFiles(seedDir);
+    const tooling = all.filter((f) => f.startsWith('.agentfleet/'));
+    assert.deepEqual(
+      tooling.filter((f) => !/^\.agentfleet\/prompts\/[^/]+\.txt$/.test(f)),
+      ['.agentfleet/checks/improve-gate.js', '.agentfleet/checks/m0-check.js', '.agentfleet/loop.json']
+    );
+    const files = all.filter((f) => !f.startsWith('.agentfleet/'));
     assert.deepEqual(files, ['.agentfleet.json', '.gitignore', 'AGENTS.md', 'SPEC.md']);
     for (const rel of files) {
       const base = path.basename(rel);
@@ -116,16 +141,16 @@ describe('hello-aflt-scratch example (docs-only seed)', () => {
 
   it('m0-check guards the seed allowlist', () => {
     const { isAllowedSeedFile } = require(checkScript);
-    for (const ok of ['AGENTS.md', 'SPEC.md', 'notes.txt', '.gitignore', '.agentfleet.json']) {
+    for (const ok of ['AGENTS.md', 'SPEC.md', 'notes.txt', '.gitignore', '.agentfleet.json', '.agentfleet/loop.json', '.agentfleet/prompts/M0.txt', '.agentfleet/checks/m0-check.js', '.agentfleet/checks/improve-gate.js']) {
       assert.equal(isAllowedSeedFile(ok), true, ok);
     }
-    for (const bad of ['server.js', 'src/main.js', 'public/index.html', 'package.json', 'a.ts', 'x.css', 'm.mjs']) {
+    for (const bad of ['server.js', 'src/main.js', 'public/index.html', 'package.json', 'a.ts', 'x.css', 'm.mjs', '.agentfleet/checks/game.js', '.agentfleet/other.json']) {
       assert.equal(isAllowedSeedFile(bad), false, bad);
     }
   });
 
   it('prompts make M0 a real build and never assume seed code', () => {
-    const read = (n) => fs.readFileSync(path.join(scratchDir, 'prompts', n), 'utf8');
+    const read = (n) => fs.readFileSync(path.join(loopDirInSeed, 'prompts', n), 'utf8');
     const m0 = read('M0.txt');
     assert.ok(!/do nothing heavy/i.test(m0));
     assert.ok(!/seed-m0/.test(m0));
@@ -154,21 +179,33 @@ describe('hello-aflt-scratch example (docs-only seed)', () => {
 
     const planNext = read('plan-next.txt');
     assert.match(planNext, /hello-aflt-scratch-rN/);
-    assert.match(planNext, /\.\.\/hello-aflt\/improve-gate\.js/);
-    const loop = require('../lib/loop');
-    const resolved = loop.resolveEvalCommandPaths(['node', '../hello-aflt/improve-gate.js'], {
-      definitionDir: scratchDir,
-    });
-    assert.deepEqual(resolved, ['node', path.join(originalDir, 'improve-gate.js')]);
+    assert.match(planNext, /"command": \["node", "\.agentfleet\/checks\/improve-gate\.js"\]/);
+    assert.ok(!/"\.\.\//.test(planNext), 'no ../ paths in the planner prompt');
+    for (const n of ['M0.txt', 'M1.txt', 'M2.txt', 'M3.txt', 'M4.txt', 'M5a.txt', 'plan-next.txt']) {
+      const text = read(n);
+      assert.ok(!/~\/|\/Users\/|examples\/loops/.test(text), `${n} names a folder outside the project`);
+    }
+    // The planned check stays inside the project, so aflt accepts it.
+    const esc = require('../lib/loop-snapshot').escapingTokens(['node', '.agentfleet/checks/improve-gate.js'], '/p/proj');
+    assert.deepEqual(esc, []);
+    // The in-project gate is the original gate plus a header.
+    const body = (t) => t.slice(t.indexOf("const fs = require('fs');"));
+    assert.equal(body(fs.readFileSync(gateScript, 'utf8')), body(fs.readFileSync(path.join(originalDir, 'improve-gate.js'), 'utf8')));
   });
 
-  it('m0-check --seed-docs installs only the docs and never overwrites', () => {
-    const cwd = tmpDir();
-    fs.writeFileSync(path.join(cwd, 'AGENTS.md'), '# mine\n');
-    const r = runCheck(cwd, ['--seed-docs']);
-    assert.equal(r.status, 0, r.stderr);
-    assert.deepEqual(listFiles(cwd), ['.agentfleet.json', '.gitignore', 'AGENTS.md', 'SPEC.md']);
-    assert.equal(fs.readFileSync(path.join(cwd, 'AGENTS.md'), 'utf8'), '# mine\n');
+  it('m0-check --seed-docs accepts the seed and refuses anything else in the repo', () => {
+    const cwd = seededProject();
+    const ok = runCheck(cwd, ['--seed-docs']);
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.match(ok.stdout, /seed ok/);
+    fs.mkdirSync(path.join(cwd, 'src'));
+    fs.writeFileSync(path.join(cwd, 'src', 'old-game.js'), '// left over\n');
+    const bad = runCheck(cwd, ['--seed-docs']);
+    assert.equal(bad.status, 1);
+    assert.match(bad.stderr, /not part of the seed: src\/old-game\.js/);
+    const empty = runCheck(tmpDir(), ['--seed-docs']);
+    assert.equal(empty.status, 1);
+    assert.match(empty.stderr, /missing AGENTS\.md/);
   });
 
   it('m0-check fails on a docs-only tree and copies no code in', () => {
@@ -201,22 +238,21 @@ describe('hello-aflt-scratch example (docs-only seed)', () => {
 
   it('m0-check passes an agent-built scaffold (tests + server boot)', () => {
     // Stand-in for what an M0 agent writes: the original hello-aflt scaffold.
-    const cwd = tmpDir();
+    const cwd = seededProject();
     fs.cpSync(path.join(originalDir, 'm0-seed'), cwd, { recursive: true });
-    fs.rmSync(path.join(cwd, 'AGENTS.md'));
     const r = runCheck(cwd);
     assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
-    assert.match(r.stdout, /installed seed docs: AGENTS\.md, SPEC\.md/);
     assert.match(r.stdout, /m0-check: ok/);
   });
 
   it('docs point at the scratch variant', () => {
     const quick = fs.readFileSync(path.join(repoRoot, 'docs', 'cli-quickstart-loops.md'), 'utf8');
-    assert.match(quick, /hello-aflt-scratch\/hello-aflt-scratch\.json/);
+    assert.match(quick, /hello-aflt-scratch\/seed/);
     assert.match(quick, /seed-docs/);
     const readme = fs.readFileSync(path.join(scratchDir, 'README.md'), 'utf8');
     assert.match(readme, /git init/);
-    assert.match(readme, /aflt loop run .*hello-aflt-scratch\.json/);
+    assert.match(readme, /cp -R .*hello-aflt-scratch\/seed\/\. /);
+    assert.match(readme, /loop run \.agentfleet\/loop\.json/);
     assert.match(readme, /no code and no HTML/);
     const orig = fs.readFileSync(path.join(originalDir, 'README.md'), 'utf8');
     assert.match(orig, /hello-aflt-scratch/);

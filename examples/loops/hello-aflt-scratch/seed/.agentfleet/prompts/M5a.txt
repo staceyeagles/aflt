@@ -3,7 +3,7 @@ Never use pkill/killall or pattern-matched kills; only stop PIDs you started.
 Read SPEC.md, README.md, AGENTS.md, package.json, and existing files in src/ and test/ first. Everything in this repo was written by agents in earlier milestones (there is no seed code); build on what is actually there.
 You are building Milestone 5 setup (M5a) of tile-dungeon: a headless bot player and deterministic evaluation harness under scripts/eval/.
 
-Do not copy files from ~/github/wwlib/tile-dungeon, examples/loops/hello-aflt/m0-seed, or any other repo. Implement the harness here. To keep scores comparable with the original tile-dungeon baseline, the scorer MUST use the same metric names, weights, and normalization constants given below. If you mention the browser game server, keep the default PORT 8792 (override via PORT); do not bind 8790 or 8791.
+Do not copy files from any other folder or repo, and do not search the disk for one. Implement the harness here. To keep scores comparable with the original tile-dungeon baseline, the scorer MUST use the same metric names, weights, and normalization constants given below. If you mention the browser game server, keep the default PORT 8792 (override via PORT); do not bind 8790 or 8791.
 
 Requirements for M5a:
 1. Create scripts/eval/bot.js:

@@ -19,7 +19,7 @@ Hard rules:
 6. If continuing, propose exactly ONE improve phase (not a bundle of phases). Use this shape (change the id and session per round).
    Session titles must be unique per loop name + round so continue loops do not resume an old chat (e.g. hello-aflt-scratch-r1, not hello-aflt-m5-r1). For this hello-aflt-scratch loop use hello-aflt-scratch-rN.
    Do NOT pin engine to cursor — omit engine so the loop default / AGENTFLEET_ENGINE applies (copilot works on a work Mac with no Cursor).
-   The improve-gate script is shared with the original example and lives at ../hello-aflt/improve-gate.js relative to this loop definition. Use that relative path; aflt resolves it against the definition directory (not the game cwd, not /tmp):
+   The improve-gate script is part of this project: .agentfleet/checks/improve-gate.js, run from the game repo root. Use exactly that path; never a path outside the project (no ../, no /tmp, no other folders):
    {
      "id": "improve-rN",
      "session": "hello-aflt-scratch-rN",
@@ -29,7 +29,7 @@ Hard rules:
      "onPass": "commit",
      "timeoutSec": 5400,
      "eval": {
-       "command": ["node", "../hello-aflt/improve-gate.js"],
+       "command": ["node", ".agentfleet/checks/improve-gate.js"],
        "exitCode": 0,
        "timeoutSec": 1200
      },

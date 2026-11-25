@@ -472,7 +472,7 @@ To run that completed improve definition again in the same fleethome (fair secon
 aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt-improve.json --fresh --allow-existing
 ```
 
-Docs-only seed variant (an agent writes M0 from `SPEC.md`; no code or HTML is copied in): `aflt loop run /path/to/aflt/examples/loops/hello-aflt-scratch/hello-aflt-scratch.json` from an empty git repo. Review any run with `aflt making-of <loop>` (same space). CLI walkthrough: [`docs/cli-quickstart-loops.md`](docs/cli-quickstart-loops.md).
+Docs-only seed variant (an agent writes M0 from `SPEC.md`; no code or HTML is copied in): copy `examples/loops/hello-aflt-scratch/seed/.` into an empty folder, `git init`, commit, then `aflt loop run .agentfleet/loop.json` (the loop, prompts and check scripts live in the project's `.agentfleet/`). Review any run with `aflt making-of <loop>` (same space). CLI walkthrough: [`docs/cli-quickstart-loops.md`](docs/cli-quickstart-loops.md).
 
 Details: [`examples/loops/hello-aflt/README.md`](examples/loops/hello-aflt/README.md). Work-Mac Copilot live-test guide (validate → dry-run → `--fresh` live run, dashboard success signals, results template): [`docs/copilot-live-test.md`](docs/copilot-live-test.md).
 

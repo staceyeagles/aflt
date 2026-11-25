@@ -1,9 +1,10 @@
 # AGENTS.md — Tile Dungeon
 
 Guidance for AI coding agents working on `tile-dungeon`. This repo starts with
-**no code**: only this file, `SPEC.md`, `.agentfleet.json`, and `.gitignore`.
-Every line of code (including the M0 scaffold) is written by an agent from
-`SPEC.md`.
+**no code**: only this file, `SPEC.md`, `.agentfleet.json`, `.gitignore`, and
+`.agentfleet/` (the aflt loop, its prompts and its two check scripts; never
+edit anything under `.agentfleet/`). Every line of game code (including the M0
+scaffold) is written by an agent from `SPEC.md`.
 
 ## Stack & Constraints
 

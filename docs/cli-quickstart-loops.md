@@ -95,19 +95,23 @@ Then `aflt loop status hello-aflt --json`, `aflt loop pause hello-aflt`, `aflt l
 ### Variant: build M0 from scratch (no seed code)
 
 `examples/loops/hello-aflt-scratch/` runs the same milestones, but the seed is
-instructions only (`AGENTS.md`, `SPEC.md`, `.agentfleet.json`, `.gitignore`):
-no code, no HTML. M0 is a real agent build of the scaffold, checked by
-`m0-check.js` (structure + `node --test` + server boot). Use a separate folder
-and space so it does not collide with a `hello-aflt` run:
+instructions only (`AGENTS.md`, `SPEC.md`, `.agentfleet.json`, `.gitignore`)
+plus the loop itself in `.agentfleet/` (`loop.json`, prompts, and two check
+scripts): no game code, no HTML. Everything the loop uses lives inside the
+project folder. M0 is a real agent build of the scaffold, checked by
+`.agentfleet/checks/m0-check.js` (structure + `node --test` + server boot). Use
+a new empty folder (not inside another repo) and its own space:
 
 ```bash
-mkdir -p ~/tmp/td-scratch && cd ~/tmp/td-scratch && git init -b main
-export AFLT_SPACE=td-scratch
-aflt loop validate "$AFLT_HOME/examples/loops/hello-aflt-scratch/hello-aflt-scratch.json" --json
-aflt loop run "$AFLT_HOME/examples/loops/hello-aflt-scratch/hello-aflt-scratch.json"
+mkdir -p ~/aflt-projects/td-scratch && cd ~/aflt-projects/td-scratch
+cp -R "$AFLT_HOME/examples/loops/hello-aflt-scratch/seed/." .
+aflt init td-scratch --dir . --yes --engine cursor --isolated   # git init + space td-scratch
+git add -A && git commit -m "Seed hello-aflt-scratch"
+aflt --space td-scratch loop validate .agentfleet/loop.json --json
+aflt --space td-scratch loop run .agentfleet/loop.json
 ```
 
-A `seed-docs` script phase (no AI call) copies the docs in and commits them before the M0 agent starts.
+The first phase, `seed-docs`, is a script phase (no AI call) that checks the repo holds only the seed, so no leftover code leaks into a from-scratch run.
 
 Status: `aflt loop status hello-aflt-scratch --json`. Details:
 [examples/loops/hello-aflt-scratch/README.md](../examples/loops/hello-aflt-scratch/README.md).

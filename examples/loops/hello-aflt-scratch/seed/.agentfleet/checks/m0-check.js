@@ -2,20 +2,19 @@
 'use strict';
 
 /**
- * M0 eval for hello-aflt-scratch (portable Node, zero deps).
+ * M0 check for hello-aflt-scratch (portable Node, zero deps).
  *
- * Unlike hello-aflt/seed-m0.js this NEVER copies code into the game repo. The
- * only seed is seed/ next to this script: markdown instructions (AGENTS.md,
- * SPEC.md) plus .agentfleet.json and .gitignore. The M0 agent writes the
- * scaffold itself; this script checks it.
+ * Lives inside the project (.agentfleet/checks/), next to the loop, so a run
+ * never needs files outside the project folder. It never copies code: the M0
+ * agent writes the scaffold from SPEC.md and this script checks it.
  *
- *   node m0-check.js --seed-docs   install missing seed docs into cwd, exit 0
- *   node m0-check.js               install missing seed docs, then verify the
- *                                  agent-built scaffold structurally, run its
- *                                  node:test suite, and boot server.js once
- *
- * Seed files are only added when absent; existing files are never overwritten.
- * Resolved relative to this script (definition directory), not the game cwd.
+ *   node .agentfleet/checks/m0-check.js --seed-docs
+ *       verify the repo holds only the seed (AGENTS.md, SPEC.md,
+ *       .agentfleet.json, .gitignore and .agentfleet/: loop, prompts, checks)
+ *       and nothing else, so no pre-existing code leaks into a from-scratch run
+ *   node .agentfleet/checks/m0-check.js
+ *       verify the agent-built scaffold structurally, run its node:test suite,
+ *       and boot server.js once
  */
 
 const fs = require('fs');
@@ -24,14 +23,22 @@ const path = require('path');
 const http = require('http');
 const { spawn, spawnSync } = require('child_process');
 
-const SEED_DIR = path.join(__dirname, 'seed');
-
-/** Seed may hold instructions and config only: no code, no HTML. */
+/** Seed: instructions, config and the loop's own check tooling. No game code, no HTML. */
 const SEED_ALLOWED_NAMES = new Set(['.agentfleet.json', '.gitignore']);
 const SEED_ALLOWED_EXTS = new Set(['.md', '.txt']);
+const SEED_TOOLING = new Set([
+  '.agentfleet/loop.json',
+  '.agentfleet/checks/m0-check.js',
+  '.agentfleet/checks/improve-gate.js',
+]);
+const SEED_REQUIRED = ['AGENTS.md', 'SPEC.md', '.agentfleet/loop.json'];
 
 function isAllowedSeedFile(relPath) {
-  const base = path.basename(relPath);
+  const rel = String(relPath).split(path.sep).join('/');
+  if (SEED_TOOLING.has(rel)) return true;
+  if (/^\.agentfleet\/prompts\/[^/]+\.txt$/.test(rel)) return true;
+  if (rel.startsWith('.agentfleet/')) return false;
+  const base = path.basename(rel);
   if (SEED_ALLOWED_NAMES.has(base)) return true;
   return SEED_ALLOWED_EXTS.has(path.extname(base).toLowerCase());
 }
@@ -39,6 +46,8 @@ function isAllowedSeedFile(relPath) {
 function listFiles(dir, prefix = '') {
   const out = [];
   for (const name of fs.readdirSync(dir).sort()) {
+    if (!prefix && name === '.git') continue;
+    if (name === '.DS_Store') continue;
     const abs = path.join(dir, name);
     const rel = prefix ? `${prefix}/${name}` : name;
     if (fs.statSync(abs).isDirectory()) out.push(...listFiles(abs, rel));
@@ -47,25 +56,16 @@ function listFiles(dir, prefix = '') {
   return out;
 }
 
-function installSeedDocs(cwd, log = () => {}) {
-  if (!fs.existsSync(SEED_DIR)) throw new Error(`seed directory missing: ${SEED_DIR}`);
-  const installed = [];
-  for (const rel of listFiles(SEED_DIR)) {
-    if (!isAllowedSeedFile(rel)) {
-      throw new Error(`refusing non-instruction seed file: seed/${rel}`);
-    }
-    const dest = path.join(cwd, rel);
-    if (fs.existsSync(dest)) continue;
-    fs.mkdirSync(path.dirname(dest), { recursive: true });
-    fs.copyFileSync(path.join(SEED_DIR, rel), dest);
-    installed.push(rel);
+/** Problems with the seed: missing docs, or files that are not part of it. */
+function checkSeed(cwd) {
+  const problems = [];
+  for (const rel of SEED_REQUIRED) {
+    if (!fs.existsSync(path.join(cwd, rel))) problems.push(`missing ${rel}`);
   }
-  log(
-    installed.length
-      ? `m0-check: installed seed docs: ${installed.join(', ')}`
-      : 'm0-check: seed docs already present'
-  );
-  return installed;
+  for (const rel of listFiles(cwd)) {
+    if (!isAllowedSeedFile(rel)) problems.push(`not part of the seed: ${rel} (a from-scratch repo starts from the docs only)`);
+  }
+  return problems;
 }
 
 function readText(cwd, rel) {
@@ -236,13 +236,10 @@ async function main(argv = process.argv.slice(2)) {
     process.exit(code);
   };
 
-  try {
-    installSeedDocs(cwd, log);
-  } catch (err) {
-    fail(err.message);
-  }
   if (argv.includes('--seed-docs')) {
-    log('m0-check: seed docs ready (no code copied)');
+    const seedProblems = checkSeed(cwd);
+    if (seedProblems.length) fail(`seed check failed:\n  - ${seedProblems.join('\n  - ')}`);
+    log('m0-check: seed ok (docs, loop and checks only; no code)');
     process.exit(0);
   }
 
@@ -271,9 +268,8 @@ async function main(argv = process.argv.slice(2)) {
 }
 
 module.exports = {
-  SEED_DIR,
   isAllowedSeedFile,
-  installSeedDocs,
+  checkSeed,
   checkScaffold,
   listFiles,
 };
