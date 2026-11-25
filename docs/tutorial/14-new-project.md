@@ -144,7 +144,7 @@ chat, and the fact that Cursor's tools can read any path on disk. The drafting
 prompt, the planner prompt, the fix prompt and the starter `AGENTS.md` all tell
 the agent to stay inside the project.
 
-When a loop starts, aflt copies each `promptFile` (and any check script
+When a loop starts, the runner copies each `promptFile` (and any check script
 outside the project, with its folder) into `$AGENTFLEET_HOME/loops/<name>/`
 and resume reads the copies, so removing the checkout a loop came from does
 not break it. `aflt loop validate` warns about prompt files or check commands
