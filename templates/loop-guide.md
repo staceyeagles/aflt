@@ -90,7 +90,17 @@ runs. Follow them unless the project docs clearly say otherwise.
   (the first-milestone gate already gave the human a checkpoint), unless the
   user asked to approve every round.
 
-## 9. Shape
+## 9. Keep the loop inside the project
+
+- Every check command runs files inside the project (`npm test`,
+  `node scripts/eval/eval.js`). No `../` paths and no scripts from other
+  folders: when such a file is missing, agents go searching the disk for it.
+- Start each phase prompt with: "Work only inside this repository; do not read
+  or copy files from other folders on disk."
+- Prompt files live under `.agentfleet/prompts/` and are referenced relative
+  to the loop JSON.
+
+## 10. Shape
 
 ```json
 {

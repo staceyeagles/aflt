@@ -153,4 +153,18 @@ describe('isolation checks', () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+  it('loop init policy rejects checks that run files outside the project', () => {
+    const loopInit = require('../lib/loop-init');
+    const raw = {
+      name: 'x',
+      budget: { maxRuns: 9 },
+      phases: [
+        { id: 'm0', prompt: 'Write the tests and the eval script.', eval: { command: ['node', '../shared/check.js'] } },
+        { id: 'm1', prompt: 'next', gate: 'approve', eval: { command: 'npm test' } },
+      ],
+    };
+    const r = loopInit.checkLoopPolicy(raw, { projectDir: '/p/proj' });
+    assert.ok(r.errors.some((e) => /phase m0: check uses \.\.\/shared\/check\.js outside the project folder/.test(e)), r.errors.join('; '));
+    assert.ok(!r.errors.some((e) => /phase m1: check uses/.test(e)));
+  });
 });
