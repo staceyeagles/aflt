@@ -87,6 +87,10 @@ Regenerate the dashboard shots with `npm run screenshots` (needs Google Chrome, 
 - **Herdr space picker + `aflt space ls`** — the af sessions panel lists every aflt space (`aflt space ls --json`) and passes `--space` to `ls` / `resume` / `adopt`; `space ls` is an alias of `space list`.
 - **Self-improving loop** — `examples/loops/self-improve.json` runs in a worktree with engine failover, protected paths, cheap-first verify tiers, commit-gate trailers and `needs_human` escalation; `aflt doctor --strict` preflight. Runbook: [docs/self-improve-runbook.md](docs/self-improve-runbook.md).
 
+## What's new (2026-11-23)
+
+- **Copilot live-test fixes** — a phase fails or retries when the agent exits non-zero or times out (even if the eval is already green). Fresh Copilot homes get `results/` / `plans/` before `--add-dir`. Loop `model` / `COPILOT_MODEL` / `config.json` `defaultModel`; Copilot `usage_record` counts (`estimated` stays char/4 of prompt + final reply). `force` defaults off (`--force` or `"force": true`). `loop run` refuses a non-empty/dirty cwd or one that contains the aflt checkout or the definition unless `--allow-existing`. `--dry-run` prints cwd, permission mode, and model. `aflt doctor` ignores a non-Cursor `agent`. Node `>=20.10`. Guide: [docs/copilot-live-test.md](docs/copilot-live-test.md); report: [docs/reports/2026-11-23-copilot-live-test-report.md](docs/reports/2026-11-23-copilot-live-test-report.md).
+
 ## What's new (2026-11-22)
 
 - **hello-aflt audit follow-ups** — fresh loop runs mint new planner/root sessions; Cursor transcript sync aggregates multi-step tool turns and can enrich sparse estimated usage; prompt teasers strip same-line plan-mode preambles; completed loops freeze the step pipeline.
@@ -519,8 +523,9 @@ aflt loop approve <name>                    # release gate: "approve"
 
 # Portable Copilot-friendly example (empty git repo cwd; set AGENTFLEET_ENGINE=copilot once)
 # export AGENTFLEET_ENGINE=copilot
+# # optional: export COPILOT_MODEL=auto
 # aflt loop validate examples/loops/hello-aflt/hello-aflt.json --json
-# aflt loop run examples/loops/hello-aflt/hello-aflt.json --dry-run
+# aflt loop run examples/loops/hello-aflt/hello-aflt.json --dry-run   # from empty git repo cwd
 # aflt loop run examples/loops/hello-aflt/hello-aflt.json --fresh
 # Docs-only seed variant: copy examples/loops/hello-aflt-scratch/seed/ into an empty repo, then aflt loop run .agentfleet/loop.json
 # See docs/cli-quickstart-loops.md, examples/loops/hello-aflt/README.md and docs/copilot-live-test.md
@@ -772,7 +777,7 @@ Optional `"notify"` enables fire-and-forget webhook POSTs when a headless `aflt 
 | `aflt spawn` / `aflt master` | Worker under master / bootstrap orchestrator |
 | `aflt children` | List workers or summarize masters |
 | `aflt wait` | Block until workers terminal |
-| `aflt result` / `aflt tail` | Handoff file / run log follow |
+| `aflt result` / `aflt tail` | Handoff file (`--json` / `--require-fresh`) / run log follow |
 | `aflt send` / `aflt stop` | Continue chat or stop workers |
 | `aflt docs` | Documentarian worker |
 | `aflt msg` / `inbox` / `thread` | Task-scoped messaging |
@@ -780,7 +785,7 @@ Optional `"notify"` enables fire-and-forget webhook POSTs when a headless `aflt 
 | `aflt resume` / `aflt pick` | Resume one, pick, or `--all` |
 | `aflt adopt` | Label/move live Herdr panes into session spaces |
 | `aflt cwd` / `aflt set-cwd` | Show or change session folder |
-| `aflt cursor` / `aflt copilot` / `aflt engine` | Default engine get/set |
+| `aflt cursor` / `aflt copilot` / `aflt opencode` / `aflt engine` | Default engine get/set (`cursor` \| `copilot` \| `opencode`) |
 | `aflt rename` / `aflt done` / `aflt note` | Metadata |
 | `aflt archive` / `aflt unarchive` | Soft-hide / restore sessions (logs untouched) |
 | `aflt rm` | Remove session(s) by exact id/title or TTY fuzzy pick (+ results/plans; keeps runs/) |
@@ -793,7 +798,7 @@ Optional `"notify"` enables fire-and-forget webhook POSTs when a headless `aflt 
 | `aflt herdr-app install` / `status` | Install/report af-sessions panel + layout |
 | `aflt doctor` | Read-only environment checks (includes notify status; never prints the key) |
 | `aflt notify test` | Send a sample notify webhook event |
-| `aflt loop` | Multi-phase eval/fix runner (`validate` / `run` / `start` / `pause` / `status` / `stop` / `resume` / `approve`) |
+| `aflt loop` | Multi-phase eval/fix runner (`validate` / `run [--dry-run\|--fresh\|--force\|--allow-existing]` / `start` / `pause` / `status` / `stop` / `resume` / `approve`) |
 | `aflt service` | macOS LaunchAgent for the dashboard (`install` / `uninstall` / `status`) |
 | `aflt space` | Named spaces (`list` / `ls` / `create` / `current` / `remove`) |
 | `aflt eval measure` | Hermetic self-measurement → `eval/results/<timestamp>.json` |
@@ -817,6 +822,7 @@ See `af --help` / `aflt help` for the authoritative flag list. Long-form help co
 ## More docs
 
 - [docs/tutorial/README.md](docs/tutorial/README.md) — **tutorial** (beginner → advanced; use a throwaway space)
+- [docs/copilot-live-test.md](docs/copilot-live-test.md) — Copilot-only work Mac: validate / dry-run / live `hello-aflt` with `--fresh`
 - [AGENTS.md](AGENTS.md) — guide for AI coding agents (Copilot CLI, Cursor, orchestrators)
 - [CHANGELOG.md](CHANGELOG.md) — release notes
 - [docs/CAPABILITIES.md](docs/CAPABILITIES.md) — engine × mode capability matrix and `aflt wait` outcomes
@@ -836,7 +842,7 @@ See `af --help` / `aflt help` for the authoritative flag list. Long-form help co
 npm test
 ```
 
-887 tests (Node test runner): 886 passing and 1 skipped in the hermetic suite (the skipped live `create-chat` smoke test only runs with a real `cursor-agent`). Coverage includes registry, engines, Herdr backends and the af sessions panel space picker, orchestration, messaging, MCP, docs and tutorial commands, project/timeline, project memory, live dashboard (local-time stamps, Stop state, loop credits), loops (active-time budget, script phases, verify tiers, commit gate, escalation, failover, hello-aflt and hello-aflt-scratch), making-of, usage, named spaces, eval, dry-run purity, interactive rm/stop pickers, and hermetic `AGENTFLEET_HOME` fixtures.
+944 tests (Node test runner): 943 passing and 1 skipped in the hermetic suite (the skipped live `create-chat` smoke test only runs with a real `cursor-agent`). Coverage includes registry, engines, Herdr backends and the af sessions panel space picker, orchestration, messaging, MCP, docs and tutorial commands, project/timeline, project memory, live dashboard (local-time stamps, Stop state, loop credits), loops (active-time budget, script phases, verify tiers, commit gate, escalation, failover, hello-aflt and hello-aflt-scratch), making-of, usage, named spaces, eval, dry-run purity, interactive rm/stop pickers, and hermetic `AGENTFLEET_HOME` fixtures.
 
 ## Versioning and releases
 

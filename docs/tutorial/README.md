@@ -44,6 +44,7 @@ That isolates registry, config, memory, dashboard port, and LaunchAgent label un
 - [docs/PROJECT-REPO-METADATA.md](../PROJECT-REPO-METADATA.md) — project↔repo schema
 - [docs/cli-quickstart-loops.md](../cli-quickstart-loops.md) — run the hello-aflt tile-dungeon loop for real, watch it, review it with `aflt making-of`
 - [docs/self-improve-runbook.md](../self-improve-runbook.md) — self-improving loop in a worktree
+- [docs/copilot-live-test.md](../copilot-live-test.md) — Copilot-only work Mac: validate / dry-run / live `hello-aflt`
 - [AGENTS.md](../../AGENTS.md) — agent-oriented command guide
 - [CHANGELOG.md](../../CHANGELOG.md) — release notes
 - [README.md](../../README.md) — product overview; dashboard screenshots in [docs/images/](../images/)

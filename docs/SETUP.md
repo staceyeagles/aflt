@@ -57,7 +57,7 @@ flowchart LR
 ## 2. Prerequisites
 
 - **macOS** (Intel or Apple Silicon).
-- **Node.js ≥ 18** (required by `af`; Cursor CLI is also a Node binary).
+- **Node.js ≥ 20.10** (required by `af` / `package.json` `engines`; Cursor CLI is also a Node binary).
 - Ability to write under your home directory (`~/.local`, `~/.config`, `~/.agentfleet`). Admin/`sudo` is **not** required for the user-local install path used below.
 - A Cursor account (for `agent login`), unless you use `CURSOR_API_KEY` instead.
 - Git (for worktrees).

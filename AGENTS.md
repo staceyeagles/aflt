@@ -456,6 +456,7 @@ Definition keys: `name`, `project`, `cwd`, `engine` (optional — omit to follow
 ```bash
 mkdir tile-dungeon && cd tile-dungeon && git init
 export AGENTFLEET_ENGINE=copilot   # once; or: aflt engine copilot
+# optional: export COPILOT_MODEL=auto  # when the account default model is unavailable
 aflt loop run /path/to/aflt/examples/loops/hello-aflt/hello-aflt.json
 ```
 
@@ -895,6 +896,8 @@ Set by the caller or the environment:
 | `AFLT_LOOP_HEARTBEAT_SECONDS` | Opt-in `loop.heartbeat` interval while a loop runner is live (else `config.json` `loop.heartbeatSeconds`; default off / 0) |
 | `AGENTFLEET_CURSOR_BIN` | Override `cursor-agent` |
 | `AGENTFLEET_COPILOT_BIN` | Override `copilot` |
+| `COPILOT_MODEL` | Default Copilot model for loop phases when phase/definition omit `model` (wins over config `defaultModel` for Copilot) |
+| `AGENTFLEET_COPILOT_FALLBACK_MODEL` | When Copilot’s account default model is unavailable, retry with this model (default `auto`; `none`/empty disables) |
 | `AGENTFLEET_OPENCODE_BIN` | Override `opencode` |
 | `AGENTFLEET_OPENCODE_HOME` | OpenCode data dir (default `~/.local/share/opencode`) |
 | `AGENTFLEET_OPENCODE_DB` | Override path to `opencode.db` (tests) |

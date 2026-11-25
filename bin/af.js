@@ -614,6 +614,12 @@ Environment:
                             (else config.json loop.heartbeatSeconds; default off)
   AGENTFLEET_CURSOR_BIN   Override cursor-agent binary
   AGENTFLEET_COPILOT_BIN  Override copilot binary
+  COPILOT_MODEL           Default Copilot model for loop phases when the
+                            phase/definition omit model (wins over config
+                            defaultModel for Copilot)
+  AGENTFLEET_COPILOT_FALLBACK_MODEL  When Copilot's account default model is
+                            unavailable, retry with this model (default auto;
+                            set to none/empty to disable)
   AGENTFLEET_OPENCODE_BIN Override opencode binary
   AGENTFLEET_OPENCODE_HOME OpenCode data dir (default ~/.local/share/opencode)
   AGENTFLEET_VIA          Default --via backend (resume --all; also overrides

@@ -69,26 +69,32 @@ process.exit(0);
   it('does not treat an unrelated agent binary as Cursor', () => {
     const only = fs.mkdtempSync(path.join(os.tmpdir(), 'af-fake-agent-'));
     const cursorOnly = fs.mkdtempSync(path.join(os.tmpdir(), 'af-cursor-agent-'));
+    // Hermetic PATH: only the fixture `agent` + system bins. Omit stubDir
+    // (it ships a stub cursor-agent) and the host PATH so prefer-named
+    // cursor-agent lookup cannot hide the bare-agent identity check.
+    // hc comes from AGENTFLEET_HC_BIN (absolute), not PATH.
+    const hermeticPath = ['/usr/bin', '/bin'].join(path.delimiter);
     try {
       fs.writeFileSync(
         path.join(only, 'agent'),
         '#!/bin/sh\necho "acme vendor cli 9.9.9"\nexit 0\n',
         { mode: 0o755 }
       );
+      const rejectedEnv = {
+        ...process.env,
+        AGENTFLEET_HOME: home,
+        AGENTFLEET_HC_BIN: stubHc,
+        PATH: `${only}${path.delimiter}${hermeticPath}`,
+      };
+      delete rejectedEnv.AGENTFLEET_CURSOR_BIN;
       const rejected = spawnSync(process.execPath, [afJs, 'doctor', '--json'], {
         encoding: 'utf8',
-        env: {
-          ...process.env,
-          AGENTFLEET_HOME: home,
-          AGENTFLEET_HC_BIN: stubHc,
-          PATH: only,
-          AGENTFLEET_CURSOR_BIN: '',
-        },
+        env: rejectedEnv,
       });
       assert.ok(rejected.status === 0 || rejected.status === 1, rejected.stdout + rejected.stderr);
       const rejectedBody = JSON.parse(rejected.stdout);
       const rejectedBin = rejectedBody.checks.find((c) => c.name === 'cursor_bin');
-      assert.equal(rejectedBin.ok, false);
+      assert.equal(rejectedBin.ok, false, JSON.stringify(rejectedBin));
       assert.match(rejectedBin.detail, /not Cursor/);
       assert.match(rejectedBin.detail, /agent/);
       assert.doesNotMatch(rejectedBin.detail, /^acme/);
@@ -98,15 +104,16 @@ process.exit(0);
         '#!/bin/sh\necho "Cursor Agent CLI 2026.11.1"\nexit 0\n',
         { mode: 0o755 }
       );
+      const acceptedEnv = {
+        ...process.env,
+        AGENTFLEET_HOME: home,
+        AGENTFLEET_HC_BIN: stubHc,
+        PATH: `${cursorOnly}${path.delimiter}${hermeticPath}`,
+      };
+      delete acceptedEnv.AGENTFLEET_CURSOR_BIN;
       const accepted = spawnSync(process.execPath, [afJs, 'doctor', '--json'], {
         encoding: 'utf8',
-        env: {
-          ...process.env,
-          AGENTFLEET_HOME: home,
-          AGENTFLEET_HC_BIN: stubHc,
-          PATH: `${cursorOnly}${path.delimiter}${process.env.PATH || ''}`,
-          AGENTFLEET_CURSOR_BIN: '',
-        },
+        env: acceptedEnv,
       });
       const acceptedBody = JSON.parse(accepted.stdout);
       const acceptedBin = acceptedBody.checks.find((c) => c.name === 'cursor_bin');
