@@ -19,6 +19,7 @@ describe('named spaces', () => {
   let prevAfHome;
   let prevSpace;
   let prevNotify;
+  let prevProbe;
 
   beforeEach(() => {
     prevHome = process.env.HOME;
@@ -30,11 +31,16 @@ describe('named spaces', () => {
     delete process.env.AGENTFLEET_HOME;
     delete process.env.AFLT_SPACE;
     delete process.env.AFLT_NOTIFY_URL;
+    // Exact port numbers below: skip the live listening-port probe (covered in space-ports.test.js).
+    prevProbe = process.env.AFLT_NO_PORT_PROBE;
+    process.env.AFLT_NO_PORT_PROBE = '1';
     util.resetSpaceSelection();
   });
 
   afterEach(() => {
     util.resetSpaceSelection();
+    if (prevProbe === undefined) delete process.env.AFLT_NO_PORT_PROBE;
+    else process.env.AFLT_NO_PORT_PROBE = prevProbe;
     fs.rmSync(home, { recursive: true, force: true });
     if (prevHome === undefined) delete process.env.HOME;
     else process.env.HOME = prevHome;
