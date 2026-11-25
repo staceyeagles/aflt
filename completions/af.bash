@@ -60,7 +60,7 @@ _af() {
       COMPREPLY=( $(compgen -W "--cwd --prompt --model --tag --chat --engine --project --force --messaging --no-messaging --dry-run --no-trust cursor copilot opencode" -- "${cur}") )
       ;;
     init)
-      COMPREPLY=( $(compgen -W "--dir --space --no-space --engine --goal --stack --checks --budget-credits --budget-hours --yes --force --json cursor copilot opencode" -- "${cur}") )
+      COMPREPLY=( $(compgen -W "--dir --space --no-space --engine --goal --stack --checks --budget-credits --budget-hours --yes --existing --isolated --force --json cursor copilot opencode" -- "${cur}") )
       ;;
     run)
       COMPREPLY=( $(compgen -W "--prompt --cwd --model --engine --project --mode --force --output-format --timeout --messaging --no-messaging --no-docs --dry-run --json --no-trust --no-silent cursor copilot opencode ask plan text json" -- "${cur}") )
@@ -268,7 +268,7 @@ _af() {
       if [[ ${COMP_CWORD} -eq 2 ]]; then
         COMPREPLY=( $(compgen -W "init validate run start pause status stop resume approve" -- "${cur}") )
       elif [[ "${COMP_WORDS[2]}" == "init" ]]; then
-        COMPREPLY=( $(compgen -W "--engine --model --build-model --plan-model --out --dry-run --force --no-gate --no-dashboard --no-agents-pointer --budget-credits --budget-hours --json" -- "${cur}") )
+        COMPREPLY=( $(compgen -W "--engine --model --build-model --plan-model --out --dry-run --force --no-gate --no-dashboard --no-agents-pointer --budget-credits --budget-hours --isolated --json" -- "${cur}") )
       elif [[ "${COMP_WORDS[2]}" == "validate" || "${COMP_WORDS[2]}" == "start" ]]; then
         COMPREPLY=( $(compgen -W "--json" -- "${cur}") )
       elif [[ "${COMP_WORDS[2]}" == "run" ]]; then

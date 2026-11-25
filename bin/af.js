@@ -91,12 +91,19 @@ Usage:
                             [--tag T]... [--dry-run]
   aflt init <name> [--dir PATH] [--space NAME | --no-space] [--engine cursor|copilot|opencode]
                             [--goal TEXT] [--stack TEXT] [--checks TEXT]
-                            [--budget-credits N] [--budget-hours N] [--yes] [--force] [--json]
+                            [--budget-credits N] [--budget-hours N] [--yes] [--existing]
+                            [--isolated] [--force] [--json]
                             Start a looped project: folder (default ./<name>),
                             git init, a space named after it (or --space), and
                             starter SPEC.md / AGENTS.md / .agentfleet.json from a
                             few plain questions (TTY) or flags (--yes). Existing
-                            docs are kept unless --force. Next: aflt loop init.
+                            docs are kept unless --force. Refuses a folder with
+                            files other than the seed docs unless --existing
+                            (or --force). Warns about anything outside the
+                            folder the engine could pick up (parent repo,
+                            parent/global AGENTS.md or rules, shared space or
+                            memory); --isolated turns those into errors.
+                            Next: aflt loop init.
   aflt add "<title>" --chat <id> [--cwd DIR] [--model X] [--engine cursor|copilot|opencode]
                             [--project NAME] [--tag T]... [--prompt "..."]
                             For --engine copilot, --chat is the Copilot session UUID
@@ -456,7 +463,7 @@ Usage:
   aflt loop init [--engine E] [--model M | --build-model M --plan-model M]
                             [--out .agentfleet/loop.json] [--dry-run] [--force]
                             [--no-gate] [--no-dashboard] [--no-agents-pointer]
-                            [--budget-credits N] [--budget-hours N] [--json]
+                            [--budget-credits N] [--budget-hours N] [--isolated] [--json]
                             Draft a loop from SPEC.md / AGENTS.md: the engine
                             (headless) writes the loop JSON + prompts/ following
                             templates/loop-guide.md (m0 builds tests + eval, a
@@ -468,6 +475,7 @@ Usage:
                             phase summary, an aflt-loop section in AGENTS.md,
                             and a copy under loops/definitions for the
                             dashboard editor. Uses the space in .agentfleet.json.
+                            Prints isolation warnings; --isolated refuses.
   aflt loop validate <file> [--json]
                             Validate a loop definition JSON file (schema,
                             phases, eval, allow/onPass). Exit 1 on errors.
@@ -864,10 +872,12 @@ async function cmdInit(argv) {
   const yes = recoverBoolFlag(flags, 'yes', positional) || recoverBoolFlag(flags, 'y', positional);
   const force = recoverBoolFlag(flags, 'force', positional);
   const noSpace = recoverBoolFlag(flags, 'no-space', positional);
+  const existing = recoverBoolFlag(flags, 'existing', positional);
+  const isolated = recoverBoolFlag(flags, 'isolated', positional);
   const usage =
     'usage: aflt init <name> [--dir PATH] [--space NAME | --no-space] [--engine cursor|copilot|opencode]\n' +
     '                 [--goal TEXT] [--stack TEXT] [--checks TEXT] [--budget-credits N] [--budget-hours N]\n' +
-    '                 [--yes] [--force] [--json]';
+    '                 [--yes] [--existing] [--isolated] [--force] [--json]';
   if (flags.help || flags.h || positional[0] === 'help') {
     process.stdout.write(usage + '\n');
     return;
@@ -905,6 +915,9 @@ async function cmdInit(argv) {
       engine: engineName,
       ...answers,
       force,
+      existing,
+      isolated,
+      currentSpace: currentSpaceName() || null,
     });
   } catch (err) {
     fail(err.message || String(err), { json: asJson });
@@ -924,6 +937,8 @@ async function cmdInit(argv) {
   for (const f of result.files) {
     out.push(`  ${f.action.padEnd(11)} ${path.relative(result.dir, f.path) || f.path}`);
   }
+  if (result.isolation && result.isolation.ok) out.push('  isolation: ok (no parent repo, parent or global instructions, or shared space)');
+  for (const w of (result.isolation && result.isolation.warnings) || []) out.push(`  WARNING (isolation): ${w.message}`);
   out.push('', 'next:');
   for (const n of result.next) out.push(`  ${n}`);
   process.stdout.write(out.join('\n') + '\n');
@@ -939,6 +954,7 @@ async function cmdLoopInit(argvRest) {
   const noDashboard = recoverBoolFlag(flags, 'no-dashboard', positional);
   const noAgents = recoverBoolFlag(flags, 'no-agents-pointer', positional);
   const noGate = recoverBoolFlag(flags, 'no-gate', positional);
+  const isolated = recoverBoolFlag(flags, 'isolated', positional);
   const cwd = typeof flags.cwd === 'string' ? path.resolve(flags.cwd) : process.cwd();
   const loopInit = require('../lib/loop-init');
   // A project made by `aflt init` records its space; use it unless one was chosen.
@@ -976,6 +992,7 @@ async function cmdLoopInit(argvRest) {
       dashboard: !noDashboard,
       agentsPointer: !noAgents,
       gate: noGate ? false : undefined,
+      isolated,
       budgetCredits: str('budget-credits'),
       budgetHours: str('budget-hours'),
       timeoutSec: str('timeout') ? Number(str('timeout')) : undefined,
@@ -996,6 +1013,9 @@ async function cmdLoopInit(argvRest) {
         `prompt (${result.promptChars} chars):\n\n${result.prompt}\n`
     );
     return;
+  }
+  for (const w of (result.isolation && result.isolation.warnings) || []) {
+    process.stderr.write(`WARNING (isolation): ${w.message}\n`);
   }
   if (!result.ok) {
     process.stderr.write(`loop init failed: ${result.error || 'the draft did not pass the checks'}\n`);
