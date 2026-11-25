@@ -434,6 +434,8 @@ Implementation: `scripts/eval/` (no new npm deps). Generated `eval/results/`, `e
 Long-running phases without a bot waking aflt: each phase runs a prompt in a Cursor/Copilot/OpenCode session, then an eval command; on failure the eval output is sent back as a fix prompt (up to `maxFixAttempts`). State is atomic under `$AGENTFLEET_HOME/loops/<name>/state.json`; a runner lock prevents two runners on one loop. Prompts are always argv data (no shell interpolation). `onPass` (`none`|`commit`|`merge`|`push`) only runs when loop-level `allow` flags permit (default all false).
 
 ```bash
+aflt init <name> [--dir PATH] [--engine E] [--yes] [--existing] [--isolated]   # new looped project
+aflt loop init [--engine E] [--build-model M --plan-model M] [--dry-run] [--force] [--isolated] [--json]   # draft .agentfleet/loop.json from SPEC.md/AGENTS.md
 aflt loop validate <file.json> [--json]
 aflt loop run <file.json> [--dry-run] [--json] [--fresh] [--force] [--allow-existing] [--create-worktree]
 aflt loop start <file.json> [--json]   # register active for dashboard scheduler

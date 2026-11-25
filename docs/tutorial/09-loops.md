@@ -11,6 +11,8 @@
 ## Commands
 
 ```bash
+aflt init <name> [--dir PATH] [--engine E] [--yes] [--existing] [--isolated]   # new project: folder, git, space, SPEC/AGENTS
+aflt --space tutorial loop init [--engine E] [--build-model M --plan-model M] [--dry-run] [--force] [--isolated]
 aflt --space tutorial loop validate <file.json> [--json]
 aflt --space tutorial loop run <file.json> [--dry-run] [--json] [--fresh] [--force] [--allow-existing] [--create-worktree]
 aflt --space tutorial loop start <file.json> [--json]    # register active for dashboard scheduler
@@ -22,7 +24,9 @@ aflt --space tutorial loop approve <name> [--json]       # release gate: "approv
 aflt --space tutorial making-of <name> [--out file.html] [--serve] [--with-files] [--json]
 ```
 
-State lives under `$AGENTFLEET_HOME/loops/<name>/` (`state.json` + runner lock). Definitions you save from the UI go only under `$AGENTFLEET_HOME/loops/definitions` (or configured loops dir).
+New project? [14 — New looped project](14-new-project.md) walks through `aflt init` and `aflt loop init`, which drafts `.agentfleet/loop.json` from `SPEC.md` / `AGENTS.md` and checks it against the loop-writing guide.
+
+State lives under `$AGENTFLEET_HOME/loops/<name>/` (`state.json` + runner lock). When a loop starts, each phase's `promptFile` is copied to `loops/<name>/prompts/` and check scripts outside the project (with their folder) to `loops/<name>/files/`; resume reads the copies (`promptSnapshot`; the original stays in `promptFileSource` / `eval.commandSource`). `loop validate` warns about prompt files or check paths outside the project. Definitions you save from the UI go only under `$AGENTFLEET_HOME/loops/definitions` (or configured loops dir).
 
 ## Examples in the repo
 
@@ -87,7 +91,10 @@ Before an unattended run, `aflt doctor --strict --loop <def.json>` checks that t
 ## Approval gates and plan-next
 
 - Optional `escalation: { "afterFailedRounds": 3, "event": "loop.needs_human" }` — after a non-retryable phase failure (exhausted fix attempts, protected-path violation, commit-gate refusal, or non-retryable engine error), the runner sets `status=needs_human` instead of `failed`, writes `$AGENTFLEET_HOME/loops/<name>/needs-human.json`, and emits `loop.needs_human` plus `loop.gate.waiting` with a diagnostic bundle. Resume with `aflt loop resume <name>` (fresh attempt on the failed phase) or `aflt loop stop <name>`. Plan-next improve loops also count consecutive failed rounds toward `afterFailedRounds`. Without `escalation`, behavior is unchanged (`failed`).
-- Phase `gate: "approve"` → runner `status=waiting`, notify `loop.gate.waiting`; release with `aflt loop approve` or dashboard `POST /api/loops/:name/approve`
+- Phase `gate: "approve"` → runner `status=waiting`, notify `loop.gate.waiting`; release with `aflt loop approve` or dashboard `POST /api/loops/:name/approve`. The gate records the **cost so far** (`state.gate.costSoFar`): `aflt loop status` prints `cost so far: 12.4 credits · $0.12 · 9m active · 1.5M tok` (Cursor: `cost unknown (cursor recorded no cost) · …`), the history line and dashboard banner repeat it, and the notify payload carries `costSoFar`, `costKnown`, `credits`, `usd`, `activeHours`, `totalTokens`, `runsUsed`.
+- `improveModel` (definition, or on the plan-next phase) sets the model of planner-inserted improve rounds that set none. Without it they use the loop's model chain (phase → definition `model` → `COPILOT_MODEL` → config default); they do **not** inherit the plan-next phase's `model`.
+- Planned improve rounds whose `eval.command` climbs out of the project (`../x.js`, or a missing absolute path elsewhere) are rejected and sent back to the planner.
+- `"workdir": { "mode": "project" }` — run in the project's own clean git repo even though it is not empty and holds the definition (what `aflt loop init` sets). Refuses a dirty tree and the aflt checkout.
 - `type: "plan-next"`: planner must write `$AGENTFLEET_HOME/loops/<name>/plan-next.json` as `{ "done": true }` or `{ "phases": [ … ] }`
 - `type: "script"`: no AI call — the phase's `eval.command` is the step (seed a scaffold, run a setup script). No prompt, no session, no fix attempts, not counted in `budget.maxRuns`; `onPass` still applies. hello-aflt's `m0` and hello-aflt-scratch's `seed-docs` use this; dry-run shows them as `engine=null session=null maxFix=0 … permission=no-agent`.
 - Newly planned phases get `gate: "approve"` unless the phase sets `gate` or the loop sets `plannedPhaseGate: "none"`

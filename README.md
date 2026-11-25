@@ -72,6 +72,11 @@ Install the panel and layout with `aflt setup --apply --herdr` (or `aflt herdr-a
 
 Regenerate the dashboard shots with `npm run screenshots` (needs Google Chrome, Node ≥20.10, and a dashboard running at `DASHBOARD_URL`, default `http://127.0.0.1:8787/`; output in `OUT_DIR`, default `docs/images`). The loop, making-of and game screenshots above were captured the same way (headless Chrome) from live runs; home-directory paths are shown as `~`.
 
+## What's new (unreleased)
+
+- **`aflt init` + `aflt loop init`** — start a looped project from `SPEC.md` / `AGENTS.md`: the engine drafts `.agentfleet/loop.json` and prompts, checked against [templates/loop-guide.md](templates/loop-guide.md) (tests + eval in M0, a real check on every phase, a gate after M0, budget caps). Tutorial: [docs/tutorial/14-new-project.md](docs/tutorial/14-new-project.md).
+- **Gate cost so far**, **`improveModel`**, **`workdir.mode: "project"`**, prompt/check-script snapshots in the loop state, and isolation checks (`--isolated`). Details in [CHANGELOG.md](CHANGELOG.md).
+
 ## What's new (2026-11-24)
 
 - **`aflt making-of <loop>`** — one self-contained page per loop: every AI call in order (prompt, reply, reasoning, tool calls + results, tokens, Copilot AI credits / $ as recorded), every commit with phase, files and diff, seed files, files per phase, eval outputs and a `--build-url` link to the build. `--serve`, `--with-files` (static export), `--json`. Also `/making-of/<loop>` and a **Making of** button on the dashboard Loops tab. Guide: [docs/cli-quickstart-loops.md §7](docs/cli-quickstart-loops.md#7-see-exactly-how-it-was-built-making-of).
@@ -216,6 +221,10 @@ aflt ls
 aflt resume auth-refactor          # Herdr when hc on PATH; Attach: hc attach <name>
 aflt resume                        # or aflt pick — TTY multi-select
 aflt resume --all --via herdr      # fleet reopen after reboot
+
+# New looped project: folder + git + space + SPEC/AGENTS, then a drafted loop
+aflt init tile-dungeon --engine cursor && cd tile-dungeon
+aflt loop init && git add -A && git commit -m "Add aflt loop" && aflt loop start .agentfleet/loop.json
 
 # Master + detached workers
 aflt master --goal "Split auth into helpers + tests" --cwd ~/src/app --headless --force
@@ -491,7 +500,10 @@ aflt loop run examples/loops/self-improve.json --dry-run --allow-existing
 
 `force` defaults to **false** (no Cursor `--force` / Copilot `--allow-all-tools`) unless the definition sets `force: true` or you pass `aflt loop run --force`. `loop run` refuses a working folder that is not a clean empty git repo, or that contains the aflt checkout or the definition, unless `--allow-existing`. A definition can opt into `"workdir": { "mode": "worktree", "base": "origin/main", "path": "~/tmp/aflt-self" }` to accept a clean non-empty git worktree that is not the running aflt checkout (`aflt loop run … --create-worktree` runs `git worktree add` for a missing `path`). A definition can also set `"protected": { "paths": ["scripts/eval/**"] }` so a phase whose diff against its base commit touches those globs fails immediately (no fix attempts), which stops a worker from editing its own eval harness. `--dry-run` prints the resolved cwd, permission mode (`force` / `restricted` / `mixed`), and model. Model resolution: phase `model`, else definition `model`, else `COPILOT_MODEL` for Copilot, else `config.json` `defaultModel` (alias `model`).
 
+New project: `aflt init <name>` then `aflt loop init` drafts `.agentfleet/loop.json` from `SPEC.md` / `AGENTS.md` and checks it (see [tutorial 14](docs/tutorial/14-new-project.md)). An `"approve"` gate reports the cost so far (credits and dollars for Copilot; “cost unknown” for Cursor). `improveModel` sets the model of plan-next improve rounds (they do not inherit the planner's model). Starting a loop snapshots its prompt files and outside check scripts into `loops/<name>/`, so resume never depends on files outside the project or space.
+
 ```bash
+aflt loop init --dry-run                     # print the drafting prompt
 aflt loop validate examples/loops/hello-eval.json
 # In-repo examples use "cwd": "." — pass --allow-existing from this checkout.
 aflt loop run examples/loops/hello-eval.json --dry-run --allow-existing

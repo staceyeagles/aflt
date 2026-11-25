@@ -35,6 +35,7 @@ That isolates registry, config, memory, dashboard port, and LaunchAgent label un
 | 11 | [Named spaces](11-spaces.md) | `--space` / `AFLT_SPACE`; create / list (ls) / current / remove; Herdr space picker |
 | 12 | [Token usage](12-token-usage.md) | Per-turn `usage`, `usage-summary.json`, Copilot credits, recorded calls, History, memory rollup |
 | 13 | [Troubleshooting](13-troubleshooting.md) | Timeouts, PATH, no pkill, prompts from files, FAQ |
+| 14 | [New looped project](14-new-project.md) | `aflt init`, `aflt loop init`, checks policy, the gate's cost so far, isolation |
 
 ## Deeper docs (do not duplicate here)
 
