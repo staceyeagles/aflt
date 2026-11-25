@@ -195,6 +195,27 @@ function isHerdrFocusLocal(loc) {
  * opts.timeZone (tests) overrides the browser zone; opts.seconds=false drops
  * seconds; opts.zone=false drops the label. Unparseable input is returned as-is.
  */
+/** "3m ago" style age for an ISO time (empty when unknown). */
+function formatAgo(value, nowMs) {
+  const t = value ? Date.parse(value) : NaN;
+  if (!Number.isFinite(t)) return '';
+  const s = Math.max(0, Math.round(((nowMs || Date.now()) - t) / 1000));
+  if (s < 60) return s + 's ago';
+  const m = Math.round(s / 60);
+  if (m < 60) return m + 'm ago';
+  const h = Math.floor(m / 60);
+  if (h < 48) return h + 'h ' + (m % 60) + 'm ago';
+  return Math.floor(h / 24) + 'd ago';
+}
+
+/** Improve round label: "improve-r2 (round 2/3)" while running, else the last one run. */
+function formatLoopRound(round) {
+  if (!round || !round.total) return '';
+  if (round.current) return round.current + ' (round ' + round.number + '/' + round.total + ')';
+  if (round.last) return round.last + ' (' + round.number + '/' + round.total + ' rounds run)';
+  return '0/' + round.total + ' rounds run';
+}
+
 function formatLocalDateTime(value, opts) {
   const o = opts || {};
   if (value == null || value === '') return '';
@@ -783,8 +804,13 @@ function renderLoopsListHtml(loops, selectedName) {
     const meta = [
       loop.active ? 'live' : null,
       loop.engine ? loop.engine + (loop.model ? '/' + loop.model : '') : null,
-      loop.phaseId ? 'phase ' + loop.phaseId : null,
+      loop.round && loop.round.current
+        ? 'round ' + formatLoopRound(loop.round)
+        : loop.phaseId
+          ? 'phase ' + loop.phaseId
+          : null,
       loop.attempt != null ? 'attempt ' + loop.attempt : null,
+      loop.lastActivityAt ? 'last activity ' + formatAgo(loop.lastActivityAt) : null,
       formatLoopElapsed(loop.elapsedMs),
       formatLoopBudget(loop.budget),
       formatLoopRowUsage(loop.usage) || null,
@@ -987,6 +1013,9 @@ function renderLoopPhaseTree(detail) {
       '">' +
       escapeHtml(p.status || 'pending') +
       '</span>';
+    if (p.roundRunning) {
+      html += ' <span class="loops-row-meta">' + escapeHtml(p.roundRunning) + ' running</span>';
+    }
     if (p.evalScore != null && Number.isFinite(Number(p.evalScore))) {
       html +=
         ' <span class="loops-phase-score" title="Eval overall score">' +
@@ -1174,11 +1203,21 @@ function renderLoopDetailHtml(detail) {
     { k: 'Status', v: status },
     { k: 'Engine', v: detail.engine || '—' },
     { k: 'Model', v: detail.model || '—' },
-    { k: 'Phase', v: detail.phaseId || '—' },
+    {
+      k: 'Phase',
+      v: (detail.round && detail.round.current) || detail.phaseId || '—',
+    },
+    { k: 'Round', v: formatLoopRound(detail.round) || '—' },
     { k: 'Attempt', v: detail.attempt != null ? String(detail.attempt) : '—' },
     { k: 'Step', v: detail.step || '—' },
     { k: 'Started', v: detail.startedAt ? formatLocalDateTime(detail.startedAt) : '—' },
     { k: 'Updated', v: detail.updatedAt ? formatLocalDateTime(detail.updatedAt) : '—' },
+    {
+      k: 'Last activity',
+      v: detail.lastActivityAt
+        ? formatLocalDateTime(detail.lastActivityAt) + ' (' + formatAgo(detail.lastActivityAt) + ')'
+        : '—',
+    },
     { k: 'Elapsed', v: formatLoopElapsed(detail.elapsedMs) },
     { k: 'Budget', v: formatLoopBudget(detail.budget) },
     { k: 'Tokens', v: formatLoopUsage(detail.usage) },
