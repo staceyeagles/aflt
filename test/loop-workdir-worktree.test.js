@@ -98,7 +98,7 @@ describe('loop workdir.mode worktree', () => {
     assert.equal(n({ mode: 'worktree', path: '~/x' }, tmp).value.path, path.join(os.homedir(), 'x'));
     const bad = n({ mode: 'shared' }, tmp);
     assert.equal(bad.ok, false);
-    assert.match(bad.error, /workdir\.mode must be "fresh" or "worktree"/);
+    assert.match(bad.error, /workdir\.mode must be "fresh", "worktree" or "project"/);
     assert.equal(n({ mode: 'worktree', base: '--evil' }, tmp).ok, false);
     assert.equal(n({ mode: 'fresh', path: '/x' }, tmp).ok, false);
     assert.equal(n('worktree', tmp).ok, false);
@@ -160,7 +160,7 @@ describe('loop workdir.mode worktree', () => {
         env: env(),
       });
       assert.equal(r.status, 1);
-      assert.match(r.stderr, /workdir\.mode must be "fresh" or "worktree"/);
+      assert.match(r.stderr, /workdir\.mode must be "fresh", "worktree" or "project"/);
     });
 
     it('dry-run reports the worktree inspection and passes a clean linked worktree', () => {
