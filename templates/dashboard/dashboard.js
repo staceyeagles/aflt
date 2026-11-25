@@ -1069,6 +1069,53 @@ function loopIsFinished(loop) {
 }
 
 /**
+ * Merge a phase edited in the loop form over the phase it was opened from, so
+ * fields the form has no input for (type, promptFile, timeouts, improveModel,
+ * protected, verify) survive a save. A phase opened with a promptFile keeps it
+ * while the prompt box stays empty; script / plan-next phases never gain a
+ * prompt or a placeholder eval.
+ */
+function mergeEditedLoopPhase(orig, edited) {
+  if (!orig || typeof orig !== 'object') return edited;
+  const out = Object.assign({}, orig, edited);
+  const promptEmpty = !edited.prompt || !String(edited.prompt).trim();
+  if (promptEmpty) delete out.prompt;
+  if (promptEmpty && orig.promptFile) out.promptFile = orig.promptFile;
+  if (!promptEmpty) delete out.promptFile;
+  if (!edited.model) delete out.model;
+  if (!edited.gate) delete out.gate;
+  if (!edited.mode) delete out.mode;
+  if (!edited.session && orig.session) out.session = orig.session;
+  if (orig.type === 'script') {
+    delete out.prompt;
+    delete out.promptFile;
+  }
+  if (orig.type === 'plan-next' && !orig.eval) {
+    const cmd = edited.eval && edited.eval.command;
+    if (cmd == null || String(cmd).trim() === 'true') delete out.eval;
+  }
+  if (orig.eval && edited.eval) {
+    const origCmd = Array.isArray(orig.eval.command) ? orig.eval.command.join(' ') : String(orig.eval.command);
+    if (String(edited.eval.command) === origCmd) out.eval = Object.assign({}, orig.eval, { exitCode: orig.eval.exitCode != null ? orig.eval.exitCode : 0 });
+    else out.eval = Object.assign({}, orig.eval, edited.eval);
+  }
+  return out;
+}
+
+/**
+ * Banner for a loop paused at an approval gate: which phase is next and the
+ * cost so far (credits / $ when the engine records them, else "cost unknown").
+ */
+function renderLoopGateBanner(detail) {
+  const gate = (detail && detail.gate) || {};
+  const cost = gate.costSoFar || null;
+  let text = 'Waiting for approval before phase ' + (gate.phaseId || detail.phaseId || '?') + '.';
+  if (cost && cost.text) text += ' Cost so far: ' + cost.text + '.';
+  text += ' Approve to continue, or Stop.';
+  return '<p class="loops-gate-banner" role="status">' + escapeHtml(text) + '</p>';
+}
+
+/**
  * Detail panel HTML for a loop status payload from GET /api/loops/:name.
  */
 function renderLoopDetailHtml(detail) {
@@ -1119,6 +1166,8 @@ function renderLoopDetailHtml(detail) {
     encodeURIComponent(detail.name) +
     '" target="_blank" rel="noopener" title="Every AI call, commit and artifact of this loop">Making of</a>';
   html += '</div></div>';
+
+  if (waitingGate) html += renderLoopGateBanner(detail);
 
   html += '<div class="loops-stats">';
   const stats = [
@@ -1226,7 +1275,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     formatUsageCost, formatLoopRowUsage, formatLoopUsageNote,
     loopIsFinished,
     loopSyncSignature, loopDetailNeedsSync,
-    renderLoopsListHtml, renderLoopPhaseTree, renderLoopPhaseCards, renderLoopDetailHtml,
+    renderLoopsListHtml, renderLoopPhaseTree, renderLoopPhaseCards, renderLoopDetailHtml, renderLoopGateBanner, mergeEditedLoopPhase,
     emptyLoopPhaseForm, escapeHtml,
   };
 } else {
@@ -3879,6 +3928,8 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
     let loopDetailHtml = '';
     let loopDefinitionsCache = [];
     let loopFormPhases = [emptyLoopPhaseForm(0)];
+    /** Definition the form was opened from; fields the form has no input for are kept on save. */
+    let loopFormOrig = null;
     let loopsLoading = false;
 
     function setView(name) {
@@ -4001,6 +4052,17 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
           (p.force === true ? ' checked' : '') +
           '/></label>';
         html +=
+          '<label>model <input data-field="model" value="' +
+          escapeHtml(p.model || '') +
+          '" placeholder="loop default"/></label>';
+        const kindBits = [];
+        if (p.type && p.type !== 'run') kindBits.push('type: ' + p.type);
+        if (p.promptFile) kindBits.push('promptFile: ' + p.promptFile);
+        if (p.improveModel) kindBits.push('improveModel: ' + p.improveModel);
+        if (kindBits.length) {
+          html += '<p class="loops-row-meta loops-phase-kind">' + escapeHtml(kindBits.join(' · ')) + '</p>';
+        }
+        html +=
           '<label>eval command <input data-field="evalCommand" value="' +
           escapeHtml(p.evalCommand || 'true') +
           '"/></label>';
@@ -4028,7 +4090,14 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
           const el = ed.querySelector('[data-field="' + field + '"]');
           return el ? el.value : '';
         };
+        const idxAttr = Number(ed.getAttribute('data-phase-index'));
+        const prev = Number.isFinite(idxAttr) ? loopFormPhases[idxAttr] : null;
         next.push({
+          _orig: prev && prev._orig ? prev._orig : null,
+          type: prev && prev.type ? prev.type : '',
+          promptFile: prev && prev.promptFile ? prev.promptFile : '',
+          improveModel: prev && prev.improveModel ? prev.improveModel : '',
+          model: get('model') || '',
           id: get('id'),
           engine: get('engine') || 'cursor',
           session: get('session'),
@@ -4050,6 +4119,7 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
       setShown(loopsFormWrap, true);
       setLoopsFormStatus('', false);
       const def = prefill || {};
+      loopFormOrig = def;
       loopsForm.name.value = def.name || '';
       loopsForm.project.value = def.project || '';
       loopsForm.engine.value = def.engine || 'cursor';
@@ -4076,6 +4146,11 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
             gate: p.gate || '',
             mode: p.mode || '',
             force: p.force === true,
+            model: p.model || '',
+            type: p.type || '',
+            promptFile: p.promptFile || '',
+            improveModel: p.improveModel || '',
+            _orig: p,
           };
         });
       } else {
@@ -4106,16 +4181,20 @@ if (typeof module !== 'undefined' && module.exports && typeof document === 'unde
         if (p.session) phase.session = String(p.session).trim();
         if (p.gate) phase.gate = p.gate;
         if (p.mode) phase.mode = p.mode;
-        return phase;
+        if (p.model) phase.model = String(p.model).trim();
+        return mergeEditedLoopPhase(p._orig, phase);
       });
-      const def = {
+      const orig = loopFormOrig && typeof loopFormOrig === 'object' ? loopFormOrig : {};
+      const def = Object.assign({}, orig, {
         name: String(loopsForm.name.value || '').trim(),
         engine: loopsForm.engine.value || 'cursor',
         cwd: String(loopsForm.cwd.value || '.').trim() || '.',
-        allow: { commit: false, merge: false, push: false },
-        budget: {},
+        allow: orig.allow || { commit: false, merge: false, push: false },
+        budget: Object.assign({}, orig.budget || {}),
         phases: phases,
-      };
+      });
+      delete def.budget.maxRuns;
+      delete def.budget.maxHours;
       const project = String(loopsForm.project.value || '').trim();
       if (project) def.project = project;
       const maxRuns = Number(loopsForm.maxRuns.value);

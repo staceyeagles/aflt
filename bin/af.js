@@ -8063,7 +8063,9 @@ async function cmdLoop(argv) {
       } else {
         for (const row of result.loops) {
           process.stdout.write(
-            `${pad(row.name, 24)} ${pad(row.status, 10)} active=${row.active ? 'y' : 'n'} phase=${row.phaseId || '-'} updated=${row.updatedAt || '-'}\n`
+            `${pad(row.name, 24)} ${pad(row.status, 10)} active=${row.active ? 'y' : 'n'} phase=${row.phaseId || '-'} updated=${row.updatedAt || '-'}` +
+              (row.gate && row.gate.waiting && row.gate.costSoFar ? ` cost=${row.gate.costSoFar.text}` : '') +
+              '\n'
           );
         }
       }
@@ -8079,6 +8081,12 @@ async function cmdLoop(argv) {
           `project: ${result.project || '-'}`,
           `stopRequested: ${result.stopRequested}`,
           `pauseRequested: ${result.pauseRequested}`,
+          result.gate && result.gate.waiting
+            ? `gate: waiting for approval before phase ${result.gate.phaseId || '-'} (aflt loop approve ${result.name})`
+            : null,
+          result.gate && result.gate.waiting && result.gate.costSoFar
+            ? `cost so far: ${result.gate.costSoFar.text}`
+            : null,
           result.lastError ? `lastError: ${result.lastError}` : null,
           result.lock
             ? `lock: pid=${result.lock.pid} alive=${result.lock.alive}`
