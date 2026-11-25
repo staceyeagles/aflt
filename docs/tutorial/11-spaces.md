@@ -43,7 +43,7 @@ Text:
 ```text
 created space tutorial
   path: …/.agentfleet/spaces/tutorial
-  port: 8788          # first free ≥8788; 8787 reserved for default
+  port: 8788          # first free ≥8788 not recorded by a space and not listening now; 8787 reserved for default
   memoryRepo: …/.agentfleet/spaces/tutorial/memory
   service: dev.aflt.dashboard.tutorial
   notify: off

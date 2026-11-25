@@ -16,7 +16,7 @@ aflt --space tutorial dashboard --serve
 # defaults: --host 127.0.0.1 --port 8787 (or the space's recorded port)
 ```
 
-Named spaces get a unique dashboard port (8788+) in their `config.json` when created. Default / no-space behavior stays **8787** and LaunchAgent label `dev.aflt.dashboard`.
+Named spaces get a unique dashboard port (8788+) in their `config.json` when created, skipping ports another space records and ports already in use (for example a dashboard started with `--port`; `dashboard --serve` notes its port in `dashboard-serve.json`). Default / no-space behavior stays **8787** and LaunchAgent label `dev.aflt.dashboard`.
 
 ```bash
 aflt --space tutorial dashboard --serve --port 8790 --host 127.0.0.1
