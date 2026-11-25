@@ -89,6 +89,14 @@ Usage:
   aflt new "<title>" [--cwd DIR] [--prompt "..."] [--model X] [--engine cursor|copilot|opencode]
                             [--project NAME] [--force] [--messaging|--no-messaging]
                             [--tag T]... [--dry-run]
+  aflt init <name> [--dir PATH] [--space NAME | --no-space] [--engine cursor|copilot|opencode]
+                            [--goal TEXT] [--stack TEXT] [--checks TEXT]
+                            [--budget-credits N] [--budget-hours N] [--yes] [--force] [--json]
+                            Start a looped project: folder (default ./<name>),
+                            git init, a space named after it (or --space), and
+                            starter SPEC.md / AGENTS.md / .agentfleet.json from a
+                            few plain questions (TTY) or flags (--yes). Existing
+                            docs are kept unless --force. Next: aflt loop init.
   aflt add "<title>" --chat <id> [--cwd DIR] [--model X] [--engine cursor|copilot|opencode]
                             [--project NAME] [--tag T]... [--prompt "..."]
                             For --engine copilot, --chat is the Copilot session UUID
@@ -445,6 +453,21 @@ Usage:
   aflt notify test [--json]
                             Send a sample notify webhook event (requires
                             config.json notify.url or AFLT_NOTIFY_URL)
+  aflt loop init [--engine E] [--model M | --build-model M --plan-model M]
+                            [--out .agentfleet/loop.json] [--dry-run] [--force]
+                            [--no-gate] [--no-dashboard] [--no-agents-pointer]
+                            [--budget-credits N] [--budget-hours N] [--json]
+                            Draft a loop from SPEC.md / AGENTS.md: the engine
+                            (headless) writes the loop JSON + prompts/ following
+                            templates/loop-guide.md (m0 builds tests + eval, a
+                            real check on every phase, gate after the first
+                            milestone, cheap build model / strong planner,
+                            budget caps, ≤3 improve rounds). The draft must pass
+                            loop validate and the checks policy; problems go
+                            back to the engine (up to 2 repairs). On success:
+                            phase summary, an aflt-loop section in AGENTS.md,
+                            and a copy under loops/definitions for the
+                            dashboard editor. Uses the space in .agentfleet.json.
   aflt loop validate <file> [--json]
                             Validate a loop definition JSON file (schema,
                             phases, eval, allow/onPass). Exit 1 on errors.
@@ -473,6 +496,9 @@ Usage:
                             Model: phase.model, else definition.model, else
                             COPILOT_MODEL when the phase engine is copilot,
                             else config.json defaultModel (alias model).
+                            Improve rounds added by plan-next do not inherit the
+                            planner's model: they use plan-next improveModel,
+                            else definition improveModel, else the chain above.
   aflt loop start <file> [--json]
                             Register a loop as active for the dashboard
                             scheduler (does not run phases in this process).
@@ -480,7 +506,9 @@ Usage:
                             Pause an active/running loop (runner yields; stays
                             registered until stop).
   aflt loop status [name] [--json]
-                            Show one loop's state, or list all loops.
+                            Show one loop's state, or list all loops. A loop
+                            waiting at a gate shows the cost so far (credits /
+                            $ when recorded, active time, tokens).
   aflt loop stop <name> [--json]
                             Request stop (sets stopRequested; signals live runner).
   aflt loop resume <name> [--json]
