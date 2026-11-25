@@ -80,11 +80,12 @@ runs. Follow them unless the project docs clearly say otherwise.
 ## 8. Improve rounds (optional, recommended when there is an eval)
 
 - End with one `"type": "plan-next"` phase (`"onPass": "none"`,
-  `"maxFixAttempts": 2`). After the milestones it reads the eval history and
+  `"maxFixAttempts": 2`, `"force": true` so it can write its plan file). After the milestones it reads the eval history and
   proposes improvement phases (`improve-r1`, ...).
 - Cap improve rounds at **3**: say so in the plan-next prompt ("stop after 3
   improve rounds, or when the eval score stops improving or reaches the
-  target") and leave room for them in `budget.maxPhases`.
+  target") and set `budget.maxPhases` to the number of phases you define
+  plus 3 (one per improve round).
 - Set `"plannedPhaseGate": "none"` so the improve rounds run unattended
   (the first-milestone gate already gave the human a checkpoint), unless the
   user asked to approve every round.
@@ -113,7 +114,8 @@ runs. Follow them unless the project docs clearly say otherwise.
       "maxFixAttempts": 3, "onPass": "commit", "timeoutSec": 3600,
       "eval": { "command": "npm test" } },
     { "id": "plan-next", "type": "plan-next", "model": "<strong planning model>",
-      "promptFile": "prompts/plan-next.md", "maxFixAttempts": 2, "onPass": "none" }
+      "promptFile": "prompts/plan-next.md", "maxFixAttempts": 2, "onPass": "none",
+      "force": true }
   ]
 }
 ```

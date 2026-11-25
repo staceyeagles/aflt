@@ -40,7 +40,7 @@ function goodDraft(name = 'demo') {
         eval: { command: 'node --test && node scripts/eval.js --json' },
       },
       { id: 'm1', promptFile: 'prompts/m1.md', gate: 'approve', force: true, onPass: 'commit', eval: { command: 'node --test' } },
-      { id: 'plan-next', type: 'plan-next', model: 'gpt-5.3-codex', promptFile: 'prompts/plan-next.md', maxFixAttempts: 2, onPass: 'none' },
+      { id: 'plan-next', type: 'plan-next', model: 'gpt-5.3-codex', promptFile: 'prompts/plan-next.md', maxFixAttempts: 2, onPass: 'none', force: true },
     ],
   };
 }
@@ -90,6 +90,9 @@ describe('loop init: checks policy', () => {
       assert.match(all, /phase m1: set "gate": "approve"/);
       assert.match(all, /budget\.maxRuns/);
       assert.match(all, /maxPhases/);
+      const noForce = goodDraft();
+      delete noForce.phases[2].force;
+      assert.match(li.checkLoopPolicy(noForce, { definitionDir: defDir }).errors.join('\n'), /plan-next: set "force": true/);
 
       fs.writeFileSync(path.join(defDir, 'prompts', 'm0.md'), 'Build the server.');
       const noHarness = li.checkLoopPolicy(goodDraft(), { definitionDir: defDir });
