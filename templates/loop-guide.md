@@ -102,6 +102,7 @@ runs. Follow them unless the project docs clearly say otherwise.
   "goal": "<one paragraph from SPEC.md>",
   "acceptance": "<how we know it works, from SPEC.md>",
   "plannedPhaseGate": "none",
+  "workdir": { "mode": "project" },
   "allow": { "commit": true, "merge": false, "push": false },
   "budget": { "maxRuns": 30, "maxHours": 4, "maxPhases": 12 },
   "phases": [
@@ -118,4 +119,6 @@ runs. Follow them unless the project docs clearly say otherwise.
 ```
 
 `cwd` is `"."`: the loop runs in the folder where `aflt loop start` is run
-(the project root). Check commands run there too.
+(the project root). Check commands run there too. `"workdir": { "mode":
+"project" }` lets the loop run in the project's own repo (non-empty, holding
+the loop file) as long as the git tree is clean.

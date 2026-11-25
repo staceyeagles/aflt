@@ -342,3 +342,77 @@ echo '{"type":"result","result":"drafted"}'
     }
   });
 });
+
+describe('loop init: project workdir', () => {
+  function git(cwd, args) {
+    return spawnSync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      env: { ...process.env, GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@e', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@e' },
+    });
+  }
+
+  it('workdir.mode "project" accepts the clean project repo that holds the loop file', () => {
+    clearMods();
+    const loop = require('../lib/loop');
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'af-li-proj-'));
+    try {
+      git(cwd, ['init', '-q']);
+      writeDraft(cwd, { ...goodDraft(), workdir: { mode: 'project' } });
+      fs.writeFileSync(path.join(cwd, 'SPEC.md'), '# spec\n');
+      const def = path.join(cwd, '.agentfleet', 'loop.json');
+      const dirty = loop.inspectLoopWorkdir(cwd, { definitionPath: def, workdir: { mode: 'project' } });
+      assert.equal(dirty.ok, false);
+      assert.match(dirty.problems.join('\n'), /git add -A && git commit/);
+      git(cwd, ['add', '-A']);
+      git(cwd, ['commit', '-q', '-m', 'seed']);
+      const clean = loop.inspectLoopWorkdir(cwd, { definitionPath: def, workdir: { mode: 'project' } });
+      assert.equal(clean.ok, true, clean.problems.join('; '));
+      assert.equal(clean.mode, 'project');
+      // The default (fresh) mode still refuses the same folder.
+      assert.equal(loop.inspectLoopWorkdir(cwd, { definitionPath: def }).ok, false);
+      const v = loop.validateFile(def, { cwdBase: cwd });
+      assert.equal(v.ok, true, (v.errors || []).join('; '));
+      assert.deepEqual(v.definition.workdir, { mode: 'project' });
+      const bad = loop.validateDefinition({ ...goodDraft(), cwd, workdir: { mode: 'project', path: 'x' } }, { checkPromptFiles: false });
+      assert.equal(bad.ok, false);
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('initLoop marks the draft workdir.mode "project" and says to commit first', async () => {
+    clearMods();
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'af-li-home2-'));
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'af-li-cwd2-'));
+    const prev = { HOME: process.env.HOME, AGENTFLEET_HOME: process.env.AGENTFLEET_HOME };
+    process.env.HOME = home;
+    process.env.AGENTFLEET_HOME = home;
+    try {
+      fs.writeFileSync(path.join(cwd, 'SPEC.md'), '# s\n');
+      const li = require('../lib/loop-init');
+      const r = await li.initLoop({
+        cwd,
+        engine: 'cursor',
+        runAgent: async () => {
+          writeDraft(cwd, goodDraft());
+          return { code: 0 };
+        },
+      });
+      assert.equal(r.ok, true, (r.errors || []).join('; '));
+      const written = JSON.parse(fs.readFileSync(path.join(cwd, '.agentfleet', 'loop.json'), 'utf8'));
+      assert.deepEqual(written.workdir, { mode: 'project' });
+      assert.match(r.next[0], /git add -A && git commit/);
+      const copy = JSON.parse(fs.readFileSync(r.dashboardCopy, 'utf8'));
+      assert.deepEqual(copy.workdir, { mode: 'project' });
+    } finally {
+      clearMods();
+      for (const [k, v] of Object.entries(prev)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      fs.rmSync(home, { recursive: true, force: true });
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
